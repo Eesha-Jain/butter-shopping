@@ -1,8 +1,8 @@
 /**
  * Hand-written Database types for the baseline migrations.
  * After this project is linked to Supabase, regenerate this file with:
- * `npx supabase gen types typescript --linked > src/supabase/database.types.ts`
- * and keep the function comments in the TypeScript modules.
+ * `npx supabase gen types typescript --linked > src/backend/types/database.ts`
+ * Re-export shared names from `src/backend/types/index.ts` for the rest of the app.
  */
 
 type Table<Row extends Record<string, unknown>> = {
