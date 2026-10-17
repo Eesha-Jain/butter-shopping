@@ -1,0 +1,3 @@
+-- Application schema lives in supabase/migrations at the repo root.
+-- Do not paste this file into the SQL editor.
+-- See src/backend/supabase/README.md for setup.

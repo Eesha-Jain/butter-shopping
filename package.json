@@ -5,6 +5,8 @@
   "dependencies": {
     "@elevenlabs/react-native": "^1.2.30",
     "@expo/ui": "~58.0.20",
+    "@supabase/supabase-js": "^2.118.0",
+    "burnt": "^0.13.0",
     "@livekit/react-native": "^2.12.0",
     "@livekit/react-native-webrtc": "^144.2.0",
     "expo": "~58.0.14",
@@ -18,6 +20,7 @@
     "expo-notifications": "~58.1.5",
     "expo-router": "~58.0.23",
     "expo-splash-screen": "~58.0.10",
+    "expo-sqlite": "~58.0.13",
     "expo-status-bar": "~58.0.3",
     "expo-symbols": "~58.0.4",
     "expo-system-ui": "~58.0.6",
