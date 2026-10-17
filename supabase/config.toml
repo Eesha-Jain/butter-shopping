@@ -1,0 +1,33 @@
+project_id = "butter-shopping"
+
+[api]
+enabled = true
+schemas = ["public"]
+
+[db]
+major_version = 15
+
+[storage.buckets.avatars]
+public = true
+file_size_limit = "5MiB"
+allowed_mime_types = ["image/png", "image/jpeg", "image/webp"]
+
+[storage.buckets.public-assets]
+public = true
+file_size_limit = "10MiB"
+allowed_mime_types = ["image/png", "image/jpeg", "image/webp"]
+
+[functions.create-checkout-link]
+verify_jwt = true
+
+[functions.sync-product-composition]
+verify_jwt = true
+
+[functions.sync-product-safety]
+verify_jwt = true
+
+[functions.send-due-reminders]
+verify_jwt = true
+
+[functions.analyze-ripeness]
+verify_jwt = true
