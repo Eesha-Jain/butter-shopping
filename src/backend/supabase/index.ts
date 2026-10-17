@@ -10,6 +10,7 @@ export {
   onAuthStateChange,
   requestPasswordReset,
   signIn,
+  signInWithGoogle,
   signOut,
   signUp,
 } from './auth';

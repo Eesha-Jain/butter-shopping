@@ -19,8 +19,9 @@ export async function listPurchases(groupId: string): Promise<Purchase[]> {
 
 /**
  * Records an in-store purchase. The caller is stored as the payer. expiresOn
- * can be set only now; there is no later update. Do not use this for an order
- * placed in the app, because finalizeOrder already writes those purchases.
+ * can be set only now; there is no later update. When omitted, the database
+ * defaults expires_on from product/category shelf life. Do not use this for an
+ * order placed in the app, because finalizeOrder already writes those purchases.
  */
 export async function recordPurchase(input: {
   groupId: string;

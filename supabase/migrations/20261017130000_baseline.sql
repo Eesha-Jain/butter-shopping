@@ -7,92 +7,112 @@
 -- Money is integer cents. Amounts use the category base unit: g, ml, or ct.
 
 -- ---------------------------------------------------------------------------
--- Remove the previous application schema
+-- Wipe the previous application schema completely
+-- Policies must go before helper functions such as is_admin(), then tables,
+-- views, and functions. Auth, Storage buckets metadata, and Vault stay intact.
 -- ---------------------------------------------------------------------------
 
 drop trigger if exists on_auth_user_created on auth.users;
 
-drop view if exists public.v_trending cascade;
-drop view if exists public.v_expiring_purchases cascade;
-drop view if exists public.v_due_habits cascade;
-drop view if exists public.v_recipe_detail cascade;
-drop view if exists public.v_group_balances cascade;
-drop view if exists public.v_order_summary cascade;
-drop view if exists public.v_list_items cascade;
-drop view if exists public.v_pending_approvals cascade;
-drop view if exists public.current_unit_prices cascade;
-drop view if exists public.current_prices cascade;
-drop materialized view if exists public.trending_products cascade;
-drop materialized view if exists public.trending_recipes cascade;
+-- Storage policies from the old draft (depend on public.is_admin()).
+drop policy if exists "avatars_select_all" on storage.objects;
+drop policy if exists "avatars_insert_own" on storage.objects;
+drop policy if exists "avatars_update_own" on storage.objects;
+drop policy if exists "avatars_delete_own" on storage.objects;
+drop policy if exists "public_assets_select_all" on storage.objects;
+drop policy if exists "public_assets_admin_write" on storage.objects;
+drop policy if exists avatars_select_all on storage.objects;
+drop policy if exists avatars_insert_own on storage.objects;
+drop policy if exists avatars_update_own on storage.objects;
+drop policy if exists avatars_delete_own on storage.objects;
+drop policy if exists public_assets_select_all on storage.objects;
+drop policy if exists public_assets_admin_write on storage.objects;
 
-drop function if exists public.add_due_habit_items();
-drop function if exists public.record_purchase(uuid, uuid, numeric, integer, date, timestamptz);
-drop function if exists public.finalize_order(uuid);
-drop function if exists public.confirm_order(uuid);
-drop function if exists public.create_trip_from_list(uuid, date, double precision, double precision);
-drop function if exists public.create_trip_from_list(uuid, date, text, uuid, double precision, double precision);
-drop function if exists public.recommend_shopping_plan(uuid, date, double precision, double precision);
-drop function if exists public.price_options(uuid, uuid, uuid, date, numeric, numeric, boolean, double precision, double precision);
-drop function if exists public.nearby_stores(double precision, double precision, numeric);
-drop function if exists public.distance_km(double precision, double precision, double precision, double precision);
-drop function if exists public.discounted_line_cents(integer, numeric, text, numeric);
-drop function if exists public.leave_group(uuid);
-drop function if exists public.create_group(text, text);
-drop function if exists public.join_group(text);
-drop function if exists public.is_admin();
-drop function if exists public.is_group_owner(uuid);
-drop function if exists public.is_group_member(uuid);
-drop function if exists public.handle_new_user();
-drop function if exists public.place_order_snapshot();
-drop function if exists public.enforce_order_trip_group();
-drop function if exists public.enforce_user_food_rule();
-drop function if exists public.enforce_product_trait_relation();
-drop function if exists public.enforce_product_size_unit();
-drop function if exists public.set_updated_at();
+-- Every RLS policy in public (old draft names vary).
+do $$
+declare
+  r record;
+begin
+  for r in
+    select schemaname, tablename, policyname
+    from pg_policies
+    where schemaname = 'public'
+  loop
+    execute format(
+      'drop policy if exists %I on %I.%I',
+      r.policyname, r.schemaname, r.tablename
+    );
+  end loop;
+end $$;
 
-drop table if exists public.order_shares cascade;
-drop table if exists public.order_approvals cascade;
-drop table if exists public.order_items cascade;
-drop table if exists public.orders cascade;
-drop table if exists public.shopping_trips cascade;
-drop table if exists public.purchases cascade;
-drop table if exists public.item_habits cascade;
-drop table if exists public.list_items cascade;
-drop table if exists public.lists cascade;
-drop table if exists public.payment_methods cascade;
-drop table if exists public.stripe_events cascade;
-drop table if exists public.push_tokens cascade;
-drop table if exists public.sponsorships cascade;
-drop table if exists public.recipe_ingredients cascade;
-drop table if exists public.recipes cascade;
-drop table if exists public.product_traits cascade;
-drop table if exists public.user_food_rules cascade;
-drop table if exists public.product_labels cascade;
-drop table if exists public.user_dietary_preferences cascade;
-drop table if exists public.food_traits cascade;
-drop table if exists public.dietary_labels cascade;
-drop table if exists public.prices cascade;
-drop table if exists public.promotions cascade;
-drop table if exists public.discount_eligibilities cascade;
-drop table if exists public.discount_groups cascade;
-drop table if exists public.store_products cascade;
-drop table if exists public.products cascade;
-drop table if exists public.product_categories cascade;
-drop table if exists public.user_stores cascade;
-drop table if exists public.user_locations cascade;
-drop table if exists public.group_members cascade;
-drop table if exists public.groups cascade;
-drop table if exists public.admin_users cascade;
-drop table if exists public.profiles cascade;
-drop table if exists public.stores cascade;
-drop table if exists public.chains cascade;
-drop table if exists public.dining_plans cascade;
-drop table if exists public.colleges cascade;
-
--- PostGIS is intentionally not part of this schema. Addresses and optional
--- coordinates replace it. This removes spatial_ref_sys when the extension
--- was installed in the public schema.
+-- Drop PostGIS before wiping views/tables. Its system views
+-- (geography_columns, geometry_columns, spatial_ref_sys) cannot be dropped
+-- while the extension still owns them.
 drop extension if exists postgis cascade;
+
+-- Materialized views, then ordinary views, then tables.
+-- Skip anything still owned by an extension (pgcrypto, etc.).
+do $$
+declare
+  r record;
+begin
+  for r in
+    select c.relname as name
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    left join pg_depend d on d.objid = c.oid and d.deptype = 'e'
+    where n.nspname = 'public'
+      and c.relkind = 'm'
+      and d.objid is null
+  loop
+    execute format('drop materialized view if exists public.%I cascade', r.name);
+  end loop;
+
+  for r in
+    select c.relname as name
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    left join pg_depend d on d.objid = c.oid and d.deptype = 'e'
+    where n.nspname = 'public'
+      and c.relkind = 'v'
+      and d.objid is null
+  loop
+    execute format('drop view if exists public.%I cascade', r.name);
+  end loop;
+
+  for r in
+    select c.relname as name
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    left join pg_depend d on d.objid = c.oid and d.deptype = 'e'
+    where n.nspname = 'public'
+      and c.relkind = 'r'
+      and d.objid is null
+  loop
+    execute format('drop table if exists public.%I cascade', r.name);
+  end loop;
+end $$;
+
+-- Application functions in public. CASCADE clears leftover dependents.
+-- Skip extension-owned routines (pgcrypto, etc.).
+do $$
+declare
+  r record;
+begin
+  for r in
+    select p.oid::regprocedure as sig
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    left join pg_depend d
+      on d.objid = p.oid
+     and d.deptype = 'e'
+    where n.nspname = 'public'
+      and p.prokind in ('f', 'p')
+      and d.objid is null
+  loop
+    execute 'drop function if exists ' || r.sig || ' cascade';
+  end loop;
+end $$;
 
 create extension if not exists pgcrypto;
 

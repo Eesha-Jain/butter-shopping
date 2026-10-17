@@ -1,8 +1,33 @@
-# Supabase guide
+# Supabase data layer
 
-Screens should import functions from `@/supabase`. Those functions are the app's
-data API. The comments above each function say which records it uses and which
-rule the caller has to follow.
+Screens should import from `@/backend` (or `@/backend/types` for types only).
+Do not call the raw Supabase client from UI code.
+
+Shared domain types live in [`../types`](../types). The client and domain
+helpers live in this folder. SQL migrations live in the repo-root
+[`supabase/migrations`](../../../supabase/migrations) directory.
+
+The comments above each function say which records it uses and which rule the
+caller has to follow.
+
+## Error handling and toasts
+
+Failed Auth, queries, RPCs, and Edge Function calls show a Burnt error toast
+and throw `AppError`. The toast runs once; `AppError.toasted` prevents
+duplicates if a screen also catches the error.
+
+```ts
+import { createTripFromList, runAction, showSuccessToast } from '@/backend';
+
+await runAction(async () => {
+  const tripId = await createTripFromList({ listId, plannedFor, fulfillmentMethod: 'self_pickup' });
+  showSuccessToast('Trip ready', 'Confirm each store order when you are set.');
+  return tripId;
+}, 'Could not create that shopping trip.');
+```
+
+`runAction` is optional when you already `await` a helper: those helpers toast
+on their own. Use it when you want a custom fallback message around several calls.
 
 ## How the data fits together
 
@@ -18,7 +43,13 @@ peanuts, halal, and other filters are food traits, not categories.
 
 A product is the packaged item, shared by every store. A store product is that
 item at one address. Prices are added over time and are never edited. The latest
-price is the current shelf price.
+price is the current shelf price. Categories may set `typical_shelf_life_days`;
+a product may override with `shelf_life_days`. Planning ranks offers by
+waste-adjusted `effective_cents_per_base` (price divided by how much the group
+can finish before spoil), using habits for daily usage when present, otherwise
+`amount_base / 7`. Budget checks still use real `line_cents`. When a purchase
+is recorded without an explicit expiration, `expires_on` defaults from that
+shelf life.
 
 A shopping trip is one grocery date for a group. Each store on that trip gets
 its own order. The trip also stores how the group will receive the food:
@@ -44,6 +75,8 @@ images live in `public-assets`. The database stores the file path only.
 - Weekdays are `0` Sunday through `6` Saturday.
 - Money is integer cents.
 - `usual_amount_base` and ingredient amounts use the category unit: `g`, `ml`, or `ct`.
+- Habits improve recommendations: without one, perishable ranking falls back to `amount_base / 7` or no waste penalty.
+- Null shelf life means non-perishable for ranking (full pack counts as usable).
 - Ingredients, allergens, and chemicals can only be marked `contains` or `may_contain`, and a user can only avoid them.
 - Dietary properties use `suitable`. Certifications use `certified`. Users can require or prefer those.
 - No trait row means unknown. It does not mean the product is safe for a required diet.
@@ -72,13 +105,13 @@ images live in `public-assets`. The database stores the file path only.
 | Add a recipe to the list | `addRecipeToList` | How many ingredient lines were added. |
 | Show the list | `listResolvedItems` | Names and the cheapest shelf price, before coupons and food rules. |
 | Choose the grocery day | `suggestGroceryDate` | The next preferred calendar date. |
-| Compare stores for one food | `priceOptions` | Offers that already follow the group's strictest rules. |
-| Plan the whole list | `recommendShoppingPlan` | One line per item, the store, and whether the estimate is over budget. |
+| Compare stores for one food | `priceOptions` | Offers that already follow the group's strictest rules, with waste-adjusted `effective_cents_per_base`. |
+| Plan the whole list | `recommendShoppingPlan` | One line per item, the store (picked by effective cost), and whether the estimate is over budget. |
 | Turn the plan into drafts | `createTripFromList` | The trip id. Pass `fulfillmentMethod` (`self_pickup`, `store_pickup`, or `delivery`) and, for delivery, `deliveryLocationId`. One draft order is created per store. |
 | Buyer accepts the order | `confirmOrder` | Nothing. The caller becomes the payer. |
 | Place the confirmed order | `finalizeOrder` | Nothing. Purchases and shares are written. |
 | Open Instacart | `requestCheckoutLink` | A URL saved on the order. |
-| Record a store receipt | `recordPurchase` | The purchase id. Set the expiration date now if you know it. |
+| Record a store receipt | `recordPurchase` | The purchase id. Pass `expiresOn` if known; otherwise shelf life fills it. |
 | Add a Trader Joe's or campus store | `registerReportableStore` | The store id. Campus stores need `collegeName`. |
 | Report a shelf price there | `reportManualPrice` | The price id. Pass cents. QFC and Safeway prices are not reported this way. |
 | List stores that accept reports | `listReportableStores` | Trader Joe's and campus stores. |
@@ -91,55 +124,28 @@ images live in `public-assets`. The database stores the file path only.
 
 ## Setup
 
-1. Copy `.env.example` to `.env.local`.
-2. Set `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` from the Supabase API settings. These are public values.
-3. Install dependencies with `npm install`. `@supabase/supabase-js` and `expo-sqlite` are already declared. The SQLite package stores the login session on device.
-4. Apply the migrations to the linked project:
+1. Copy `.env.example` to `.env.local` (or `.env`).
+2. Set `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`.
+3. Apply migrations:
 
 ```bash
 npx supabase link --project-ref YOUR_PROJECT_REF
 npx supabase db push
 ```
 
-The first migration rebuilds the application tables. It is appropriate for this new, disposable database. Do not edit an already-applied migration. Add a new file under `supabase/migrations` for every later change.
-
-5. Regenerate types after a migration:
+4. Regenerate types after a migration:
 
 ```bash
-npx supabase gen types typescript --linked > src/supabase/database.types.ts
+npx supabase gen types typescript --linked > src/backend/types/database.ts
 ```
 
-The committed types match the baseline. Keep the comments in the TypeScript modules when replacing the generated file, or move those comments back after generation.
+Then keep [`../types/index.ts`](../types/index.ts) exporting the shared names screens need.
 
 ## GitHub deploys the database
 
-Supabase applies files in `supabase/migrations` when GitHub deploys the project. It does not run `src/supabase/schema.sql`.
-
-1. In the Supabase dashboard, open Integrations and connect this GitHub repository.
-2. Enable **Deploy to production** for the `main` branch.
-3. After that, merge schema changes to `main` instead of editing tables in the dashboard. Dashboard edits skip the migration history and later deploys fail.
-4. Optional: enable Automatic Branching if the plan includes a separate database for each pull request. Production deploy works without it.
-
-Edge Functions in `supabase/functions` and the buckets declared in `supabase/config.toml` deploy with the same integration.
-
-## Secrets and schedules
-
-Set function secrets in the hosted project, not in the Expo app:
-
-```bash
-npx supabase secrets set INSTACART_API_KEY=... VISION_API_URL=... VISION_API_KEY=... OPENFDA_API_KEY=...
-```
-
-`create-checkout-link` calls Instacart. `analyze-ripeness` calls the configured vision endpoint and discards the image. `sync-product-composition` reads Open Food Facts for one barcode. `sync-product-safety` deactivates products whose barcode appears in a current FDA or USDA recall. `send-due-reminders` pushes expiration and order-confirmation messages.
-
-Scheduled jobs are created only after these Vault secrets exist:
-
-```sql
-select vault.create_secret('https://YOUR_PROJECT.supabase.co', 'project_url');
-select vault.create_secret('YOUR_SERVICE_ROLE_KEY', 'service_role_key');
-```
-
-Re-run `supabase/migrations/20261017130100_app_functions.sql` only if it has not been applied. On a database that already applied it, create the two cron jobs from that file's final block manually. The habit job runs inside the database. Reminder and recall jobs call Edge Functions. Delivery is best-effort: there is no saved notification queue, so a failed push is not retried automatically.
+Connect the repo in Supabase Integrations and enable **Deploy to production** for
+`main`. Migrations under `supabase/migrations` are the source of truth. Do not
+edit production tables in the dashboard after that.
 
 ## Checks
 
