@@ -1,9 +1,18 @@
-import { Button, Column, Host, Row, Spacer, Text, TextInput } from '@expo/ui';
-import { useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Image } from 'expo-image';
+import { useRef, useState } from 'react';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { runAction, signIn, signInWithGoogle, signUp } from '@/backend';
+import { runAction, showSuccessToast, signIn, signInWithGoogle, signUp } from '@/backend';
 import { MaxContentWidth, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -12,6 +21,9 @@ export type AuthMode = 'signUp' | 'logIn';
 type AuthFormProps = {
   initialMode?: AuthMode;
 };
+
+const FONT_REGULAR = 'ComicNeue_400Regular';
+const FONT_BOLD = 'ComicNeue_700Bold';
 
 export function AuthForm({ initialMode = 'signUp' }: AuthFormProps) {
   const theme = useTheme();
@@ -22,23 +34,13 @@ export function AuthForm({ initialMode = 'signUp' }: AuthFormProps) {
   const [emailError, setEmailError] = useState(false);
   const [passwordError, setPasswordError] = useState(false);
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
 
   const title = mode === 'signUp' ? 'Sign up' : 'Log in';
-  const inputStyle = {
-    borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: Radius.input,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-    backgroundColor: theme.background,
-    width: '100%' as const,
-  };
-  const errorInputStyle = {
-    ...inputStyle,
-    borderColor: theme.borderError,
-  };
 
   async function onContinue() {
+    if (busyRef.current) return;
+
     const nextEmail = email.trim();
     const missingEmail = !nextEmail;
     const missingPassword = !password;
@@ -46,157 +48,197 @@ export function AuthForm({ initialMode = 'signUp' }: AuthFormProps) {
     setPasswordError(missingPassword);
     if (missingEmail || missingPassword) return;
 
+    busyRef.current = true;
     setBusy(true);
     try {
       await runAction(async () => {
         if (mode === 'signUp') {
-          await signUp({
+          const result = await signUp({
             email: nextEmail,
             password,
             displayName: displayName.trim() || undefined,
           });
+          if (!result.session) {
+            showSuccessToast(
+              'Check your email',
+              'Open the link we sent to confirm your account, then log in.',
+            );
+            setMode('logIn');
+          }
         } else {
           await signIn({ email: nextEmail, password });
         }
       });
+    } catch {
+      // runAction already toasts AppError; swallow so promises stay handled
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
 
   async function onGoogle() {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     try {
       await runAction(() => signInWithGoogle());
+    } catch {
+      // runAction already toasts
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]}>
-      <View style={styles.frame}>
-        <Host style={styles.host} matchContents={{ vertical: true }}>
-          <Column spacing={Spacing.three}>
-            <Text
-              textStyle={{
-                fontSize: 36,
-                fontWeight: '700',
-                color: theme.text,
-              }}>
-              {title}
-            </Text>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          bounces={false}>
+          <View style={styles.frame}>
+            <Text style={[styles.title, { color: theme.text }]}>{title}</Text>
 
-            <Column spacing={Spacing.two}>
+            <View style={styles.fields}>
               {mode === 'signUp' ? (
-                <Column spacing={Spacing.one}>
-                  <Text textStyle={{ fontSize: 14, color: theme.textSecondary }}>Name</Text>
+                <View style={styles.field}>
+                  <Text style={[styles.label, { color: theme.textSecondary }]}>Name</Text>
                   <TextInput
                     placeholder="Your name"
                     autoCapitalize="words"
-                    defaultValue={displayName}
+                    value={displayName}
                     onChangeText={setDisplayName}
                     editable={!busy}
-                    style={inputStyle}
-                    textStyle={{ color: theme.text, fontSize: 16 }}
                     placeholderTextColor={theme.textSecondary}
+                    style={[
+                      styles.input,
+                      {
+                        backgroundColor: theme.accentSoft,
+                        borderColor: theme.border,
+                        color: theme.text,
+                      },
+                    ]}
                   />
-                </Column>
+                </View>
               ) : null}
 
-              <Column spacing={Spacing.one}>
-                <Text textStyle={{ fontSize: 14, color: theme.textSecondary }}>Email</Text>
+              <View style={styles.field}>
+                <Text style={[styles.label, { color: theme.textSecondary }]}>Email</Text>
                 <TextInput
                   placeholder="yourname@email.com"
                   keyboardType="email-address"
                   autoCapitalize="none"
                   autoCorrect={false}
-                  defaultValue={email}
+                  value={email}
                   onChangeText={(value) => {
                     setEmail(value);
                     if (emailError) setEmailError(false);
                   }}
                   editable={!busy}
-                  style={emailError ? errorInputStyle : inputStyle}
-                  textStyle={{ color: theme.text, fontSize: 16 }}
                   placeholderTextColor={theme.textSecondary}
+                  style={[
+                    styles.input,
+                    {
+                      backgroundColor: theme.accentSoft,
+                      borderColor: emailError ? theme.borderError : theme.border,
+                      color: theme.text,
+                    },
+                  ]}
                 />
                 {emailError ? (
-                  <Text textStyle={{ fontSize: 13, color: theme.error }}>required</Text>
+                  <Text style={[styles.error, { color: theme.error }]}>required</Text>
                 ) : null}
-              </Column>
+              </View>
 
-              <Column spacing={Spacing.one}>
-                <Text textStyle={{ fontSize: 14, color: theme.textSecondary }}>Password</Text>
+              <View style={styles.field}>
+                <Text style={[styles.label, { color: theme.textSecondary }]}>Password</Text>
                 <TextInput
                   placeholder="Password"
                   secureTextEntry
-                  defaultValue={password}
+                  value={password}
                   onChangeText={(value) => {
                     setPassword(value);
                     if (passwordError) setPasswordError(false);
                   }}
                   editable={!busy}
-                  style={passwordError ? errorInputStyle : inputStyle}
-                  textStyle={{ color: theme.text, fontSize: 16 }}
                   placeholderTextColor={theme.textSecondary}
+                  style={[
+                    styles.input,
+                    {
+                      backgroundColor: theme.accentSoft,
+                      borderColor: passwordError ? theme.borderError : theme.border,
+                      color: theme.text,
+                    },
+                  ]}
                 />
                 {passwordError ? (
-                  <Text textStyle={{ fontSize: 13, color: theme.error }}>required</Text>
+                  <Text style={[styles.error, { color: theme.error }]}>required</Text>
                 ) : null}
-              </Column>
+              </View>
 
               {mode === 'signUp' ? (
-                <Text textStyle={{ fontSize: 13, color: theme.textSecondary }}>
+                <Text style={[styles.terms, { color: theme.textSecondary }]}>
                   By signing up, you agree to our terms of service.
                 </Text>
               ) : null}
 
-              <Button
+              <Pressable
                 disabled={busy}
                 onPress={onContinue}
-                style={{
-                  backgroundColor: theme.primary,
-                  borderRadius: Radius.button,
-                  paddingVertical: Spacing.three,
-                }}>
-                <Text textStyle={{ color: theme.primaryText, fontWeight: '700', fontSize: 16 }}>
+                style={({ pressed }) => [
+                  styles.button,
+                  {
+                    backgroundColor: theme.primary,
+                    opacity: busy ? 0.6 : pressed ? 0.85 : 1,
+                  },
+                ]}>
+                <Text style={[styles.buttonLabel, { color: theme.primaryText }]}>
                   {busy ? 'Working…' : 'Continue'}
                 </Text>
-              </Button>
-            </Column>
+              </Pressable>
+            </View>
 
-            <Row spacing={Spacing.two} alignment="center">
-              <Spacer />
-              <Text textStyle={{ fontSize: 13, color: theme.textSecondary }}>OR</Text>
-              <Spacer />
-            </Row>
+            <View style={styles.dividerRow}>
+              <View style={[styles.dividerLine, { backgroundColor: theme.border }]} />
+              <Text style={[styles.or, { color: theme.textSecondary }]}>OR</Text>
+              <View style={[styles.dividerLine, { backgroundColor: theme.border }]} />
+            </View>
 
-            <Button
-              label="Continue with Google"
-              variant="outlined"
+            <Pressable
               disabled={busy}
               onPress={onGoogle}
-              style={{
-                borderColor: theme.border,
-                borderWidth: 1,
-                borderRadius: Radius.button,
-                paddingVertical: Spacing.three,
-                backgroundColor: theme.background,
-              }}
-            />
+              style={({ pressed }) => [
+                styles.googleButton,
+                {
+                  backgroundColor: theme.background,
+                  borderColor: theme.text,
+                  opacity: busy ? 0.6 : pressed ? 0.85 : 1,
+                },
+              ]}>
+              <Image
+                source={require('@/assets/images/google-g.png')}
+                style={styles.googleLogo}
+                contentFit="contain"
+              />
+              <Text style={[styles.googleLabel, { color: theme.text }]}>Continue with Google</Text>
+            </Pressable>
 
-            <Button
-              label={
-                mode === 'signUp' ? 'Already have an account? Log in' : 'Need an account? Sign up'
-              }
-              variant="text"
+            <Pressable
               disabled={busy}
               onPress={() => setMode(mode === 'signUp' ? 'logIn' : 'signUp')}
-            />
-          </Column>
-        </Host>
-      </View>
+              hitSlop={8}
+              style={styles.linkWrap}>
+              <Text style={[styles.link, { color: theme.textSecondary }]}>
+                {mode === 'signUp' ? 'Already have an account? Log in' : 'Need an account? Sign up'}
+              </Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -205,16 +247,100 @@ const styles = StyleSheet.create({
   safe: {
     flex: 1,
   },
-  frame: {
+  flex: {
     flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
+  frame: {
     width: '100%',
     maxWidth: MaxContentWidth,
     alignSelf: 'center',
     paddingHorizontal: Spacing.four,
-    paddingTop: Spacing.five,
-    justifyContent: 'center',
+    paddingVertical: Spacing.five,
+    gap: Spacing.three,
   },
-  host: {
-    width: '100%',
+  title: {
+    fontFamily: FONT_BOLD,
+    fontSize: 36,
+    marginBottom: Spacing.one,
+  },
+  fields: {
+    gap: Spacing.two,
+  },
+  field: {
+    gap: Spacing.one,
+  },
+  label: {
+    fontFamily: FONT_REGULAR,
+    fontSize: 14,
+  },
+  input: {
+    fontFamily: FONT_REGULAR,
+    fontSize: 16,
+    borderWidth: 1,
+    borderRadius: Radius.input,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two + 4,
+  },
+  error: {
+    fontFamily: FONT_REGULAR,
+    fontSize: 13,
+  },
+  terms: {
+    fontFamily: FONT_REGULAR,
+    fontSize: 13,
+    marginTop: Spacing.one,
+  },
+  button: {
+    marginTop: Spacing.two,
+    borderRadius: Radius.button,
+    paddingVertical: Spacing.three,
+    alignItems: 'center',
+  },
+  buttonLabel: {
+    fontFamily: FONT_BOLD,
+    fontSize: 16,
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  dividerLine: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+  },
+  or: {
+    fontFamily: FONT_REGULAR,
+    fontSize: 13,
+  },
+  googleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+    borderWidth: 1,
+    borderRadius: Radius.button,
+    paddingVertical: Spacing.three,
+  },
+  googleLogo: {
+    width: 20,
+    height: 20,
+  },
+  googleLabel: {
+    fontFamily: FONT_BOLD,
+    fontSize: 16,
+  },
+  linkWrap: {
+    alignItems: 'center',
+    paddingVertical: Spacing.one,
+  },
+  link: {
+    fontFamily: FONT_REGULAR,
+    fontSize: 13,
+    textDecorationLine: 'underline',
   },
 });

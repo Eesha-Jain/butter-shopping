@@ -4,6 +4,7 @@
   "main": "expo-router/entry",
   "dependencies": {
     "@elevenlabs/react-native": "^1.2.30",
+    "@expo-google-fonts/comic-neue": "^0.4.1",
     "@expo/ui": "~57.0.25",
     "@livekit/react-native": "^2.12.0",
     "@livekit/react-native-webrtc": "^144.2.0",
