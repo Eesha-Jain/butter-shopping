@@ -35,9 +35,9 @@ export default function HomeScreen() {
   const theme = useTheme();
 
   return (
-    <ThemedView style={styles.container}>
+    <ThemedView style={[styles.container, styles.transparent]}>
       <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
+        <ThemedView style={[styles.heroSection, styles.transparent]}>
           <AnimatedIcon />
           <ThemedText type="title" style={styles.title}>
             Welcome to&nbsp;Expo
@@ -82,6 +82,9 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     flexDirection: 'row',
+  },
+  transparent: {
+    backgroundColor: 'transparent',
   },
   safeArea: {
     flex: 1,

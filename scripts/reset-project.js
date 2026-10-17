@@ -18,13 +18,6 @@ const newAppDir = "src/app";
 const exampleDirPath = path.join(root, exampleDir);
 // Demo images and folders used only by the files in /src
 const exampleAssets = [
-  "expo-badge.png",
-  "expo-badge-white.png",
-  "expo-logo.png",
-  "logo-glow.png",
-  "react-logo.png",
-  "react-logo@2x.png",
-  "react-logo@3x.png",
   "tutorial-web.png",
   "tabIcons",
 ];

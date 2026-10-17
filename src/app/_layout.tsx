@@ -6,10 +6,11 @@ import {
 import { requireOptionalNativeModule } from 'expo';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
-import { useColorScheme } from 'react-native';
+import { useEffect, useMemo } from 'react';
+import { ImageBackground, StyleSheet, useColorScheme } from 'react-native';
 
 import { SessionProvider, useSession } from '@/auth/session';
+import { Colors } from '@/constants/theme';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -19,18 +20,43 @@ const DevMenuPreferences = requireOptionalNativeModule<{
 }>('DevMenuPreferences');
 void DevMenuPreferences?.setPreferencesAsync({ showFloatingActionButton: false });
 
+const transparentNavigationTheme = {
+  light: {
+    ...DefaultTheme,
+    colors: {
+      ...DefaultTheme.colors,
+      background: 'transparent',
+    },
+  },
+  dark: {
+    ...DarkTheme,
+    colors: {
+      ...DarkTheme.colors,
+      background: 'transparent',
+    },
+  },
+};
+
 export default function RootLayout() {
   const colorScheme = useColorScheme();
   const [fontsLoaded, fontError] = useFonts({
     ComicNeue_400Regular,
     ComicNeue_700Bold,
   });
+  const scheme = colorScheme === 'dark' ? 'dark' : 'light';
+  const navigationTheme = useMemo(() => transparentNavigationTheme[scheme], [scheme]);
 
   return (
     <SessionProvider>
-      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <SplashScreenController fontsReady={fontsLoaded || !!fontError} />
-        {fontsLoaded || fontError ? <RootNavigator /> : null}
+      <ThemeProvider value={navigationTheme}>
+        <ImageBackground
+          source={require('@/assets/images/background.png')}
+          style={[styles.background, { backgroundColor: Colors[scheme].background }]}
+          imageStyle={styles.backgroundImage}
+          resizeMode="cover">
+          <SplashScreenController fontsReady={fontsLoaded || !!fontError} />
+          {fontsLoaded || fontError ? <RootNavigator /> : null}
+        </ImageBackground>
       </ThemeProvider>
     </SessionProvider>
   );
@@ -56,7 +82,11 @@ function RootNavigator() {
   }
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
+    <Stack
+      screenOptions={{
+        headerShown: false,
+        contentStyle: { backgroundColor: 'transparent' },
+      }}>
       <Stack.Protected guard={!!session}>
         <Stack.Screen name="(app)" />
       </Stack.Protected>
@@ -66,3 +96,12 @@ function RootNavigator() {
     </Stack>
   );
 }
+
+const styles = StyleSheet.create({
+  background: {
+    flex: 1,
+  },
+  backgroundImage: {
+    opacity: 0.15,
+  },
+});

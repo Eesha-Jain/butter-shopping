@@ -36,7 +36,7 @@ export function AuthForm({ initialMode = 'signUp' }: AuthFormProps) {
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
 
-  const title = mode === 'signUp' ? 'Sign up' : 'Log in';
+  const title = mode === 'signUp' ? 'Sign Up' : 'Log In';
 
   async function onContinue() {
     if (busyRef.current) return;
@@ -92,7 +92,7 @@ export function AuthForm({ initialMode = 'signUp' }: AuthFormProps) {
   }
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]}>
+    <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -101,7 +101,14 @@ export function AuthForm({ initialMode = 'signUp' }: AuthFormProps) {
           keyboardShouldPersistTaps="handled"
           bounces={false}>
           <View style={styles.frame}>
-            <Text style={[styles.title, { color: theme.text }]}>{title}</Text>
+            <View style={styles.header}>
+              <Image
+                source={require('@/assets/images/logo.png')}
+                style={styles.logo}
+                contentFit="contain"
+              />
+              <Text style={[styles.title, { color: theme.text }]}>{title}</Text>
+            </View>
 
             <View style={styles.fields}>
               {mode === 'signUp' ? (
@@ -117,8 +124,8 @@ export function AuthForm({ initialMode = 'signUp' }: AuthFormProps) {
                     style={[
                       styles.input,
                       {
-                        backgroundColor: theme.accentSoft,
-                        borderColor: theme.border,
+                        backgroundColor: theme.background,
+                        borderColor: theme.primary,
                         color: theme.text,
                       },
                     ]}
@@ -143,8 +150,8 @@ export function AuthForm({ initialMode = 'signUp' }: AuthFormProps) {
                   style={[
                     styles.input,
                     {
-                      backgroundColor: theme.accentSoft,
-                      borderColor: emailError ? theme.borderError : theme.border,
+                      backgroundColor: theme.background,
+                      borderColor: emailError ? theme.borderError : theme.primary,
                       color: theme.text,
                     },
                   ]}
@@ -169,8 +176,8 @@ export function AuthForm({ initialMode = 'signUp' }: AuthFormProps) {
                   style={[
                     styles.input,
                     {
-                      backgroundColor: theme.accentSoft,
-                      borderColor: passwordError ? theme.borderError : theme.border,
+                      backgroundColor: theme.background,
+                      borderColor: passwordError ? theme.borderError : theme.primary,
                       color: theme.text,
                     },
                   ]}
@@ -262,10 +269,19 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.five,
     gap: Spacing.three,
   },
+  header: {
+    alignItems: 'center',
+    gap: Spacing.three,
+    marginBottom: Spacing.one,
+  },
+  logo: {
+    width: 88,
+    height: 88,
+  },
   title: {
     fontFamily: FONT_BOLD,
     fontSize: 36,
-    marginBottom: Spacing.one,
+    textAlign: 'center',
   },
   fields: {
     gap: Spacing.two,
@@ -280,7 +296,7 @@ const styles = StyleSheet.create({
   input: {
     fontFamily: FONT_REGULAR,
     fontSize: 16,
-    borderWidth: 1,
+    borderWidth: 2,
     borderRadius: Radius.input,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two + 4,

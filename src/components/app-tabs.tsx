@@ -14,6 +14,7 @@ export default function AppTabs() {
         headerShown: false,
         tabBarActiveTintColor: colors.text,
         tabBarInactiveTintColor: colors.textSecondary,
+        sceneStyle: { backgroundColor: 'transparent' },
         tabBarStyle: { backgroundColor: colors.background },
       }}>
       <Tabs.Screen
