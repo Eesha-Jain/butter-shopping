@@ -56,6 +56,8 @@
       "expo-image",
       "expo-status-bar",
       "expo-web-browser",
+      "expo-speech-recognition",
+      "expo-audio"
       [
         "expo-location",
         {
