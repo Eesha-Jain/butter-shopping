@@ -1,4 +1,4 @@
-import type { Group, GroupBalance, GroupKind, GroupMember } from './database.types';
+import type { Group, GroupBalance, GroupKind, GroupMember } from '../types';
 import { supabase } from './client';
 import { unwrap, unwrapOne, unwrapVoid } from './query';
 

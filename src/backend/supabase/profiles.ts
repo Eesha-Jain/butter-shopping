@@ -1,6 +1,6 @@
-import type { DiscountEligibility, FoodTrait, Profile, UserFoodRule, UserLocation } from './database.types';
+import type { DiscountEligibility, FoodTrait, Profile, UserFoodRule, UserLocation } from '../types';
 import { supabase } from './client';
-import { AppError } from './errors';
+import { fail } from '../errors';
 import { unwrap, unwrapOne, unwrapVoid } from './query';
 
 /**
@@ -54,7 +54,7 @@ export async function uploadMyAvatar(input: {
     contentType: input.contentType,
     upsert: true,
   });
-  if (uploaded.error) throw new AppError(uploaded.error.message);
+  if (uploaded.error) fail(uploaded.error, 'Could not upload the avatar.');
   unwrapOne(
     await supabase.from('profiles').update({ avatar_path: path }).eq('id', userId).select('id').maybeSingle(),
     'Avatar path was not saved.',
@@ -69,7 +69,7 @@ export async function removeMyAvatar(): Promise<void> {
   const profile = await getMyProfile();
   if (profile.avatar_path) {
     const removed = await supabase.storage.from('avatars').remove([profile.avatar_path]);
-    if (removed.error) throw new AppError(removed.error.message);
+    if (removed.error) fail(removed.error, 'Could not remove the avatar.');
   }
   unwrapOne(
     await supabase
@@ -202,7 +202,7 @@ export async function unpreferStore(storeId: string): Promise<void> {
 async function requireUserId(): Promise<string> {
   const result = await supabase.auth.getUser();
   if (result.error || !result.data.user) {
-    throw new AppError(result.error?.message ?? 'Sign in first.');
+    fail(result.error ?? 'Sign in first.');
   }
   return result.data.user.id;
 }

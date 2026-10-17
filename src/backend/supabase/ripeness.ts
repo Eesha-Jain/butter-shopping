@@ -1,3 +1,4 @@
+import { fail } from '../errors';
 import { supabase } from './client';
 
 export type RipenessResult = {
@@ -17,6 +18,7 @@ export async function analyzeRipeness(input: {
   productHint?: string;
 }): Promise<RipenessResult> {
   const result = await supabase.functions.invoke('analyze-ripeness', { body: input });
-  if (result.error) throw result.error;
+  if (result.error) fail(result.error, 'Could not analyze ripeness.');
+  if (!result.data) fail('Ripeness analysis returned no result.');
   return result.data as RipenessResult;
 }

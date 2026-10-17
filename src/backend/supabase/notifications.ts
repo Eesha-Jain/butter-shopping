@@ -3,7 +3,7 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
 import { supabase } from './client';
-import { AppError } from './errors';
+import { fail } from '../errors';
 import { unwrapVoid } from './query';
 
 /**
@@ -21,7 +21,7 @@ export async function registerPushToken(): Promise<string | null> {
 
   const expoToken = await Notifications.getExpoPushTokenAsync();
   const user = await supabase.auth.getUser();
-  if (!user.data.user) throw new AppError('Sign in before registering for notifications.');
+  if (!user.data.user) fail('Sign in before registering for notifications.');
 
   const platform = Platform.OS === 'ios' ? 'ios' : Platform.OS === 'android' ? 'android' : 'web';
   unwrapVoid(
@@ -44,7 +44,7 @@ export async function registerPushToken(): Promise<string | null> {
 /** Removes one device token so a signed-out device stops receiving pushes. */
 export async function removePushToken(token: string): Promise<void> {
   const user = await supabase.auth.getUser();
-  if (!user.data.user) throw new AppError('Sign in before removing a notification token.');
+  if (!user.data.user) fail('Sign in before removing a notification token.');
   unwrapVoid(
     await supabase.from('push_tokens').delete().eq('user_id', user.data.user.id).eq('token', token),
   );
@@ -58,5 +58,5 @@ export async function sendOrderConfirmationPush(orderId: string): Promise<void> 
   const result = await supabase.functions.invoke('send-due-reminders', {
     body: { kind: 'confirm-order', orderId },
   });
-  if (result.error) throw result.error;
+  if (result.error) fail(result.error, 'Could not send the confirmation notification.');
 }

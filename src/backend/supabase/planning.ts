@@ -1,4 +1,4 @@
-import type { PriceOption, Profile, ShoppingPlanLine } from './database.types';
+import type { PriceOption, Profile, ShoppingPlanLine } from '../types';
 import { supabase } from './client';
 import { nextPreferredGroceryDate } from './dates';
 import { unwrap, unwrapOne } from './query';

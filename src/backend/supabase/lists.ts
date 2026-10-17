@@ -1,6 +1,6 @@
-import type { GroceryList, ListItem, ResolvedListItem } from './database.types';
+import type { GroceryList, ListItem, ResolvedListItem } from '../types';
 import { supabase } from './client';
-import { AppError } from './errors';
+import { fail } from '../errors';
 import { unwrap, unwrapOne, unwrapVoid } from './query';
 
 /**
@@ -39,7 +39,7 @@ export async function addListItem(input: {
 }): Promise<ListItem> {
   const targets = [input.productId, input.categoryId, input.customName].filter(Boolean);
   if (targets.length !== 1) {
-    throw new AppError('A list item needs exactly one of a product, a category, or a custom name.');
+    fail('A list item needs exactly one of a product, a category, or a custom name.');
   }
   const user = await supabase.auth.getUser();
   return unwrapOne(

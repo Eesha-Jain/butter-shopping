@@ -1,6 +1,6 @@
-import type { ExpiringPurchase, ItemHabit, Purchase } from './database.types';
+import type { ExpiringPurchase, ItemHabit, Purchase } from '../types';
 import { supabase } from './client';
-import { AppError } from './errors';
+import { fail } from '../errors';
 import { unwrap, unwrapOne } from './query';
 
 /**
@@ -62,7 +62,7 @@ export async function saveHabit(input: {
   autoAddEnabled?: boolean;
 }): Promise<ItemHabit> {
   if (Boolean(input.productId) === Boolean(input.categoryId)) {
-    throw new AppError('A habit needs exactly one of a product or a category.');
+    fail('A habit needs exactly one of a product or a category.');
   }
   const existingQuery = supabase
     .from('item_habits')

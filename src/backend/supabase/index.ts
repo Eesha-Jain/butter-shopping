@@ -2,7 +2,7 @@
  * App-facing data access. Screens import from here instead of calling Supabase
  * table queries directly. See README.md for which function belongs to which task.
  */
-export { AppError } from './errors';
+export { AppError } from '../errors';
 export { evenShareCents, payerRemainderCents } from './money';
 export { nextPreferredGroceryDate } from './dates';
 export {
@@ -103,4 +103,4 @@ export type {
   TraitKind,
   TraitRelation,
   TripStatus,
-} from './database.types';
+} from '../types';

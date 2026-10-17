@@ -5,9 +5,9 @@ import type {
   OrderShare,
   OrderSummary,
   ShoppingTrip,
-} from './database.types';
+} from '../types';
 import { supabase } from './client';
-import { AppError } from './errors';
+import { fail } from '../errors';
 import { evenShareCents, payerRemainderCents } from './money';
 import { unwrap, unwrapOne, unwrapVoid } from './query';
 
@@ -32,10 +32,10 @@ export async function createTripFromList(input: {
 }): Promise<string> {
   const method = input.fulfillmentMethod ?? 'self_pickup';
   if (method === 'delivery' && !input.deliveryLocationId) {
-    throw new AppError('Delivery needs one of your saved addresses.');
+    fail('Delivery needs one of your saved addresses.');
   }
   if (method !== 'delivery' && input.deliveryLocationId) {
-    throw new AppError('Only a delivery trip stores a delivery address.');
+    fail('Only a delivery trip stores a delivery address.');
   }
   return unwrap(
     await supabase.rpc('create_trip_from_list', {
@@ -101,9 +101,9 @@ export async function cancelOrder(orderId: string): Promise<Order> {
  */
 export async function requestCheckoutLink(orderId: string): Promise<string> {
   const result = await supabase.functions.invoke('create-checkout-link', { body: { orderId } });
-  if (result.error) throw result.error;
+  if (result.error) fail(result.error, 'Could not create a checkout link.');
   const url = (result.data as { checkoutUrl?: string } | null)?.checkoutUrl;
-  if (!url) throw new Error('Checkout function did not return a URL.');
+  if (!url) fail('Checkout function did not return a URL.');
   return url;
 }
 

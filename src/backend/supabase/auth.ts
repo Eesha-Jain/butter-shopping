@@ -1,5 +1,6 @@
 import type { Session, Subscription } from '@supabase/supabase-js';
 
+import { fail } from '../errors';
 import { supabase } from './client';
 import { unwrapVoid } from './query';
 
@@ -19,7 +20,7 @@ export async function signUp(input: {
     password: input.password,
     options: { data: { display_name: input.displayName ?? null } },
   });
-  if (result.error) throw result.error;
+  if (result.error) fail(result.error, 'Could not create an account.');
   return { userId: result.data.user?.id ?? null, session: result.data.session };
 }
 
@@ -31,7 +32,7 @@ export async function signIn(input: {
   password: string;
 }): Promise<Session | null> {
   const result = await supabase.auth.signInWithPassword(input);
-  if (result.error) throw result.error;
+  if (result.error) fail(result.error, 'Could not sign in.');
   return result.data.session;
 }
 
@@ -40,15 +41,16 @@ export async function signIn(input: {
  */
 export async function signOut(): Promise<void> {
   const result = await supabase.auth.signOut();
-  if (result.error) throw result.error;
+  if (result.error) fail(result.error, 'Could not sign out.');
 }
 
 /**
  * Returns the current device session, or null when nobody is signed in.
+ * A missing session is not an error and does not show a toast.
  */
 export async function getSession(): Promise<Session | null> {
   const result = await supabase.auth.getSession();
-  if (result.error) throw result.error;
+  if (result.error) fail(result.error, 'Could not read the session.');
   return result.data.session;
 }
 

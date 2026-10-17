@@ -6,9 +6,9 @@ import type {
   ProductCategory,
   Promotion,
   Store,
-} from './database.types';
+} from '../types';
 import { supabase } from './client';
-import { AppError } from './errors';
+import { fail } from '../errors';
 import { unwrap, unwrapOne } from './query';
 
 /**
@@ -102,7 +102,7 @@ export async function reportPrice(input: {
   priceCents: number;
 }): Promise<Price> {
   const user = await supabase.auth.getUser();
-  if (!user.data.user) throw new AppError('Sign in before reporting a price.');
+  if (!user.data.user) fail('Sign in before reporting a price.');
   return unwrapOne(
     await supabase
       .from('prices')

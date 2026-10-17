@@ -1,6 +1,6 @@
-import type { Recipe, RecipeDetail, RecipeIngredient, TrendingRow } from './database.types';
+import type { Recipe, RecipeDetail, RecipeIngredient, TrendingRow } from '../types';
 import { supabase } from './client';
-import { AppError } from './errors';
+import { fail } from '../errors';
 import { unwrap, unwrapOne } from './query';
 
 /**
@@ -39,7 +39,7 @@ export async function createRecipe(input: {
   isPublic?: boolean;
 }): Promise<Recipe> {
   const user = await supabase.auth.getUser();
-  if (!user.data.user) throw new AppError('Sign in before writing a recipe.');
+  if (!user.data.user) fail('Sign in before writing a recipe.');
   return unwrapOne(
     await supabase
       .from('recipes')

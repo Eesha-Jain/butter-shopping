@@ -1,4 +1,4 @@
-import type { Product, ProductTrait } from './database.types';
+import type { Product, ProductTrait } from '../types';
 import { supabase } from './client';
 import { productWarnings } from './catalog';
 import { unwrap } from './query';

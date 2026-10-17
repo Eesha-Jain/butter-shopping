@@ -2,7 +2,7 @@ import 'expo-sqlite/localStorage/install';
 import { createClient } from '@supabase/supabase-js';
 import { AppState } from 'react-native';
 
-import type { Database } from './database.types';
+import type { Database } from '../types';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabasePublishableKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
@@ -15,7 +15,7 @@ if (!supabaseUrl || !supabasePublishableKey) {
 
 /**
  * The only Supabase client in the app. Domain modules import this; screens should
- * import functions from `@/supabase` instead of calling this client directly.
+ * import functions from `@/backend` instead of calling this client directly.
  * The publishable key is public. Row level security, not a hidden key, protects data.
  */
 export const supabase = createClient<Database>(supabaseUrl, supabasePublishableKey, {
