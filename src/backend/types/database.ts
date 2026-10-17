@@ -128,6 +128,31 @@ export type Database = {
         Returns: string;
       };
       add_due_habit_items: { Args: Record<string, never>; Returns: number };
+      list_reportable_stores: { Args: Record<string, never>; Returns: ReportableStore[] };
+      register_reportable_store: {
+        Args: {
+          p_name: string;
+          p_kind: 'trader_joes' | 'campus';
+          p_college_name?: string | null;
+          p_address_line1?: string | null;
+          p_city?: string | null;
+          p_region?: string | null;
+          p_postal_code?: string | null;
+          p_latitude?: number | null;
+          p_longitude?: number | null;
+        };
+        Returns: string;
+      };
+      report_manual_price: {
+        Args: {
+          p_store_id: string;
+          p_product_name: string;
+          p_price_cents: number;
+          p_brand?: string | null;
+          p_upc?: string | null;
+        };
+        Returns: string;
+      };
     };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
@@ -203,6 +228,18 @@ export type StoreProduct = {
   is_available: boolean;
   created_at: string;
   updated_at: string;
+};
+
+export type ReportableStore = {
+  id: string;
+  name: string;
+  chain_name: string | null;
+  college_id: string | null;
+  college_name: string | null;
+  address_line1: string | null;
+  city: string | null;
+  region: string | null;
+  postal_code: string | null;
 };
 
 export type Price = {

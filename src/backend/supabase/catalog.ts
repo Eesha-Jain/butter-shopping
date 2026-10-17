@@ -5,6 +5,7 @@ import type {
   Product,
   ProductCategory,
   Promotion,
+  ReportableStore,
   Store,
 } from '../types';
 import { supabase } from './client';
@@ -93,9 +94,69 @@ export async function listCurrentPromotions(): Promise<Promotion[]> {
   );
 }
 
+/** Trader Joe's stores and campus stores, which are the only places a user can report a shelf price. */
+export async function listReportableStores(): Promise<ReportableStore[]> {
+  return unwrap(await supabase.rpc('list_reportable_stores'));
+}
+
+/**
+ * Saves a Trader Joe's or campus store for later price reports.
+ * kind is `trader_joes` or `campus`. A campus store requires collegeName.
+ * The same name and ZIP return the existing store.
+ */
+export async function registerReportableStore(input: {
+  name: string;
+  kind: 'trader_joes' | 'campus';
+  collegeName?: string;
+  addressLine1?: string;
+  city?: string;
+  region?: string;
+  postalCode?: string;
+  latitude?: number;
+  longitude?: number;
+}): Promise<string> {
+  return unwrap(
+    await supabase.rpc('register_reportable_store', {
+      p_name: input.name,
+      p_kind: input.kind,
+      p_college_name: input.collegeName ?? null,
+      p_address_line1: input.addressLine1 ?? null,
+      p_city: input.city ?? null,
+      p_region: input.region ?? null,
+      p_postal_code: input.postalCode ?? null,
+      p_latitude: input.latitude ?? null,
+      p_longitude: input.longitude ?? null,
+    }),
+  );
+}
+
+/**
+ * Appends a student-reported shelf price in cents at a Trader Joe's or campus store.
+ * Creates the product and the store listing when they do not exist yet.
+ */
+export async function reportManualPrice(input: {
+  storeId: string;
+  productName: string;
+  priceCents: number;
+  brand?: string;
+  upc?: string;
+}): Promise<string> {
+  return unwrap(
+    await supabase.rpc('report_manual_price', {
+      p_store_id: input.storeId,
+      p_product_name: input.productName,
+      p_price_cents: input.priceCents,
+      p_brand: input.brand ?? null,
+      p_upc: input.upc ?? null,
+    }),
+  );
+}
+
 /**
  * Appends a student-reported shelf price in cents. Prices are never edited.
  * submitted_by must be the signed-in user, which this function sets.
+ * The store listing must already exist. For Trader Joe's and campus stores,
+ * reportManualPrice creates that listing.
  */
 export async function reportPrice(input: {
   storeProductId: string;
