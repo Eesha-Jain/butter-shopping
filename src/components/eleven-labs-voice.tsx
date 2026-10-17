@@ -2,13 +2,14 @@
 'use dom';
 
 import { ConversationProvider, useConversation } from '@elevenlabs/react';
+import { useState } from 'react';
 
 type Props = {
   agentId: string;
-  dom: import('expo/dom').DOMProps;
+  dom?: import('expo/dom').DOMProps;
 };
 
-export default function ElevenLabsVoice({ agentId, dom }: Props) {
+export default function ElevenLabsVoice({ agentId }: Props) {
   return (
     <ConversationProvider>
       <VoiceControls agentId={agentId} />
@@ -17,59 +18,54 @@ export default function ElevenLabsVoice({ agentId, dom }: Props) {
 }
 
 function VoiceControls({ agentId }: { agentId: string }) {
-  const conversation = useConversation();
+  const [error, setError] = useState('');
+
+  const conversation = useConversation({
+    onError: (err) => {
+      console.error('ElevenLabs SDK error:', err);
+      setError(String(err));
+    },
+  });
 
   async function toggleConversation() {
+    setError('');
+
     try {
       if (conversation.status === 'connected') {
         await conversation.endSession();
-      } else {
-        await navigator.mediaDevices.getUserMedia({ audio: true });
-        await conversation.startSession({ agentId });
+        return;
       }
-    } catch (error) {
-      console.error('ElevenLabs connection failed:', error);
-      alert('Could not start voice chat. Check microphone permission and your Agent ID.');
+
+      if (!agentId || !agentId.startsWith('agent_')) {
+        throw new Error('Agent ID is missing or invalid.');
+      }
+
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error(
+            `Microphone API unavailable. Secure context: ${window.isSecureContext}; URL: ${window.location.href}`
+        );
+    }
+
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+      await conversation.startSession({ agentId });
+    } catch (err) {
+      console.error('Failed to start ElevenLabs conversation:', err);
+      setError(err instanceof Error ? err.message : String(err));
     }
   }
 
   return (
-    <div style={{
-      flex: 1,
-      display: 'flex',
-      flexDirection: 'column',
-      justifyContent: 'center',
-      alignItems: 'center',
-      gap: 20,
-      fontFamily: 'sans-serif',
-      background: '#fff8f5',
-      color: '#333',
-      padding: 24,
-    }}>
-      <h1>Butter AI</h1>
-      <p>
-        {conversation.isSpeaking
-          ? 'Butter is speaking...'
-          : conversation.status === 'connected'
-          ? 'Listening — tell Butter what you need.'
-          : 'Ready to help with your grocery shopping.'}
-      </p>
-      <button
-        onClick={toggleConversation}
-        style={{
-          background: '#A02C55',
-          color: 'white',
-          border: 'none',
-          borderRadius: 14,
-          padding: '16px 24px',
-          fontSize: 16,
-        }}
-      >
+    <div style={{ padding: 24, fontFamily: 'sans-serif' }}>
+      <h2>Butter Voice Assistant</h2>
+      <p>Status: {conversation.status}</p>
+
+      <button onClick={toggleConversation}>
         {conversation.status === 'connected'
           ? 'End conversation'
-          : 'Start talking'}
+          : 'Start conversation'}
       </button>
-      <p>Status: {conversation.status}</p>
+
+      {error && <p style={{ color: 'red' }}>{error}</p>}
     </div>
   );
 }
