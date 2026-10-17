@@ -1,8 +1,37 @@
+import { makeRedirectUri } from 'expo-auth-session';
+import * as WebBrowser from 'expo-web-browser';
+import { Platform } from 'react-native';
 import type { Session, Subscription } from '@supabase/supabase-js';
 
 import { fail } from '../errors';
+import { markHasSignedIn } from '../preferences';
 import { supabase } from './client';
 import { unwrapVoid } from './query';
+
+WebBrowser.maybeCompleteAuthSession();
+
+const redirectTo = makeRedirectUri({
+  scheme: 'buttershopping',
+  path: 'auth/callback',
+});
+
+function noteSignedIn(): void {
+  markHasSignedIn();
+}
+
+function getAuthParams(url: string): { errorCode: string | null; params: Record<string, string> } {
+  const hashPart = url.includes('#') ? url.split('#')[1] : '';
+  const queryPart = url.includes('?') ? url.split('?')[1]?.split('#')[0] ?? '' : '';
+  const combined = [queryPart, hashPart].filter(Boolean).join('&');
+  const params: Record<string, string> = {};
+  new URLSearchParams(combined).forEach((value, key) => {
+    params[key] = value;
+  });
+  return {
+    errorCode: params.error_description ?? params.error ?? null,
+    params,
+  };
+}
 
 /**
  * Creates an Auth user. The database trigger then creates the profile, personal
@@ -21,6 +50,7 @@ export async function signUp(input: {
     options: { data: { display_name: input.displayName ?? null } },
   });
   if (result.error) fail(result.error, 'Could not create an account.');
+  if (result.data.user) noteSignedIn();
   return { userId: result.data.user?.id ?? null, session: result.data.session };
 }
 
@@ -33,6 +63,7 @@ export async function signIn(input: {
 }): Promise<Session | null> {
   const result = await supabase.auth.signInWithPassword(input);
   if (result.error) fail(result.error, 'Could not sign in.');
+  if (result.data.session) noteSignedIn();
   return result.data.session;
 }
 
@@ -62,7 +93,10 @@ export function onAuthStateChange(
   listener: (session: Session | null) => void,
 ): () => void {
   const { data }: { data: { subscription: Subscription } } = supabase.auth.onAuthStateChange(
-    (_event, session) => listener(session),
+    (_event, session) => {
+      if (session) noteSignedIn();
+      listener(session);
+    },
   );
   return () => data.subscription.unsubscribe();
 }
@@ -73,4 +107,51 @@ export function onAuthStateChange(
  */
 export async function requestPasswordReset(email: string): Promise<void> {
   unwrapVoid(await supabase.auth.resetPasswordForEmail(email));
+}
+
+async function createSessionFromUrl(url: string): Promise<Session | null> {
+  const { params, errorCode } = getAuthParams(url);
+  if (errorCode) fail(errorCode, 'Could not complete Google sign-in.');
+
+  const code = params.code;
+  if (code) {
+    const result = await supabase.auth.exchangeCodeForSession(code);
+    if (result.error) fail(result.error, 'Could not complete Google sign-in.');
+    if (result.data.session) noteSignedIn();
+    return result.data.session;
+  }
+
+  const access_token = params.access_token;
+  const refresh_token = params.refresh_token;
+  if (!access_token) return null;
+
+  const result = await supabase.auth.setSession({ access_token, refresh_token });
+  if (result.error) fail(result.error, 'Could not complete Google sign-in.');
+  if (result.data.session) noteSignedIn();
+  return result.data.session;
+}
+
+/**
+ * Opens Google OAuth (PKCE). On native, uses an in-app browser and deep link;
+ * on web, follows the browser redirect.
+ */
+export async function signInWithGoogle(): Promise<Session | null> {
+  const result = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: {
+      redirectTo,
+      skipBrowserRedirect: Platform.OS !== 'web',
+    },
+  });
+  if (result.error) fail(result.error, 'Could not start Google sign-in.');
+  if (!result.data.url) fail('Google sign-in did not return a URL.');
+
+  if (Platform.OS === 'web') {
+    // Browser navigates away; session completes after redirect.
+    return null;
+  }
+
+  const authResult = await WebBrowser.openAuthSessionAsync(result.data.url, redirectTo);
+  if (authResult.type !== 'success') return null;
+  return createSessionFromUrl(authResult.url);
 }

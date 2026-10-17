@@ -1,13 +1,15 @@
 import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
+import { Platform, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { useSession } from '@/auth/session';
 import { AnimatedIcon } from '@/components/animated-icon';
 import { HintRow } from '@/components/hint-row';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 
 function getDevMenuHint() {
   if (Platform.OS === 'web') {
@@ -29,6 +31,9 @@ function getDevMenuHint() {
 }
 
 export default function HomeScreen() {
+  const { signOut } = useSession();
+  const theme = useTheme();
+
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
@@ -46,7 +51,7 @@ export default function HomeScreen() {
         <ThemedView type="backgroundElement" style={styles.stepContainer}>
           <HintRow
             title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
+            hint={<ThemedText type="code">src/app/(app)/index.tsx</ThemedText>}
           />
           <HintRow title="Dev tools" hint={getDevMenuHint()} />
           <HintRow
@@ -54,6 +59,17 @@ export default function HomeScreen() {
             hint={<ThemedText type="code">npm run reset-project</ThemedText>}
           />
         </ThemedView>
+
+        <Pressable
+          onPress={() => {
+            void signOut();
+          }}
+          style={({ pressed }) => [
+            styles.signOut,
+            { borderColor: theme.border, opacity: pressed ? 0.7 : 1 },
+          ]}>
+          <ThemedText type="smallBold">Sign out</ThemedText>
+        </Pressable>
 
         {Platform.OS === 'web' && <WebBadge />}
       </SafeAreaView>
@@ -94,5 +110,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.four,
     borderRadius: Spacing.four,
+  },
+  signOut: {
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    paddingVertical: Spacing.two,
+    borderWidth: 1,
+    borderRadius: Spacing.three,
   },
 });
