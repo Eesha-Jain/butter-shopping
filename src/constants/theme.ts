@@ -14,6 +14,13 @@ export const Colors = {
     backgroundElement: '#F0F0F3',
     backgroundSelected: '#E0E1E6',
     textSecondary: '#60646C',
+    primary: '#F5C518',
+    primaryText: '#000000',
+    secondary: '#000000',
+    border: '#D8D8DE',
+    borderError: '#E5484D',
+    error: '#E5484D',
+    tint: '#F5C518',
   },
   dark: {
     text: '#ffffff',
@@ -21,6 +28,13 @@ export const Colors = {
     backgroundElement: '#212225',
     backgroundSelected: '#2E3135',
     textSecondary: '#B0B4BA',
+    primary: '#F5C518',
+    primaryText: '#000000',
+    secondary: '#F5F5F5',
+    border: '#3A3A3E',
+    borderError: '#E5484D',
+    error: '#FF6369',
+    tint: '#F5C518',
   },
 } as const;
 
@@ -59,6 +73,12 @@ export const Spacing = {
   four: 24,
   five: 32,
   six: 64,
+} as const;
+
+export const Radius = {
+  input: 16,
+  button: 999,
+  card: 24,
 } as const;
 
 export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;

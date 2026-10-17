@@ -50,6 +50,10 @@
         }
       ],
       "expo-sqlite",
+      "expo-font",
+      "expo-image",
+      "expo-status-bar",
+      "expo-web-browser",
       "@config-plugins/react-native-webrtc",
       "@livekit/react-native-expo-plugin"
     ],
