@@ -8,6 +8,15 @@
 
 export { AppError, fail, runAction } from './errors';
 export { showErrorToast, showSuccessToast, messageFromUnknown } from './toast';
+export { hasSignedInBefore, markHasSignedIn } from './preferences';
+export {
+  getItem,
+  getJson,
+  removeItem,
+  setItem,
+  setJson,
+  type StorageKey,
+} from './storage';
 
 export type * from './types';
 
@@ -83,6 +92,7 @@ export {
   setListItemDone,
   setMyFoodRules,
   signIn,
+  signInWithGoogle,
   signOut,
   signUp,
   suggestGroceryDate,

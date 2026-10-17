@@ -3,7 +3,7 @@ import { messageFromUnknown, showErrorToast } from './toast';
 /**
  * Error raised when a backend call fails or a required row is missing.
  * `code` is the Postgres or PostgREST error code when Supabase provides one.
- * `toasted` is true after a Burnt toast has already been shown for this error,
+ * `toasted` is true after an error toast has already been shown for this error,
  * so callers do not show the same failure twice.
  */
 export class AppError extends Error {
@@ -19,7 +19,7 @@ export class AppError extends Error {
 }
 
 /**
- * Turns any thrown value into an AppError, shows a Burnt toast once, and
+ * Turns any thrown value into an AppError, shows an error toast once, and
  * rethrows. Domain helpers already toast through unwrap*; use this for Auth
  * errors, Edge Function failures, and validation that throws before a query.
  */

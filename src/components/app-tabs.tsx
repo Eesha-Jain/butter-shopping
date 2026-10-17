@@ -1,4 +1,4 @@
-import { NativeTabs } from 'expo-router/native-tabs';
+import { NativeTabs } from 'expo-router/unstable-native-tabs';
 import { useColorScheme } from 'react-native';
 
 import { Colors } from '@/constants/theme';
@@ -10,10 +10,15 @@ export default function AppTabs() {
   return (
     <NativeTabs
       backgroundColor={colors.background}
-      indicatorColor={colors.backgroundElement}
-      labelStyle={{ selected: { color: colors.text } }}>
+      indicatorColor={colors.primaryDark}
+      tintColor={colors.primaryDark}
+      iconColor={{ default: colors.textSecondary, selected: colors.primaryDark }}
+      labelStyle={{
+        color: colors.textSecondary,
+        selected: { color: colors.primaryDark },
+      }}>
       <NativeTabs.Trigger name="index">
-        <NativeTabs.Trigger.Label>Home</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Label>Shop</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon
           src={require('@/assets/images/tabIcons/home.png')}
           renderingMode="template"
@@ -25,26 +30,23 @@ export default function AppTabs() {
         <NativeTabs.Trigger.Icon sf="mappin.and.ellipse" md="location_on" />
       </NativeTabs.Trigger>
 
-      <NativeTabs.Trigger name="schedule">
-        <NativeTabs.Trigger.Label>Schedule</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon
-          src={require('@/assets/images/tabIcons/explore.png')}
-          renderingMode="template"
-        />
+      <NativeTabs.Trigger name="days">
+        <NativeTabs.Trigger.Label>Days</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf="calendar" md="calendar_month" />
       </NativeTabs.Trigger>
 
-       <NativeTabs.Trigger name="cart">
-        <NativeTabs.Trigger.Label>Cart</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon
-          src={require('@/assets/images/tabIcons/cart.png')}
-          renderingMode="template"
-        />
-      </NativeTabs.Trigger>
-
-      <NativeTabs.Trigger name="ai">
+      <NativeTabs.Trigger name="agent">
         <NativeTabs.Trigger.Label>AI</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon
           src={require('@/assets/images/tabIcons/agent.png')}
+          renderingMode="template"
+        />
+      </NativeTabs.Trigger>
+
+      <NativeTabs.Trigger name="cart">
+        <NativeTabs.Trigger.Label>Cart</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon
+          src={require('@/assets/images/tabIcons/cart.png')}
           renderingMode="template"
         />
       </NativeTabs.Trigger>

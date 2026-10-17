@@ -43,7 +43,13 @@ peanuts, halal, and other filters are food traits, not categories.
 
 A product is the packaged item, shared by every store. A store product is that
 item at one address. Prices are added over time and are never edited. The latest
-price is the current shelf price.
+price is the current shelf price. Categories may set `typical_shelf_life_days`;
+a product may override with `shelf_life_days`. Planning ranks offers by
+waste-adjusted `effective_cents_per_base` (price divided by how much the group
+can finish before spoil), using habits for daily usage when present, otherwise
+`amount_base / 7`. Budget checks still use real `line_cents`. When a purchase
+is recorded without an explicit expiration, `expires_on` defaults from that
+shelf life.
 
 A shopping trip is one grocery date for a group. Each store on that trip gets
 its own order. The trip also stores how the group will receive the food:
@@ -69,6 +75,8 @@ images live in `public-assets`. The database stores the file path only.
 - Weekdays are `0` Sunday through `6` Saturday.
 - Money is integer cents.
 - `usual_amount_base` and ingredient amounts use the category unit: `g`, `ml`, or `ct`.
+- Habits improve recommendations: without one, perishable ranking falls back to `amount_base / 7` or no waste penalty.
+- Null shelf life means non-perishable for ranking (full pack counts as usable).
 - Ingredients, allergens, and chemicals can only be marked `contains` or `may_contain`, and a user can only avoid them.
 - Dietary properties use `suitable`. Certifications use `certified`. Users can require or prefer those.
 - No trait row means unknown. It does not mean the product is safe for a required diet.
@@ -97,13 +105,13 @@ images live in `public-assets`. The database stores the file path only.
 | Add a recipe to the list | `addRecipeToList` | How many ingredient lines were added. |
 | Show the list | `listResolvedItems` | Names and the cheapest shelf price, before coupons and food rules. |
 | Choose the grocery day | `suggestGroceryDate` | The next preferred calendar date. |
-| Compare stores for one food | `priceOptions` | Offers that already follow the group's strictest rules. |
-| Plan the whole list | `recommendShoppingPlan` | One line per item, the store, and whether the estimate is over budget. |
+| Compare stores for one food | `priceOptions` | Offers that already follow the group's strictest rules, with waste-adjusted `effective_cents_per_base`. |
+| Plan the whole list | `recommendShoppingPlan` | One line per item, the store (picked by effective cost), and whether the estimate is over budget. |
 | Turn the plan into drafts | `createTripFromList` | The trip id. Pass `fulfillmentMethod` (`self_pickup`, `store_pickup`, or `delivery`) and, for delivery, `deliveryLocationId`. One draft order is created per store. |
 | Buyer accepts the order | `confirmOrder` | Nothing. The caller becomes the payer. |
 | Place the confirmed order | `finalizeOrder` | Nothing. Purchases and shares are written. |
 | Open Instacart | `requestCheckoutLink` | A URL saved on the order. |
-| Record a store receipt | `recordPurchase` | The purchase id. Set the expiration date now if you know it. |
+| Record a store receipt | `recordPurchase` | The purchase id. Pass `expiresOn` if known; otherwise shelf life fills it. |
 | Remember that eggs last two weeks | `saveHabit` | The group habit. |
 | Add due foods to the list | `addDueHabitItems` | How many new list rows were created. |
 | Show the trending tab | `listTrending` | Organic and sponsored rows. Label the sponsored ones. |

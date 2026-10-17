@@ -26,7 +26,9 @@ export async function suggestGroceryDate(profile?: Profile): Promise<string> {
  * Every legal offer for one product or category on a date. Pass the group id
  * so the strictest member rule is applied without returning those private rules.
  * Read line_cents for the estimated promotional total and shelf_price_cents for
- * the observed sticker price.
+ * the observed sticker price. Prefer effective_cents_per_base when ranking:
+ * it divides line_cents by how much of the pack the group can finish before
+ * spoil (habits, else amount_base / 7 days).
  */
 export async function priceOptions(input: {
   groupId: string;
@@ -56,9 +58,10 @@ export async function priceOptions(input: {
 
 /**
  * One recommended line per unchecked list item. The trip date is plannedFor;
- * choose it with suggestGroceryDate when the user has preferred days. A null
- * store_product_id means that item cannot be ordered yet. over_budget is the
- * same on every row and compares the estimated total with weekly_budget_cents.
+ * choose it with suggestGroceryDate when the user has preferred days. Picks use
+ * waste-adjusted effective_cents_per_base (then line_cents, then distance). A
+ * null store_product_id means that item cannot be ordered yet. over_budget is
+ * the same on every row and still compares sum(line_cents) with weekly_budget_cents.
  */
 export async function recommendShoppingPlan(input: {
   listId: string;
