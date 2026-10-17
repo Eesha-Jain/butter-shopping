@@ -29,9 +29,9 @@ export default function AppTabs() {
         }}
       />
       <Tabs.Screen
-        name="explore"
+        name="schedule"
         options={{
-          title: 'Explore',
+          title: 'schedule',
           tabBarIcon: ({ color }) => (
             <Image
               source={require('@/assets/images/tabIcons/explore.png')}
@@ -40,6 +40,31 @@ export default function AppTabs() {
           ),
         }}
       />
+       <Tabs.Screen
+        name="agent"
+        options={{
+          title: 'AI',
+          tabBarIcon: ({ color }) => (
+            <Image
+              source={require('@/assets/images/tabIcons/agent.png')}
+              style={{ width: 24, height: 24, tintColor: color }}
+            />
+          ),
+        }}
+      />
+       <Tabs.Screen
+        name="cart"
+        options={{
+          title: 'cart',
+          tabBarIcon: ({ color }) => (
+            <Image
+              source={require('@/assets/images/tabIcons/cart.png')}
+              style={{ width: 24, height: 24, tintColor: color }}
+            />
+          ),
+        }}
+      />
+      
     </Tabs>
   );
 }

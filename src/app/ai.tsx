@@ -1,20 +1,16 @@
 
 import ElevenLabsVoice from '@/components/eleven-labs-voice';
-import { StyleSheet, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 
 export default function AIScreen() {
   const agentId = process.env.EXPO_PUBLIC_AGENT_ID;
 
   if (!agentId) {
-    return (
-      <View style={styles.container}>
-        <Text>Missing EXPO_PUBLIC_AGENT_ID in .env</Text>
-      </View>
-    );
+    return <Text>Missing ElevenLabs Agent ID in .env</Text>;
   }
 
   return (
-    <View style={styles.container}>
+    <View style={{ flex: 1 }}>
       <ElevenLabsVoice
         agentId={agentId}
         dom={{ scrollEnabled: false }}
@@ -22,9 +18,3 @@ export default function AIScreen() {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-});
