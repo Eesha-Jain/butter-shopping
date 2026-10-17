@@ -174,6 +174,8 @@ export type ProductCategory = {
   name: string;
   parent_id: string | null;
   base_unit: 'g' | 'ml' | 'ct';
+  /** Days after purchase before a typical item spoils; null = non-perishable/unknown. */
+  typical_shelf_life_days: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -186,6 +188,8 @@ export type Product = {
   category_id: string | null;
   size_base_amount: number | null;
   size_base_unit: 'g' | 'ml' | 'ct' | null;
+  /** Overrides category typical_shelf_life_days when set. */
+  shelf_life_days: number | null;
   image_path: string | null;
   ingredients_text: string | null;
   ingredients_updated_at: string | null;
@@ -604,6 +608,14 @@ export type PriceOption = {
   distance_km: number | null;
   is_stale: boolean;
   preferred_match: boolean;
+  /** Resolved product then category shelf life in days. */
+  shelf_life_days: number | null;
+  /** Daily usage from habit or amount_base/7; null means no waste penalty. */
+  usage_per_day: number | null;
+  /** How much of the pack is usable before spoil. */
+  usable_amount_base: number | null;
+  /** line_cents / usable_amount_base; prefer this when ranking offers. */
+  effective_cents_per_base: number | null;
 };
 
 export type ShoppingPlanLine = {
@@ -616,4 +628,6 @@ export type ShoppingPlanLine = {
   distance_km: number | null;
   is_stale: boolean | null;
   over_budget: boolean;
+  /** Waste-adjusted unit cost used to pick this offer. */
+  effective_cents_per_base: number | null;
 };

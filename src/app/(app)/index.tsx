@@ -7,7 +7,6 @@ import { AnimatedIcon } from '@/components/animated-icon';
 import { HintRow } from '@/components/hint-row';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -35,12 +34,12 @@ export default function HomeScreen() {
   const theme = useTheme();
 
   return (
-    <ThemedView style={styles.container}>
+    <ThemedView style={[styles.container, styles.transparent]}>
       <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
+        <ThemedView style={[styles.heroSection, styles.transparent]}>
           <AnimatedIcon />
           <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
+            Butter Shopping
           </ThemedText>
         </ThemedView>
 
@@ -70,8 +69,6 @@ export default function HomeScreen() {
           ]}>
           <ThemedText type="smallBold">Sign out</ThemedText>
         </Pressable>
-
-        {Platform.OS === 'web' && <WebBadge />}
       </SafeAreaView>
     </ThemedView>
   );
@@ -82,6 +79,9 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     flexDirection: 'row',
+  },
+  transparent: {
+    backgroundColor: 'transparent',
   },
   safeArea: {
     flex: 1,

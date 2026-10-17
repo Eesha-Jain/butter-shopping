@@ -1,14 +1,14 @@
-import {
-  Tabs,
-  TabList,
-  TabTrigger,
-  TabSlot,
-  TabTriggerSlotProps,
-  TabListProps,
-} from 'expo-router/ui';
 import type { Href } from 'expo-router';
+import {
+  TabList,
+  TabListProps,
+  Tabs,
+  TabSlot,
+  TabTrigger,
+  TabTriggerSlotProps,
+} from 'expo-router/ui';
 import { SymbolView } from 'expo-symbols';
-import { Pressable, useColorScheme, View, StyleSheet } from 'react-native';
+import { Pressable, StyleSheet, useColorScheme, View } from 'react-native';
 
 import { Colors, MaxContentWidth, Spacing } from '@/constants/theme';
 
@@ -23,10 +23,16 @@ export default function AppTabs() {
       <TabList asChild>
         <CustomTabList>
           <TabTrigger name="home" href={'/' as Href} asChild>
-            <TabButton>Home</TabButton>
+            <TabButton>Shop</TabButton>
           </TabTrigger>
-          <TabTrigger name="explore" href={'/explore' as Href} asChild>
-            <TabButton>Explore</TabButton>
+          <TabTrigger name="days" href={'/days' as Href} asChild>
+            <TabButton>Days</TabButton>
+          </TabTrigger>
+          <TabTrigger name="agent" href={'/agent' as Href} asChild>
+            <TabButton>AI</TabButton>
+          </TabTrigger>
+          <TabTrigger name="cart" href={'/cart' as Href} asChild>
+            <TabButton>Cart</TabButton>
           </TabTrigger>
         </CustomTabList>
       </TabList>
