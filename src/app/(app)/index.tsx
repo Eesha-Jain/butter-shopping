@@ -7,7 +7,6 @@ import { AnimatedIcon } from '@/components/animated-icon';
 import { HintRow } from '@/components/hint-row';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -40,7 +39,7 @@ export default function HomeScreen() {
         <ThemedView style={[styles.heroSection, styles.transparent]}>
           <AnimatedIcon />
           <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
+            Butter Shopping
           </ThemedText>
         </ThemedView>
 
@@ -70,8 +69,6 @@ export default function HomeScreen() {
           ]}>
           <ThemedText type="smallBold">Sign out</ThemedText>
         </Pressable>
-
-        {Platform.OS === 'web' && <WebBadge />}
       </SafeAreaView>
     </ThemedView>
   );

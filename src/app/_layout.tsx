@@ -13,6 +13,10 @@ import { SessionProvider, useSession } from '@/auth/session';
 import { Colors } from '@/constants/theme';
 
 SplashScreen.preventAutoHideAsync();
+SplashScreen.setOptions({
+  duration: 400,
+  fade: true,
+});
 
 // Hide Expo's floating tools button (dev menu: reload, go home, etc.)
 const DevMenuPreferences = requireOptionalNativeModule<{
@@ -67,7 +71,7 @@ function SplashScreenController({ fontsReady }: { fontsReady: boolean }) {
 
   useEffect(() => {
     if (!isLoading && fontsReady) {
-      void SplashScreen.hideAsync();
+      SplashScreen.hide();
     }
   }, [isLoading, fontsReady]);
 

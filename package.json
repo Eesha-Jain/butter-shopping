@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "main": "expo-router/entry",
   "dependencies": {
+    "@config-plugins/react-native-webrtc": "^15.0.2",
+    "@elevenlabs/react": "^1.18.0",
     "@elevenlabs/react-native": "^1.2.30",
     "@expo-google-fonts/comic-neue": "^0.4.1",
     "@expo/ui": "~57.0.25",
