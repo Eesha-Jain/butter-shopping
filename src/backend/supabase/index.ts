@@ -54,12 +54,13 @@ export {
   getCurrentPrice,
   getStore,
   listCurrentPromotions,
-  nearbyStores,
+  nearbyShops,
   productWarnings,
   reportPrice,
   searchCategories,
   searchProducts,
 } from './catalog';
+export { fetchNearbyShops, getUserCoords } from './locationService';
 export {
   getWeeklyBudgetCents,
   priceOptions,
