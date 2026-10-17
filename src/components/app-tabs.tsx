@@ -20,6 +20,11 @@ export default function AppTabs() {
         />
       </NativeTabs.Trigger>
 
+      <NativeTabs.Trigger name="nearby">
+        <NativeTabs.Trigger.Label>Nearby</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf="mappin.and.ellipse" md="location_on" />
+      </NativeTabs.Trigger>
+
       <NativeTabs.Trigger name="schedule">
         <NativeTabs.Trigger.Label>Schedule</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon
