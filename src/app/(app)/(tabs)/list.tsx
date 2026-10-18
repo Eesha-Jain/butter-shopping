@@ -42,7 +42,6 @@ import {
   type OrderShare,
   type ResolvedListItem,
 } from '@/backend';
-import { GroupManageSheet } from '@/components/list/group-manage-sheet';
 import {
   assignGroceryDay,
   buildGroceryDays,
@@ -128,15 +127,12 @@ export default function PlanScreen() {
     targets,
     activeTarget,
     setActiveTarget,
-    refreshTargets,
-    selectGroupId,
     isLoading: listsLoading,
   } = useActiveList();
 
   const [segment, setSegment] = useState<Segment>('calendar');
   const isPlanView = segment !== 'past';
   const [preferredDays, setPreferredDays] = useState<number[] | null>(null);
-  const [manageOpen, setManageOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -420,11 +416,6 @@ export default function PlanScreen() {
     return () => clearTimeout(timer);
   }, [segment, loadPlan, loadPast]);
 
-  const onGroupChanged = async (nextGroupId?: string) => {
-    if (nextGroupId) await selectGroupId(nextGroupId);
-    else await refreshTargets();
-  };
-
   const openPastDetail = async (order: GroupOrderRow) => {
     setPastDetail(order);
     setPastItems([]);
@@ -582,8 +573,8 @@ export default function PlanScreen() {
                 accessibilityLabel="Staples"
                 tooltip="Staples you buy often"
                 tooltipAlign="right"
-                iosSymbol="carrot.fill"
-                androidSymbol="nutrition"
+                iosSymbol="tag.fill"
+                androidSymbol="sell"
                 onPress={() => router.push('/staples')}
               />
               <NativeIconButton
@@ -591,7 +582,7 @@ export default function PlanScreen() {
                 tooltipAlign="right"
                 iosSymbol="person.2.fill"
                 androidSymbol="group"
-                onPress={() => setManageOpen(true)}
+                onPress={() => router.push('/groups')}
               />
             </View>
           </View>
@@ -767,13 +758,6 @@ export default function PlanScreen() {
           </View>
         )}
       </ScrollView>
-
-      <GroupManageSheet
-        visible={manageOpen}
-        activeTarget={activeTarget}
-        onClose={() => setManageOpen(false)}
-        onGroupChanged={onGroupChanged}
-      />
 
       <Modal
         visible={pastDetail != null}

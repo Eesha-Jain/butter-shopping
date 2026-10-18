@@ -1,25 +1,25 @@
 import * as Crypto from 'expo-crypto';
 
 import { BACKEND_URL, CAMPUS_DEFAULT_ZIP } from '../../api/config';
+import { fail } from '../errors';
 import type {
-  CurrentPrice,
-  NearbyStore,
-  Price,
-  Product,
-  ProductCategory,
-  ProductTrait,
-  Promotion,
-  ReportableStore,
-  Store,
+    CurrentPrice,
+    NearbyStore,
+    Price,
+    Product,
+    ProductCategory,
+    ProductTrait,
+    Promotion,
+    ReportableStore,
+    Store,
 } from '../types';
 import { supabase } from './client';
-import { fail } from '../errors';
 import { isPriorLocalCalendarDay, todayLocalDateKey } from './localTime';
 import {
-  contributeReportedPriceToOpenPrices,
-  getOpenPricesCentsByUpcs,
-  type OpenPriceRow,
-  type OpenPricesGeo,
+    contributeReportedPriceToOpenPrices,
+    getOpenPricesCentsByUpcs,
+    type OpenPriceRow,
+    type OpenPricesGeo,
 } from './open-prices';
 import { unwrap, unwrapOne, unwrapVoid } from './query';
 import {

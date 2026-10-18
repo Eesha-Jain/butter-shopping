@@ -1,11 +1,16 @@
 import * as Haptics from 'expo-haptics';
-import { useRef } from 'react';
+import { SymbolView } from 'expo-symbols';
+import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View, type View as RNView } from 'react-native';
 import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  type SharedValue,
-  withTiming,
+    Easing,
+    useAnimatedStyle,
+    useSharedValue,
+    withDelay,
+    withSequence,
+    withSpring,
+    withTiming,
+    type SharedValue,
 } from 'react-native-reanimated';
 
 import { productCardName, type Product } from '@/backend';
@@ -50,8 +55,10 @@ type Props = {
   priceCents?: number | null;
   /** Hide grid copy while the in-place peek overlay is showing this product. */
   isPeekSource?: boolean;
+  favorited?: boolean;
   onPress: (anchor: ProductPeekAnchor) => void;
   onLongPress?: (anchor: ProductPeekAnchor) => void;
+  onDoubleTap?: () => void;
   onAdd: () => void;
   onIncrement: () => void;
   onDecrement: () => void;
@@ -70,7 +77,7 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 /**
  * Butter-block product pod: shiny block + square photo + name/price/add.
- * Soft press scale; long-press opens peek; haptics only on add/qty.
+ * Soft press scale; double-tap favorites; long-press opens peek.
  */
 export function ProductCard({
   product,
@@ -87,17 +94,34 @@ export function ProductCard({
   compact,
   priceCents,
   isPeekSource,
+  favorited = false,
   onPress,
   onLongPress,
+  onDoubleTap,
   onAdd,
   onIncrement,
   onDecrement,
 }: Props) {
   const theme = useTheme();
   const rootRef = useRef<RNView>(null);
+  const tapTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onList = quantityOnList != null && quantityOnList > 0;
   const press = useSharedValue(1);
+  const burstScale = useSharedValue(0);
+  const burstOpacity = useSharedValue(0);
+  const burstLift = useSharedValue(0);
+  const burstTilt = useSharedValue(0);
+  const burstRedOpacity = useSharedValue(1);
+  const burstInkOpacity = useSharedValue(0);
+  const [burstLiked, setBurstLiked] = useState(true);
   const resolvedMeta = metaLabel ?? (sponsored ? 'Sponsored' : null);
+
+  useEffect(
+    () => () => {
+      if (tapTimeoutRef.current) clearTimeout(tapTimeoutRef.current);
+    },
+    [],
+  );
 
   const withAnchor = (cb: (anchor: ProductPeekAnchor) => void) => {
     if (!rootRef.current) {
@@ -114,6 +138,82 @@ export function ProductCard({
     transform: [{ scale: press.value }],
   }));
 
+  const burstStyle = useAnimatedStyle(() => ({
+    opacity: burstOpacity.get(),
+    transform: [
+      { translateY: burstLift.get() },
+      { rotate: `${burstTilt.get()}deg` },
+      { scale: burstScale.get() },
+    ],
+  }));
+  const burstRedStyle = useAnimatedStyle(() => ({
+    opacity: burstRedOpacity.get(),
+  }));
+  const burstInkStyle = useAnimatedStyle(() => ({
+    opacity: burstInkOpacity.get(),
+  }));
+
+  // Instagram-style: pop past full size, settle, hold, then drift up and fade.
+  const playBurst = (liking: boolean) => {
+    setBurstLiked(liking);
+    burstLift.set(0);
+    burstRedOpacity.set(1);
+    burstInkOpacity.set(0);
+    if (liking) {
+      burstTilt.set(Math.round(Math.random() * 24) - 12);
+      burstScale.set(
+        withSequence(
+          withTiming(0, { duration: 0 }),
+          withSpring(1.2, { damping: 9, stiffness: 320, mass: 0.6 }),
+          withTiming(1, { duration: 110 }),
+          withDelay(320, withTiming(0.85, { duration: 220 })),
+        ),
+      );
+      burstOpacity.set(
+        withSequence(
+          withTiming(0.95, { duration: 90 }),
+          withDelay(480, withTiming(0, { duration: 220 })),
+        ),
+      );
+      burstLift.set(
+        withDelay(
+          560,
+          withTiming(-14, { duration: 220, easing: Easing.out(Easing.quad) }),
+        ),
+      );
+    } else {
+      // The red heart cracks into an ink-colored heart before drifting away.
+      burstTilt.set(-9);
+      burstScale.set(
+        withSequence(
+          withTiming(0.65, { duration: 0 }),
+          withSpring(1.08, { damping: 8, stiffness: 300, mass: 0.55 }),
+          withTiming(0.94, { duration: 120 }),
+          withDelay(120, withTiming(0.76, { duration: 240 })),
+        ),
+      );
+      burstOpacity.set(
+        withSequence(
+          withTiming(1, { duration: 80 }),
+          withDelay(430, withTiming(0, { duration: 240 })),
+        ),
+      );
+      burstRedOpacity.set(
+        withDelay(130, withTiming(0.12, { duration: 180, easing: Easing.out(Easing.quad) })),
+      );
+      burstInkOpacity.set(
+        withSequence(
+          withTiming(0, { duration: 0 }),
+          withDelay(130, withTiming(0.9, { duration: 180, easing: Easing.out(Easing.quad) })),
+          withDelay(250, withTiming(0, { duration: 230 })),
+        ),
+      );
+      burstLift.set(
+        withDelay(400, withTiming(-10, { duration: 260, easing: Easing.out(Easing.quad) })),
+      );
+    }
+  };
+
   const blockColor =
     butterColor ?? (onList ? theme.backgroundSelected : theme.accentSoft);
   const blockSize = compact ? 112 : 128;
@@ -128,11 +228,37 @@ export function ProductCard({
       : null) ??
     parseSavingsLabelCents(savingsLabel);
 
+  const handlePress = () => {
+    if (!onDoubleTap) {
+      withAnchor(onPress);
+      return;
+    }
+    if (tapTimeoutRef.current) {
+      clearTimeout(tapTimeoutRef.current);
+      tapTimeoutRef.current = null;
+      playBurst(!favorited);
+      onDoubleTap();
+      return;
+    }
+    tapTimeoutRef.current = setTimeout(() => {
+      tapTimeoutRef.current = null;
+      withAnchor(onPress);
+    }, 280);
+  };
+
+  const handleLongPress = () => {
+    if (tapTimeoutRef.current) {
+      clearTimeout(tapTimeoutRef.current);
+      tapTimeoutRef.current = null;
+    }
+    if (onLongPress) withAnchor(onLongPress);
+  };
+
   return (
     <AnimatedPressable
       ref={rootRef}
-      onPress={() => withAnchor(onPress)}
-      onLongPress={onLongPress ? () => withAnchor(onLongPress) : undefined}
+      onPress={handlePress}
+      onLongPress={onLongPress ? handleLongPress : undefined}
       delayLongPress={400}
       onPressIn={() => setPressScale(press, 0.97, 90)}
       onPressOut={() => setPressScale(press, 1, 140)}
@@ -153,6 +279,39 @@ export function ProductCard({
             size={photoSize}
           />
         </ButterBlock>
+        <View
+          pointerEvents="none"
+          style={[
+            styles.favoriteMark,
+            {
+              backgroundColor: theme.background,
+              borderColor: theme.border,
+            },
+          ]}>
+          <SymbolView
+            name={favorited ? 'heart.fill' : 'heart'}
+            size={14}
+            tintColor={favorited ? theme.error : theme.textSecondary}
+          />
+        </View>
+        <Animated.View pointerEvents="none" style={[styles.burst, burstStyle]}>
+          <Animated.View style={burstRedStyle}>
+            <SymbolView
+              name="heart.fill"
+              size={Math.round(blockSize * 0.42)}
+              tintColor={theme.error}
+            />
+          </Animated.View>
+          {!burstLiked ? (
+            <Animated.View style={[styles.burstInk, burstInkStyle]}>
+              <SymbolView
+                name="heart.slash.fill"
+                size={Math.round(blockSize * 0.42)}
+                tintColor={theme.text}
+              />
+            </Animated.View>
+          ) : null}
+        </Animated.View>
         {saleBadge ? (
           <View style={[styles.saleMark, { backgroundColor: theme.primary }]}>
             <ThemedText type="smallBold" style={{ color: theme.primaryText, fontSize: 11 }}>
@@ -169,24 +328,64 @@ export function ProductCard({
           </ThemedText>
           {showSnap ? <SnapBadge size="sm" /> : null}
         </View>
-        {resolvedMeta ? (
+        {resolvedMeta === 'Sponsored' ? (
+          <View style={[styles.sponsoredPill, { borderColor: theme.text }]}>
+            <ThemedText type="smallBold" style={styles.sponsoredText}>
+              Sponsored
+            </ThemedText>
+          </View>
+        ) : resolvedMeta ? (
           <ThemedText type="small" themeColor="textSecondary" style={styles.meta}>
             {resolvedMeta}
           </ThemedText>
         ) : null}
 
         {onList ? (
-          <View style={styles.onListBlock}>
+          <View style={styles.priceCol}>
             {showCompare ? (
               <ThemedText type="small" themeColor="textSecondary" style={styles.compareAt}>
                 {formatPrice(compareAtCents!)}
               </ThemedText>
             ) : null}
-            {priceCents != null ? (
-              <ThemedText type="smallBold" style={styles.price}>
-                {formatPrice(priceCents)}
-              </ThemedText>
-            ) : null}
+            <View style={styles.priceRow}>
+              {priceCents != null ? (
+                <ThemedText type="smallBold" style={styles.price}>
+                  {formatPrice(priceCents)}
+                </ThemedText>
+              ) : (
+                <View style={styles.priceSpacer} />
+              )}
+              <View
+                style={[
+                  styles.stepper,
+                  {
+                    backgroundColor: theme.backgroundSelected,
+                    borderColor: theme.border,
+                  },
+                ]}>
+                <Pressable
+                  onPress={() => {
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    onDecrement();
+                  }}
+                  hitSlop={8}
+                  style={styles.stepBtn}>
+                  <ThemedText type="smallBold">−</ThemedText>
+                </Pressable>
+                <ThemedText type="smallBold" style={styles.stepQty}>
+                  {quantityOnList}
+                </ThemedText>
+                <Pressable
+                  onPress={() => {
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    onIncrement();
+                  }}
+                  hitSlop={8}
+                  style={styles.stepBtn}>
+                  <ThemedText type="smallBold">+</ThemedText>
+                </Pressable>
+              </View>
+            </View>
             {resolvedSavingsCents != null ? (
               <SavingsChip cents={resolvedSavingsCents} />
             ) : null}
@@ -195,34 +394,6 @@ export function ProductCard({
                 {priceNote}
               </ThemedText>
             ) : null}
-            <View
-              style={[
-                styles.stepper,
-                {
-                  backgroundColor: theme.backgroundSelected,
-                  borderColor: theme.border,
-                },
-              ]}>
-              <Pressable
-                onPress={() => {
-                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  onDecrement();
-                }}
-                hitSlop={8}
-                style={styles.stepBtn}>
-                <ThemedText type="smallBold">−</ThemedText>
-              </Pressable>
-              <ThemedText type="smallBold">{quantityOnList}</ThemedText>
-              <Pressable
-                onPress={() => {
-                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  onIncrement();
-                }}
-                hitSlop={8}
-                style={styles.stepBtn}>
-                <ThemedText type="smallBold">+</ThemedText>
-              </Pressable>
-            </View>
           </View>
         ) : (
           <View style={styles.priceCol}>
@@ -289,6 +460,36 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  burst: {
+    position: 'absolute',
+    zIndex: 3,
+    opacity: 0,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  burstInk: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  favoriteMark: {
+    position: 'absolute',
+    top: Spacing.two,
+    right: Spacing.two + 2,
+    width: 26,
+    height: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 13,
+    borderWidth: StyleSheet.hairlineWidth,
+    zIndex: 2,
+  },
   saleMark: {
     position: 'absolute',
     top: Spacing.one,
@@ -318,6 +519,18 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 14,
   },
+  sponsoredPill: {
+    alignSelf: 'flex-start',
+    borderWidth: 1.5,
+    borderRadius: 999,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 1,
+  },
+  sponsoredText: {
+    fontSize: 11,
+    lineHeight: 14,
+    letterSpacing: 0.3,
+  },
   priceCol: {
     gap: 2,
   },
@@ -342,9 +555,6 @@ const styles = StyleSheet.create({
   priceSpacer: {
     flex: 1,
   },
-  onListBlock: {
-    gap: Spacing.one,
-  },
   addBtn: {
     width: 28,
     height: 28,
@@ -354,15 +564,17 @@ const styles = StyleSheet.create({
   stepper: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    borderRadius: 18,
+    borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: Spacing.one,
-    minHeight: 36,
+    minHeight: 28,
+  },
+  stepQty: {
+    minWidth: 14,
+    textAlign: 'center',
   },
   stepBtn: {
-    width: 32,
-    height: 32,
+    width: 24,
+    height: 26,
     alignItems: 'center',
     justifyContent: 'center',
   },

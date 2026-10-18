@@ -25,11 +25,13 @@ import * as Speech from 'expo-speech';
 
 import {
   addListItem,
+  getAiVoice,
   getMyDefaultList,
   isAiTextReplyAudioEnabled,
   openProductOnList,
   removeListItem,
   searchProducts,
+  speakAssistant,
   updateListItem,
   voiceOrder,
   voiceOrderFromText,
@@ -75,6 +77,8 @@ const LISTEN_OPTIONS = {
 
 const SILENCE_MS = 5000;
 const SPEECH_DB = -50;
+const COW_MOO_SHORT = require('../../../assets/audio/cow-moo-short.mp3');
+const COW_MOO_LONG = require('../../../assets/audio/cow-moo-long.mp3');
 
 /** ElevenLabs writes non-speech as tags such as "[outro jingle]". */
 function stripAudioTags(value: string): string {
@@ -129,7 +133,11 @@ const YES_WORDS = new Set([
   'sure', 'correct', 'add', 'do', 'go', 'ahead', 'sounds', 'good', 'right',
 ]);
 const NO_WORDS = new Set(['no', 'nope', 'nah', 'reject', 'rejected', 'skip', 'cancel', 'dont', 'don']);
-const VERBAL_FILLER = new Set(['please', 'them', 'all', 'it', 'to', 'the', 'those', 'these', 'ones', 'one', 'that']);
+const VERBAL_FILLER = new Set([
+  'please', 'them', 'all', 'it', 'to', 'the', 'those', 'these', 'ones', 'one', 'that',
+  'say', 'says', 'saying', 'just', 'i', 'want', 'would', 'like', 'so', 'you', 'can',
+  'and', 'or', 'um', 'uh', 'a', 'an', 'this', 'if', 'we', 'butter',
+]);
 
 type VerbalDecision = { kind: 'yes' | 'no'; keys: string[] };
 
@@ -286,7 +294,7 @@ function askToAddMore(name: string, existingQuantity: number, addQuantity: numbe
   return new Promise((resolve) => {
     Alert.alert(
       'Already on your list',
-      `${name} is already on your list. Add ${addQuantity} more, so the quantity becomes ${next}?`,
+      `${name} is already there. Add ${addQuantity} more, so it's ${next}?`,
       [
         { text: 'No', style: 'cancel', onPress: () => resolve(false) },
         { text: 'Yes', onPress: () => resolve(true) },
@@ -382,7 +390,6 @@ function VoiceAgent() {
   const [phase, setPhase] = useState<Phase>('idle');
   const [reply, setReply] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<string | null>(null);
-  const [permissionAsked, setPermissionAsked] = useState(false);
   const [typedText, setTypedText] = useState('');
   const [cards, setCardsState] = useState<ItemCard[]>([]);
   const [splits, setSplitsState] = useState<VoiceOrderSplit[]>([]);
@@ -441,33 +448,62 @@ function VoiceAgent() {
   const splotchTurn = nudge.interpolate({ inputRange: [0, 1], outputRange: ['-8deg', '16deg'] });
   const splotchScale = nudge.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] });
 
-  const ensurePermission = useCallback(async () => {
-    if (permissionAsked) {
+  const phaseRef = useRef<Phase>('idle');
+  const listenEpoch = useRef(0);
+  const sessionReady = useRef(false);
+  const pressStartedListen = useRef(false);
+
+  const ensureSession = useCallback(async () => {
+    if (sessionReady.current) return true;
+    try {
+      const existing = await AudioModule.getRecordingPermissionsAsync();
+      if (!existing.granted) {
+        const result = await AudioModule.requestRecordingPermissionsAsync();
+        if (!result.granted) {
+          Alert.alert('Microphone needed', 'Allow microphone access to use push to talk.');
+          return false;
+        }
+      }
       await AudioModule.setAudioModeAsync({
         allowsRecording: true,
         playsInSilentMode: true,
-        interruptionMode: 'doNotMix',
+        interruptionMode: 'duckOthers',
+        shouldRouteThroughEarpiece: false,
       });
+      sessionReady.current = true;
       return true;
-    }
-    const result = await AudioModule.requestRecordingPermissionsAsync();
-    setPermissionAsked(true);
-    if (!result.granted) {
-      Alert.alert('Microphone needed', 'Allow microphone access to use push to talk.');
+    } catch {
+      sessionReady.current = false;
       return false;
     }
-    await AudioModule.setAudioModeAsync({
-      allowsRecording: true,
-      playsInSilentMode: true,
-      interruptionMode: 'doNotMix',
-    });
-    return true;
-  }, [permissionAsked]);
+  }, []);
 
-  /** Recording forces the mic session, which plays out of the phone speaker. Playback lets Bluetooth headphones take the reply. */
+  useEffect(() => {
+    void ensureSession();
+  }, [ensureSession]);
+
+  /** Prepare and start in one step. A recorder left prepared earlier records silence after playback. */
+  const beginRecording = useCallback(async () => {
+    const start = async () => {
+      await recorder.prepareToRecordAsync(LISTEN_OPTIONS);
+      recorder.record();
+      return recorder.getStatus().isRecording;
+    };
+    try {
+      if (!(await ensureSession())) return false;
+      if (await start()) return true;
+      sessionReady.current = false;
+      if (!(await ensureSession())) return false;
+      return await start();
+    } catch {
+      return false;
+    }
+  }, [ensureSession, recorder]);
+
+  /** Keep the recording session up so playback does not make the next tap wait on the mic. */
   const routePlaybackToHeadphones = useCallback(async () => {
     await AudioModule.setAudioModeAsync({
-      allowsRecording: false,
+      allowsRecording: true,
       playsInSilentMode: true,
       interruptionMode: 'duckOthers',
       shouldRouteThroughEarpiece: false,
@@ -475,11 +511,13 @@ function VoiceAgent() {
   }, []);
 
   const startListening = useCallback(async () => {
+    if (phaseRef.current === 'processing' || phaseRef.current === 'listening') return;
+    const epoch = ++listenEpoch.current;
+    phaseRef.current = 'listening';
+    setPhase('listening');
     playToken.current += 1;
+    if (replyPlayer.playing) replyPlayer.pause();
     Speech.stop();
-    replyPlayer.pause();
-    const ok = await ensurePermission();
-    if (!ok) return;
     clarifyMode.current = false;
     setClarifyListening(false);
     setClarifyOpen(false);
@@ -488,18 +526,84 @@ function VoiceAgent() {
     setTranscript(null);
     quietSince.current = null;
     heardVoice.current = false;
-    await recorder.prepareToRecordAsync(LISTEN_OPTIONS);
-    recorder.record();
-    setPhase('listening');
-  }, [ensurePermission, recorder, replyPlayer]);
+    const started = await beginRecording();
+    if (epoch !== listenEpoch.current) {
+      if (recorder.getStatus().isRecording) await recorder.stop();
+      return;
+    }
+    if (!started) {
+      phaseRef.current = 'idle';
+      setPhase('idle');
+      setReply("I can't hear anything.");
+    }
+  }, [beginRecording, recorder, replyPlayer]);
 
   const speakLine = useCallback(
     async (message: string, language: string | undefined) => {
-      playToken.current += 1;
+      const token = ++playToken.current;
       replyPlayer.pause();
       Speech.stop();
       await routePlaybackToHeadphones();
-      Speech.speak(message, { rate: 1.05, pitch: 1.05, language: speechLocale(language) });
+      if (token !== playToken.current) return;
+      if (getAiVoice() === 'cow') {
+        const clips =
+          message.trim().length > 90
+            ? [COW_MOO_LONG, COW_MOO_SHORT]
+            : [COW_MOO_SHORT];
+        for (const clip of clips) {
+          if (token !== playToken.current) return;
+          replyPlayer.replace(clip);
+          await new Promise<void>((resolve) => {
+            if (replyPlayer.currentStatus.isLoaded) {
+              resolve();
+              return;
+            }
+            const timeout = setTimeout(finish, 2000);
+            const subscription = replyPlayer.addListener('playbackStatusUpdate', (status) => {
+              if (status.isLoaded) finish();
+            });
+            function finish() {
+              clearTimeout(timeout);
+              subscription.remove();
+              resolve();
+            }
+          });
+          if (token !== playToken.current) return;
+          replyPlayer.play();
+          await new Promise<void>((resolve) => {
+            let started = replyPlayer.playing;
+            const timeout = setTimeout(finish, 8000);
+            const subscription = replyPlayer.addListener('playbackStatusUpdate', (status) => {
+              if (status.playing) started = true;
+              if (started && status.didJustFinish) finish();
+            });
+            function finish() {
+              clearTimeout(timeout);
+              subscription.remove();
+              resolve();
+            }
+          });
+        }
+        return;
+      }
+      try {
+        const audio = await speakAssistant(message);
+        if (token !== playToken.current) return;
+        if (audio) {
+          const path = `${FileSystem.cacheDirectory}voice-reply-${Date.now()}.mp3`;
+          await FileSystem.writeAsStringAsync(path, audio, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+          if (token !== playToken.current) return;
+          replyPlayer.replace(path);
+          replyPlayer.play();
+          return;
+        }
+      } catch {
+        // Device speech only if ElevenLabs is unreachable.
+      }
+      if (token !== playToken.current) return;
+      Speech.speak(message, { rate: 1, pitch: 1, language: speechLocale(language) });
     },
     [replyPlayer, routePlaybackToHeadphones],
   );
@@ -540,12 +644,12 @@ function VoiceAgent() {
       const picked = side === 'one' ? (split.one ? [split.one] : []) : split.two;
       const ready = picked.filter((row) => row.productId);
       setSplits(splitsRef.current.filter((row) => row.phrase !== phrase));
-      setConfused(splitsRef.current.length > 0 || ready.length === 0);
+      setConfused(true);
       if (ready.length === 0) {
         const message =
           side === 'one'
-            ? `I don't have ${split.phrase} as a single item.`
-            : "I couldn't find those as separate items.";
+            ? `I don't have ${split.phrase} as one item.`
+            : "I don't see those separately.";
         setReply(message);
         if (playAudio) await speakLine(message, replyLanguage);
         return;
@@ -562,10 +666,8 @@ function VoiceAgent() {
         ),
       );
       setSwapKey(null);
-      const message =
-        side === 'one'
-          ? `Okay, ${split.phrase}. Say yes to add it.`
-          : `Okay, ${ready.map((row) => row.label).join(' and ')}. Say yes to add them.`;
+      const names = side === 'one' ? split.phrase : ready.map((row) => row.label).join(' and ');
+      const message = `Do you want ${names}? Press confirm, clarify, or press and say yes.`;
       setReply(message);
       if (playAudio) await speakLine(message, replyLanguage);
     },
@@ -674,6 +776,7 @@ function VoiceAgent() {
         }
         setCards(next);
         setSwapKey(null);
+        if (next.length > 0) setConfused(true);
         const message = lines.join(' ') || 'Okay.';
         setReply(message);
         if (playAudio) await speakLine(message, replyLanguage);
@@ -716,10 +819,11 @@ function VoiceAgent() {
           setCards(listed);
           setSwapKey(null);
         }
-        const stillConfused = resultIsConfused(result);
+        const stillConfused =
+          resultIsConfused(result) || listed.length > 0 || (result.splits ?? []).length > 0;
         setConfused(stillConfused);
+        setClarifyOpen(false);
         setClarifyText('');
-        if (!stillConfused) setClarifyOpen(false);
         const message =
           cleanReply ||
           (waiting.length > 0
@@ -728,7 +832,7 @@ function VoiceAgent() {
         setReply(message);
         const playAudio = options?.playAudio !== false;
         if (!playAudio) return;
-        if (hadAudioTag || !result.replyAudioBase64) {
+        if (getAiVoice() === 'cow' || hadAudioTag || !result.replyAudioBase64) {
           await speakLine(message, result.language);
           return;
         }
@@ -757,12 +861,12 @@ function VoiceAgent() {
       setReplyLanguage(result.language);
       setTranscript(cleanTranscript || null);
       if (cleanTranscript) promptRef.current = cleanTranscript;
-      const stillConfused = resultIsConfused(result);
+      const listed = cardsFromResult(result);
+      const stillConfused =
+        resultIsConfused(result) || listed.length > 0 || (result.splits ?? []).length > 0;
       setConfused(stillConfused);
-      if (!stillConfused) {
-        setClarifyOpen(false);
-        setClarifyText('');
-      }
+      setClarifyOpen(false);
+      setClarifyText('');
 
       if (revised) {
         for (const row of result.added ?? []) {
@@ -777,7 +881,6 @@ function VoiceAgent() {
         return;
       }
 
-      const listed = cardsFromResult(result);
       setSplits(result.splits ?? []);
       if (listed.length > 0) {
         setCards(listed);
@@ -793,7 +896,7 @@ function VoiceAgent() {
 
       const playAudio = options?.playAudio !== false;
       if (!playAudio) return;
-      if (hadAudioTag || !result.replyAudioBase64) {
+      if (getAiVoice() === 'cow' || hadAudioTag || !result.replyAudioBase64) {
         await speakLine(message, result.language);
         return;
       }
@@ -919,7 +1022,14 @@ function VoiceAgent() {
 
   const stopAndSend = useCallback(async (reason: 'tap' | 'quiet' = 'tap') => {
     if (autoStopLock.current) return;
+    listenEpoch.current += 1;
+    if (!recorder.getStatus().isRecording) {
+      phaseRef.current = 'idle';
+      setPhase('idle');
+      return;
+    }
     autoStopLock.current = true;
+    phaseRef.current = 'processing';
     setPhase('processing');
     await recorder.stop();
     const uri = recorder.uri;
@@ -940,6 +1050,7 @@ function VoiceAgent() {
         setClarifyOpen(true);
       }
       await speakLine(line, 'en');
+      phaseRef.current = 'idle';
       setPhase('idle');
       autoStopLock.current = false;
       return;
@@ -985,41 +1096,11 @@ function VoiceAgent() {
       const decision = verbalDecision(spoken, cardsRef.current);
       if (decision) {
         setTranscript(spoken);
-        let keys = decision.keys;
-        if (decision.kind === 'yes') {
-          const added = new Map(
-            (result.added ?? [])
-              .filter((row) => row.productId)
-              .map((row) => [row.productId as string, row]),
-          );
-          if (added.size > 0) {
-            const marked = cardsRef.current.map((row) => {
-              const hit = added.get(row.productId);
-              if (!hit || !keys.includes(row.key)) return row;
-              return asCard({
-                key: row.key,
-                label: hit.name,
-                quantity: hit.quantity,
-                productId: row.productId,
-                listItemId: hit.listItemId,
-                onList: Boolean(hit.listItemId),
-              });
-            });
-            setCards(marked);
-            keys = keys.filter((key) => {
-              const row = cardsRef.current.find((card) => card.key === key);
-              return Boolean(row && (!row.onList || row.addMore));
-            });
-          }
-        }
-        if (keys.length > 0) await applyVerbal({ kind: decision.kind, keys }, true);
-        else {
-          setReply('Okay.');
-          await speakLine('Okay.', 'en');
-        }
+        await applyVerbal(decision, true);
         return;
       }
       if (reason === 'quiet' && isOnlyFiller(spoken)) {
+        phaseRef.current = 'idle';
         setPhase('idle');
         autoStopLock.current = false;
         await startListening();
@@ -1031,13 +1112,14 @@ function VoiceAgent() {
       setReply(message);
     } finally {
       if (!autoStopLock.current) return;
+      phaseRef.current = 'idle';
       setPhase('idle');
       autoStopLock.current = false;
     }
   }, [recorder, applyResult, applyVerbal, chooseSplit, setCards, speakLine, startListening]);
 
   useEffect(() => {
-    if (phase !== 'listening') return;
+    if (phase !== 'listening' || !recorderState.isRecording) return;
     const level = recorderState.metering;
     if (level == null) return;
     if (level > SPEECH_DB) {
@@ -1050,31 +1132,36 @@ function VoiceAgent() {
     if (now - quietSince.current >= SILENCE_MS) {
       void stopAndSend('quiet');
     }
-  }, [phase, recorderState.metering, stopAndSend]);
+  }, [phase, recorderState.isRecording, recorderState.metering, stopAndSend]);
 
   const startClarifyListen = useCallback(async () => {
-    if (phase === 'processing') return;
-    if (phase === 'listening') {
+    if (phaseRef.current === 'processing') return;
+    if (phaseRef.current === 'listening') {
       if (clarifyMode.current) void stopAndSend();
       return;
     }
+    const epoch = ++listenEpoch.current;
     clarifyMode.current = true;
     setClarifyListening(true);
+    phaseRef.current = 'listening';
+    setPhase('listening');
     playToken.current += 1;
+    if (replyPlayer.playing) replyPlayer.pause();
     Speech.stop();
-    replyPlayer.pause();
-    const ok = await ensurePermission();
-    if (!ok) {
-      clarifyMode.current = false;
-      setClarifyListening(false);
-      return;
-    }
     quietSince.current = null;
     heardVoice.current = false;
-    await recorder.prepareToRecordAsync(LISTEN_OPTIONS);
-    recorder.record();
-    setPhase('listening');
-  }, [ensurePermission, phase, recorder, replyPlayer, stopAndSend]);
+    const started = await beginRecording();
+    if (epoch !== listenEpoch.current) {
+      if (recorder.getStatus().isRecording) await recorder.stop();
+      return;
+    }
+    if (!started) {
+      clarifyMode.current = false;
+      setClarifyListening(false);
+      phaseRef.current = 'idle';
+      setPhase('idle');
+    }
+  }, [beginRecording, recorder, replyPlayer, stopAndSend]);
 
   const sendClarify = useCallback(async () => {
     const note = clarifyText.trim();
@@ -1110,11 +1197,22 @@ function VoiceAgent() {
     }
   }, [applyResult, clarifyText, phase, recorder, replyPlayer, transcript]);
 
-  const onPressButton = useCallback(() => {
+  const onPressInTalk = useCallback(() => {
+    if (phaseRef.current !== 'idle') return;
+    pressStartedListen.current = true;
     popSquish();
-    if (phase === 'idle') startListening();
-    else if (phase === 'listening') stopAndSend();
-  }, [phase, startListening, stopAndSend, popSquish]);
+    void startListening();
+  }, [popSquish, startListening]);
+
+  const onPressTalk = useCallback(() => {
+    if (pressStartedListen.current) {
+      pressStartedListen.current = false;
+      return;
+    }
+    popSquish();
+    if (phaseRef.current === 'listening') void stopAndSend();
+    else if (phaseRef.current === 'idle') void startListening();
+  }, [popSquish, startListening, stopAndSend]);
 
   const sendTyped = useCallback(async () => {
     const text = typedText.trim();
@@ -1186,7 +1284,8 @@ function VoiceAgent() {
         </Text>
 
         <Pressable
-          onPress={onPressButton}
+          onPressIn={onPressInTalk}
+          onPress={onPressTalk}
           disabled={phase === 'processing'}
           style={styles.talkButton}
           accessibilityRole="button"
@@ -1213,7 +1312,7 @@ function VoiceAgent() {
           <Text style={[styles.transcript, { color: theme.text }]}>“{transcript}”</Text>
         ) : null}
         {reply ? <Text style={[styles.reply, { color: theme.text }]}>{reply}</Text> : null}
-        {confused && transcript ? (
+        {(confused || cards.length > 0 || splits.length > 0) && transcript ? (
           <View style={styles.clarifyBox}>
             <Pressable
               onPress={() => setClarifyOpen((open) => !open)}
@@ -1286,7 +1385,7 @@ function VoiceAgent() {
             ]}>
             <Text style={[styles.suggestionLabel, { color: theme.text }]}>{split.phrase}</Text>
             <Text style={[styles.cardNote, { color: theme.textSecondary }]}>
-              One item, or {split.two.map((item) => item.label).join(' and ') || 'two items'}? Say one or both.
+              One dish, or {split.two.map((item) => item.label).join(' and ') || 'two items'}? Say one or both.
             </Text>
             <View style={styles.suggestionActions}>
               <Pressable
@@ -1313,7 +1412,7 @@ function VoiceAgent() {
           <View style={styles.suggestions}>
             {cards.some((row) => !row.onList || row.addMore) ? (
               <Text style={[styles.cardNote, { color: theme.textSecondary }]}>
-                Say yes to add them, or confirm each one.
+                Press confirm, clarify, or press and say yes.
               </Text>
             ) : null}
             {cards.map((row) => (

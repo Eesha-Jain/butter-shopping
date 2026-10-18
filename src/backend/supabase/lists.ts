@@ -110,25 +110,50 @@ export async function addListItem(input: {
   if (!input.productId || input.categoryId || input.customName) {
     fail('A list item has to be a real product.');
   }
+  const productId = input.productId;
+  const addQty = input.quantity ?? 1;
+
+  const bumpExisting = async (): Promise<ListItem | null> => {
+    const existing = await openProductOnList(input.listId, productId);
+    if (!existing) return null;
+    return unwrapOne(
+      await supabase
+        .from('list_items')
+        .update({ quantity: existing.quantity + addQty })
+        .eq('id', existing.id)
+        .select('*')
+        .maybeSingle(),
+      'List item update did not return a row.',
+    );
+  };
+
+  // Merge into an existing open row instead of creating a duplicate line.
+  const merged = await bumpExisting();
+  if (merged) return merged;
+
   const user = await supabase.auth.getUser();
-  return unwrapOne(
-    await supabase
-      .from('list_items')
-      .insert({
-        list_id: input.listId,
-        added_by: user.data.user?.id ?? null,
-        product_id: input.productId ?? null,
-        category_id: input.categoryId ?? null,
-        custom_name: input.customName ?? null,
-        quantity: input.quantity ?? 1,
-        amount_base: input.amountBase ?? null,
-        size_flexible: input.sizeFlexible ?? true,
-        source_recipe_id: input.sourceRecipeId ?? null,
-      })
-      .select('*')
-      .maybeSingle(),
-    'List item insert did not return a row.',
-  );
+  const inserted = await supabase
+    .from('list_items')
+    .insert({
+      list_id: input.listId,
+      added_by: user.data.user?.id ?? null,
+      product_id: productId,
+      category_id: input.categoryId ?? null,
+      custom_name: input.customName ?? null,
+      quantity: addQty,
+      amount_base: input.amountBase ?? null,
+      size_flexible: input.sizeFlexible ?? true,
+      source_recipe_id: input.sourceRecipeId ?? null,
+    })
+    .select('*')
+    .maybeSingle();
+
+  // Lost a race with a concurrent add (unique index): fold into the winner's row.
+  if (inserted.error?.code === '23505') {
+    const retried = await bumpExisting();
+    if (retried) return retried;
+  }
+  return unwrapOne(inserted, 'List item insert did not return a row.');
 }
 
 /** Changes quantity, amount, or the checked-off time of a list item. */

@@ -8,6 +8,7 @@ type ToastOptions = {
   preset?: 'done' | 'error' | 'none' | 'custom' | 'heart';
   haptic?: 'success' | 'warning' | 'error' | 'none';
   duration?: number;
+  from?: 'top' | 'bottom';
 };
 
 type BurntModule = {
@@ -96,6 +97,28 @@ export function showSuccessToast(title: string, message?: string): void {
     haptic: 'success',
     duration: 2,
   });
+}
+
+/** Small, non-blocking top toast for add-to-list; no haptic (caller owns it). */
+export function showAddedToast(name: string): void {
+  const burnt = getBurnt();
+  if (burnt) {
+    try {
+      burnt.toast({
+        title: 'Added to list',
+        message: name,
+        preset: 'none',
+        haptic: 'none',
+        from: 'top',
+        duration: 1.5,
+      });
+    } catch {
+      // Non-critical feedback.
+    }
+    return;
+  }
+  // Avoid a blocking Alert in Expo Go on iOS; the card update is the feedback there.
+  if (Platform.OS === 'android') ToastAndroid.show(`Added to list: ${name}`, ToastAndroid.SHORT);
 }
 
 export function messageFromUnknown(error: unknown, fallback: string): string {

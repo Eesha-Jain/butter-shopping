@@ -36,7 +36,6 @@ import {
   applyFoodFilters,
   ensureCatalogForTerm,
   formatPromotionBadge,
-  promotionSavingsHint,
   shelfSaleHint,
   getActiveListProductQtyMap,
   fetchNearbyShops,
@@ -44,20 +43,17 @@ import {
   fetchVisaMerchantOffers,
   getCheapestShelfByProductIds,
   getCheapestShelfSaleByProductIds,
-  getStorePriceCentsByProductIds,
   type CheapestShelf,
-  type OpenPricesGeo,
   type VisaMerchantOffer,
   getEffectiveGroceryCashbackBps,
   getGuestFavoriteIds,
   getGuestFoodRules,
   getGuestOnboardingDraft,
   getMyProfile,
-  publicImageUrl,
-  saveGuestOnboardingDraft,
   getProductPromotionMap,
   getProductTraitsForIds,
   getProductsByIds,
+  getStorePriceCentsByProductIds,
   indexTraitsByProduct,
   listActiveProducts,
   listCampusPopularProducts,
@@ -71,10 +67,13 @@ import {
   listStoreShelf,
   listTrending,
   messageFromUnknown,
+  promotionSavingsHint,
+  publicImageUrl,
   removeListItem,
   resolveSearchCoords,
   resolveShopZip,
   rulesFromUserFoodRules,
+  saveGuestOnboardingDraft,
   setGuestFavorite,
   setProductFavorite,
   showErrorToast,
@@ -83,6 +82,7 @@ import {
   type CategoryProductSection,
   type FoodTrait,
   type NearbyStore,
+  type OpenPricesGeo,
   type Product,
   type ProductCategory,
   type Promotion,
@@ -90,7 +90,6 @@ import {
   type ShopSort,
   type UserLocation,
 } from '@/backend';
-import { AppHeader } from '@/components/app/app-header';
 import { CategoryIcon } from '@/components/shop/category-icons';
 import { ProductCard } from '@/components/shop/product-card';
 import { ProductPeek } from '@/components/shop/product-peek';
@@ -1073,6 +1072,8 @@ export default function ShopScreen() {
         quantityOnList={effectiveQtyMap.get(product.id)?.quantity}
         priceCents={shown}
         isPeekSource={peekProduct?.id === product.id}
+        favorited={favoriteIds.has(product.id)}
+        onDoubleTap={() => void handleToggleFavorite(product.id)}
         onPress={(anchor) => openPeek(product, anchor, compact, false)}
         onLongPress={(anchor) => openPeek(product, anchor, compact, true)}
         onAdd={() => void handleAdd(product)}
@@ -1779,7 +1780,7 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
     marginHorizontal: -Spacing.three,
     marginTop: Spacing.two,
-    marginBottom: Spacing.two,
+    marginBottom: 0,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.four,
     borderTopWidth: 2,
