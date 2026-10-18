@@ -1,5 +1,6 @@
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
+import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useEffect, useState } from 'react';
 import {
@@ -421,6 +422,19 @@ export function ShopProfileDrawer({
               />
             </View>
           </View>
+
+          <Pressable
+            onPress={() =>
+              requestClose(() => {
+                onClose();
+                router.push('/settings');
+              })
+            }
+            style={[styles.outlineBtn, { borderColor: theme.border }]}
+            accessibilityRole="button"
+            accessibilityLabel="Settings">
+            <ThemedText type="smallBold">Settings</ThemedText>
+          </Pressable>
 
           {isGuest ? (
             <View style={styles.authActions}>
