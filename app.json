@@ -57,11 +57,19 @@
       "expo-status-bar",
       "expo-web-browser",
       "expo-speech-recognition",
-      "expo-audio"
+      "expo-audio",
       [
         "expo-location",
         {
           "locationWhenInUsePermission": "We use your location to find the best deals and products near you."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Butter uses your photos so you can set a profile picture.",
+          "cameraPermission": "Butter uses your camera so you can take a profile picture.",
+          "microphonePermission": false
         }
       ]
     ],

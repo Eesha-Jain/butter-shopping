@@ -43,16 +43,27 @@ export {
   addListItem,
   addRecipeToList,
   createList,
+  getActiveListProductQtyMap,
+  getMyDefaultList,
   listGroupLists,
+  listMyListTargets,
   listResolvedItems,
   removeListItem,
   setListItemDone,
   updateListItem,
 } from './lists';
+export type { ActiveListTarget } from './lists';
 export {
   findProductByUpc,
+  formatPromotionBadge,
+  getCheapestPriceCentsByProductIds,
   getCurrentPrice,
+  getProductPromotionMap,
+  getProductTraitsForIds,
+  getProductsByIds,
   getStore,
+  listActiveProducts,
+  listCategories,
   listCurrentPromotions,
   nearbyShops,
   productWarnings,
@@ -60,6 +71,13 @@ export {
   searchCategories,
   searchProducts,
 } from './catalog';
+export {
+  applyFoodFilters,
+  groupTraitsForFilterUi,
+  indexTraitsByProduct,
+  rulesFromUserFoodRules,
+} from './foodFilters';
+export type { SessionFoodRule, ShopSort } from './foodFilters';
 export { fetchNearbyShops, getUserCoords } from './locationService';
 export {
   getWeeklyBudgetCents,
@@ -83,6 +101,7 @@ export {
   addDueHabitItems,
   listExpiringPurchases,
   listHabits,
+  listMyStapleProductIds,
   listPurchases,
   recordPurchase,
   saveHabit,

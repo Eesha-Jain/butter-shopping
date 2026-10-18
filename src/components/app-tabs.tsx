@@ -1,7 +1,7 @@
 import { NativeTabs } from 'expo-router/unstable-native-tabs';
 import { useColorScheme } from 'react-native';
 
-import { Colors } from '@/constants/theme';
+import { Colors, Fonts } from '@/constants/theme';
 
 export default function AppTabs() {
   const scheme = useColorScheme();
@@ -14,6 +14,7 @@ export default function AppTabs() {
       tintColor={colors.primaryDark}
       iconColor={{ default: colors.textSecondary, selected: colors.primaryDark }}
       labelStyle={{
+        fontFamily: Fonts.sans,
         color: colors.textSecondary,
         selected: { color: colors.primaryDark },
       }}>

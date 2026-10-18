@@ -8,7 +8,22 @@
 
 export { AppError, fail, runAction } from './errors';
 export { showErrorToast, showSuccessToast, messageFromUnknown } from './toast';
-export { hasSignedInBefore, markHasSignedIn } from './preferences';
+export {
+  clearGuest,
+  hasSignedInBefore,
+  isGuest,
+  markHasSignedIn,
+  markIsGuest,
+} from './preferences';
+export {
+  addGuestCartItem,
+  clearGuestCart,
+  getGuestCart,
+  mergeGuestCartIntoDefaultList,
+  removeGuestCartItem,
+  updateGuestCartQuantity,
+  type GuestCartItem,
+} from './guest-cart';
 export {
   getItem,
   getJson,
@@ -26,6 +41,7 @@ export {
   addRecipeIngredient,
   addRecipeToList,
   analyzeRipeness,
+  applyFoodFilters,
   cancelOrder,
   confirmOrder,
   createGroup,
@@ -36,17 +52,28 @@ export {
   fetchNearbyShops,
   finalizeOrder,
   findProductByUpc,
+  formatPromotionBadge,
+  getActiveListProductQtyMap,
+  getCheapestPriceCentsByProductIds,
   getCurrentPrice,
+  getMyDefaultList,
   getMyProfile,
+  getProductPromotionMap,
   getProductSafety,
+  getProductTraitsForIds,
+  getProductsByIds,
   getSession,
   getStore,
   getTrip,
   getUserCoords,
   getRecipeDetail,
   getWeeklyBudgetCents,
+  groupTraitsForFilterUi,
+  indexTraitsByProduct,
   joinGroup,
   leaveGroup,
+  listActiveProducts,
+  listCategories,
   listCurrentPromotions,
   listExpiringPurchases,
   listFoodTraits,
@@ -57,7 +84,9 @@ export {
   listMyDiscountEligibilities,
   listMyFoodRules,
   listMyGroups,
+  listMyListTargets,
   listMyLocations,
+  listMyStapleProductIds,
   listOrderItems,
   listOrderShares,
   listPurchases,
@@ -83,6 +112,7 @@ export {
   reportPrice,
   requestCheckoutLink,
   requestPasswordReset,
+  rulesFromUserFoodRules,
   saveHabit,
   saveMyLocation,
   searchCategories,
@@ -104,4 +134,4 @@ export {
   uploadMyAvatar,
 } from './supabase';
 
-export type { RipenessResult } from './supabase';
+export type { ActiveListTarget, RipenessResult, SessionFoodRule, ShopSort } from './supabase';

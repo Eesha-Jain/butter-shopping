@@ -4,6 +4,7 @@ import type {
   Price,
   Product,
   ProductCategory,
+  ProductTrait,
   Promotion,
   Store,
 } from '../types';
@@ -20,6 +21,115 @@ export async function searchCategories(query: string): Promise<ProductCategory[]
   return unwrap(
     await supabase.from('product_categories').select('*').ilike('name', `%${term}%`).limit(30),
   );
+}
+
+/** Top-level shopping categories (parent_id is null), ordered by name. */
+export async function listCategories(input?: { limit?: number }): Promise<ProductCategory[]> {
+  return unwrap(
+    await supabase
+      .from('product_categories')
+      .select('*')
+      .is('parent_id', null)
+      .order('name')
+      .limit(input?.limit ?? 50),
+  );
+}
+
+/** Active catalog products for browse. Optional category filter. */
+export async function listActiveProducts(input?: {
+  limit?: number;
+  categoryId?: string | null;
+}): Promise<Product[]> {
+  let query = supabase
+    .from('products')
+    .select('*')
+    .eq('is_active', true)
+    .order('name')
+    .limit(input?.limit ?? 60);
+  if (input?.categoryId) {
+    query = query.eq('category_id', input.categoryId);
+  }
+  return unwrap(await query);
+}
+
+/** Hydrates product rows by id. Order follows the input ids when possible. */
+export async function getProductsByIds(ids: string[]): Promise<Product[]> {
+  const unique = [...new Set(ids.filter(Boolean))];
+  if (unique.length === 0) return [];
+  const rows = unwrap(await supabase.from('products').select('*').in('id', unique).eq('is_active', true));
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return unique.flatMap((id) => {
+    const row = byId.get(id);
+    return row ? [row] : [];
+  });
+}
+
+/** Product trait rows for a batch of products (for session food filters). */
+export async function getProductTraitsForIds(productIds: string[]): Promise<ProductTrait[]> {
+  const unique = [...new Set(productIds.filter(Boolean))];
+  if (unique.length === 0) return [];
+  return unwrap(await supabase.from('product_traits').select('*').in('product_id', unique));
+}
+
+/**
+ * Cheapest known shelf price (cents) per product across available store listings.
+ * Missing ids mean no observed price yet.
+ */
+export async function getCheapestPriceCentsByProductIds(
+  productIds: string[],
+): Promise<Map<string, number>> {
+  const unique = [...new Set(productIds.filter(Boolean))];
+  const prices = new Map<string, number>();
+  if (unique.length === 0) return prices;
+
+  const listings = unwrap(
+    await supabase
+      .from('store_products')
+      .select('id, product_id')
+      .in('product_id', unique)
+      .eq('is_available', true),
+  );
+  if (listings.length === 0) return prices;
+
+  const storeProductIds = listings.map((row) => row.id);
+  const current = unwrap(
+    await supabase.from('current_prices').select('store_product_id, price_cents').in('store_product_id', storeProductIds),
+  );
+  const priceByStoreProduct = new Map(current.map((row) => [row.store_product_id, row.price_cents]));
+  for (const listing of listings) {
+    const cents = priceByStoreProduct.get(listing.id);
+    if (cents == null) continue;
+    const prior = prices.get(listing.product_id);
+    if (prior == null || cents < prior) {
+      prices.set(listing.product_id, cents);
+    }
+  }
+  return prices;
+}
+
+/** Product-scoped live promotions keyed by product id. */
+export async function getProductPromotionMap(): Promise<Map<string, Promotion>> {
+  const rows = await listCurrentPromotions();
+  const map = new Map<string, Promotion>();
+  for (const promo of rows) {
+    if (!promo.product_id) continue;
+    if (!map.has(promo.product_id)) {
+      map.set(promo.product_id, promo);
+    }
+  }
+  return map;
+}
+
+/** Short badge copy for a promotion. */
+export function formatPromotionBadge(promo: Promotion): string {
+  if (promo.discount_type === 'percent_off') {
+    return `${promo.discount_value}% off`;
+  }
+  if (promo.discount_type === 'amount_off') {
+    const dollars = (promo.discount_value / 100).toFixed(promo.discount_value % 100 === 0 ? 0 : 2);
+    return `$${dollars} off`;
+  }
+  return 'BOGO';
 }
 
 /** Searches active products by name or brand. Inactive products are recalled or discontinued. */

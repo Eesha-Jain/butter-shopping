@@ -1,13 +1,56 @@
-import type { GroceryList, ListItem, ResolvedListItem } from '../types';
+import type { GroceryList, Group, ListItem, ResolvedListItem } from '../types';
 import { supabase } from './client';
 import { fail } from '../errors';
 import { unwrap, unwrapOne, unwrapVoid } from './query';
+import { listMyGroups } from './groups';
+
+export type ActiveListTarget = {
+  group: Group;
+  list: GroceryList;
+};
 
 /**
  * Lists in a group. Every group has one default list created with the group.
  */
 export async function listGroupLists(groupId: string): Promise<GroceryList[]> {
   return unwrap(await supabase.from('lists').select('*').eq('group_id', groupId).order('created_at'));
+}
+
+/** Personal group default list (signup “My List”), or first available default list. */
+export async function getMyDefaultList(): Promise<ActiveListTarget> {
+  const targets = await listMyListTargets();
+  const personal = targets.find((row) => row.group.kind === 'personal');
+  if (personal) return personal;
+  if (targets[0]) return targets[0];
+  fail('No grocery list found. New accounts receive a personal list at signup.');
+}
+
+/** Default list for each group the caller belongs to (list switcher). */
+export async function listMyListTargets(): Promise<ActiveListTarget[]> {
+  const groups = await listMyGroups();
+  const targets: ActiveListTarget[] = [];
+  for (const group of groups) {
+    const lists = await listGroupLists(group.id);
+    const list = lists.find((row) => row.is_default) ?? lists[0];
+    if (list) targets.push({ group, list });
+  }
+  return targets;
+}
+
+/**
+ * Open list items keyed by product id for Shop cards (qty + list_item id).
+ * Category/custom lines without a product_id are omitted from the map.
+ */
+export async function getActiveListProductQtyMap(
+  listId: string,
+): Promise<Map<string, { listItemId: string; quantity: number }>> {
+  const items = await listResolvedItems(listId);
+  const map = new Map<string, { listItemId: string; quantity: number }>();
+  for (const item of items) {
+    if (!item.product_id || item.done_at) continue;
+    map.set(item.product_id, { listItemId: item.id, quantity: Number(item.quantity) });
+  }
+  return map;
 }
 
 /** Creates another named list in a group the caller belongs to. */
