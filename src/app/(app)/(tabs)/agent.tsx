@@ -21,14 +21,18 @@ import {
   useAudioRecorderState,
 } from 'expo-audio';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
 
 import {
   addListItem,
   getAiVoice,
   getMyDefaultList,
+  getRecentVoiceTexts,
   isAiTextReplyAudioEnabled,
+  listMyLocations,
   openProductOnList,
+  rememberVoiceText,
   removeListItem,
   searchProducts,
   speakAssistant,
@@ -328,10 +332,6 @@ function clarificationQuantity(text: string, label: string): number | null {
   return null;
 }
 
-/** One cow-hide blotch, same family of shapes as the shop cards. */
-const SPLOTCH =
-  'M30 18C46 12 58 24 76 20C94 16 108 28 104 46C100 62 108 76 92 86C76 96 62 82 48 82C30 82 18 66 22 48C24 36 18 24 30 18Z';
-
 export default function AgentScreen() {
   const { session } = useSession();
   const requireAccount = useRequireAccount();
@@ -413,7 +413,12 @@ function VoiceAgent() {
   const heardVoice = useRef(false);
   const autoStopLock = useRef(false);
   const promptRef = useRef<string | null>(null);
+  const locationRef = useRef<string | null>(null);
   const clarifyMode = useRef(false);
+  const voiceExtras = useCallback(
+    () => ({ location: locationRef.current, recentTexts: getRecentVoiceTexts() }),
+    [],
+  );
   const setCards = useCallback((next: ItemCard[]) => {
     cardsRef.current = next;
     setCardsState(next);
@@ -423,30 +428,66 @@ function VoiceAgent() {
     setSplitsState(next);
   }, []);
 
-  const nudge = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const rows = await listMyLocations();
+        const home = rows.find((row) => row.is_default) ?? rows[0] ?? null;
+        const area = [home?.city, home?.region].filter((part) => part && part.trim()).join(', ');
+        if (area) {
+          if (active) locationRef.current = area;
+          return;
+        }
+        const permission = await Location.getForegroundPermissionsAsync();
+        if (!permission.granted) return;
+        const place = await Location.getCurrentPositionAsync({});
+        if (active) {
+          locationRef.current = `${place.coords.latitude.toFixed(2)}, ${place.coords.longitude.toFixed(2)}`;
+        }
+      } catch {
+        // Voice still works without a place.
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
-  const popSquish = useCallback(() => {
-    nudge.setValue(0);
-    Animated.sequence([
-      Animated.timing(nudge, {
-        toValue: 1,
-        duration: 180,
+  const pulse = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (phase !== 'listening') {
+      pulse.stopAnimation();
+      Animated.timing(pulse, {
+        toValue: 0,
+        duration: 220,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
-      }),
-      Animated.spring(nudge, {
-        toValue: 0,
-        friction: 4,
-        tension: 80,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, [nudge]);
+      }).start();
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 900,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0,
+          duration: 900,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [phase, pulse]);
 
-  const splotchShift = nudge.interpolate({ inputRange: [0, 1], outputRange: [0, 22] });
-  const splotchLift = nudge.interpolate({ inputRange: [0, 1], outputRange: [0, -10] });
-  const splotchTurn = nudge.interpolate({ inputRange: [0, 1], outputRange: ['-8deg', '16deg'] });
-  const splotchScale = nudge.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] });
+  const spotScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.14] });
 
   const phaseRef = useRef<Phase>('idle');
   const listenEpoch = useRef(0);
@@ -860,7 +901,10 @@ function VoiceAgent() {
       setPhrases(result.phrases ?? null);
       setReplyLanguage(result.language);
       setTranscript(cleanTranscript || null);
-      if (cleanTranscript) promptRef.current = cleanTranscript;
+      if (cleanTranscript) {
+        promptRef.current = cleanTranscript;
+        rememberVoiceText(cleanTranscript);
+      }
       const listed = cardsFromResult(result);
       const stillConfused =
         resultIsConfused(result) || listed.length > 0 || (result.splits ?? []).length > 0;
@@ -1056,7 +1100,11 @@ function VoiceAgent() {
       return;
     }
     try {
-      const result = await voiceOrder(uri, clarifying ? promptRef.current ?? undefined : undefined);
+      const result = await voiceOrder(
+        uri,
+        clarifying ? promptRef.current ?? undefined : undefined,
+        voiceExtras(),
+      );
       if (clarifying) {
         const heard =
           result.heard != null
@@ -1073,7 +1121,7 @@ function VoiceAgent() {
         setClarifyText('');
         const prompt = promptRef.current?.trim();
         if (result.heard == null && prompt && (result.added ?? []).length === 0) {
-          const resolved = await voiceOrderFromText(prompt, heard);
+          const resolved = await voiceOrderFromText(prompt, heard, voiceExtras());
           await applyResult(resolved, { playAudio: true, keepPrompt: true });
           return;
         }
@@ -1116,7 +1164,7 @@ function VoiceAgent() {
       setPhase('idle');
       autoStopLock.current = false;
     }
-  }, [recorder, applyResult, applyVerbal, chooseSplit, setCards, speakLine, startListening]);
+  }, [recorder, applyResult, applyVerbal, chooseSplit, setCards, speakLine, startListening, voiceExtras]);
 
   useEffect(() => {
     if (phase !== 'listening' || !recorderState.isRecording) return;
@@ -1187,7 +1235,7 @@ function VoiceAgent() {
     setPhase('processing');
     setReply('Checking that…');
     try {
-      const result = await voiceOrderFromText(prompt, note);
+      const result = await voiceOrderFromText(prompt, note, voiceExtras());
       setClarifyText('');
       await applyResult(result, { playAudio: isAiTextReplyAudioEnabled(), keepPrompt: true });
     } catch (err) {
@@ -1195,24 +1243,22 @@ function VoiceAgent() {
     } finally {
       setPhase('idle');
     }
-  }, [applyResult, clarifyText, phase, recorder, replyPlayer, transcript]);
+  }, [applyResult, clarifyText, phase, recorder, replyPlayer, transcript, voiceExtras]);
 
   const onPressInTalk = useCallback(() => {
     if (phaseRef.current !== 'idle') return;
     pressStartedListen.current = true;
-    popSquish();
     void startListening();
-  }, [popSquish, startListening]);
+  }, [startListening]);
 
   const onPressTalk = useCallback(() => {
     if (pressStartedListen.current) {
       pressStartedListen.current = false;
       return;
     }
-    popSquish();
     if (phaseRef.current === 'listening') void stopAndSend();
     else if (phaseRef.current === 'idle') void startListening();
-  }, [popSquish, startListening, stopAndSend]);
+  }, [startListening, stopAndSend]);
 
   const sendTyped = useCallback(async () => {
     const text = typedText.trim();
@@ -1256,7 +1302,8 @@ function VoiceAgent() {
     setReply(null);
     setTranscript(null);
     try {
-      const result = await voiceOrderFromText(text);
+      const result = await voiceOrderFromText(text, undefined, voiceExtras());
+      rememberVoiceText(text);
       await applyResult(result, { playAudio: isAiTextReplyAudioEnabled() });
       setTypedText('');
     } catch (err) {
@@ -1265,12 +1312,12 @@ function VoiceAgent() {
     } finally {
       setPhase('idle');
     }
-  }, [typedText, phase, applyQuantity, applyResult, applyVerbal, chooseSplit, replyLanguage, replyPlayer, speakLine]);
+  }, [typedText, phase, applyQuantity, applyResult, applyVerbal, chooseSplit, replyLanguage, replyPlayer, speakLine, voiceExtras]);
 
   const label =
     phase === 'processing' ? 'Thinking…' : phase === 'listening' ? 'Listening… tap to stop' : 'Tap to talk';
 
-  const splotchColor = phase === 'listening' ? theme.primaryDark : theme.text;
+  const butter = theme.primary;
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]} edges={['top']}>
@@ -1290,21 +1337,21 @@ function VoiceAgent() {
           style={styles.talkButton}
           accessibilityRole="button"
           accessibilityLabel={label}>
-          <Animated.View
-            style={{
-              transform: [
-                { translateX: splotchShift },
-                { translateY: splotchLift },
-                { rotate: splotchTurn },
-                { scale: splotchScale },
-              ],
-            }}>
-            <Svg width={200} height={168} viewBox="0 0 124 110">
-              <Path d={SPLOTCH} fill={splotchColor} />
+          <Animated.View style={{ transform: [{ scale: spotScale }] }}>
+            <Svg width={210} height={148} viewBox="0 0 200 140">
+              <Path
+                d="M38 74C20 52 42 30 74 32C98 18 124 34 148 28C174 22 192 46 184 68C196 88 174 112 146 106C118 118 88 104 64 108C38 112 12 96 38 74Z"
+                fill={butter}
+              />
+              <Path
+                d="M72 56C94 44 132 48 146 60C128 70 92 72 72 56Z"
+                fill="#FFF6C2"
+                opacity={0.85}
+              />
             </Svg>
           </Animated.View>
           {phase === 'processing' ? (
-            <ActivityIndicator color={theme.primary} style={styles.spotOverlay} />
+            <ActivityIndicator color={theme.text} style={styles.spotOverlay} />
           ) : null}
         </Pressable>
 
@@ -1568,7 +1615,7 @@ const styles = StyleSheet.create({
   },
   title: { fontFamily: Fonts.sansBold, fontSize: 28, alignSelf: 'flex-start' },
   hint: { fontFamily: Fonts.sans, fontSize: 15, lineHeight: 22, alignSelf: 'flex-start' },
-  talkButton: { width: 200, height: 168, alignItems: 'center', justifyContent: 'center', marginTop: Spacing.three },
+  talkButton: { width: 220, height: 168, alignItems: 'center', justifyContent: 'center', marginTop: Spacing.three },
   spotOverlay: { position: 'absolute' },
   transcript: { fontFamily: Fonts.sans, fontSize: 16, fontStyle: 'italic', textAlign: 'center' },
   reply: { fontFamily: Fonts.sansBold, fontSize: 16, textAlign: 'center', lineHeight: 22 },

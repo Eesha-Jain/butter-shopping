@@ -1,11 +1,17 @@
 import { BottomSheet, Column, Host, Text as UIText } from '@expo/ui';
+import { router } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import MapView, { Circle, Marker, PROVIDER_GOOGLE, type Region } from 'react-native-maps';
 
+import { useSession } from '@/auth/session';
 import {
   fetchNearbyShops,
+  listPreferredStoreIds,
+  preferStore,
   resolveSearchCoords,
+  saveMyLocation,
+  unpreferStore,
   type NearbyStore,
   type SearchCoords,
 } from '@/backend';
@@ -27,42 +33,75 @@ const FALLBACK_REGION: Region = {
   longitudeDelta: SEARCH_DELTA,
 };
 
+function emptyAddress(coords: SearchCoords) {
+  return {
+    label: 'Search from here',
+    address_line1: null,
+    address_line2: null,
+    city: null,
+    region: null,
+    postal_code: null,
+    country: null,
+    latitude: coords.latitude,
+    longitude: coords.longitude,
+    is_default: true,
+  };
+}
+
 export default function NearbyScreen() {
   const theme = useTheme();
   const snapOptedIn = useSnapOptedIn();
+  const { session, isGuest } = useSession();
+  const signedIn = Boolean(session) && !isGuest;
   const mapRef = useRef<MapView>(null);
   const [origin, setOrigin] = useState<SearchCoords | null>(null);
+  const [followGps, setFollowGps] = useState(false);
+  const followGpsRef = useRef(false);
   const [shops, setShops] = useState<NearbyStore[] | null>(null);
+  const [preferredIds, setPreferredIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selected, setSelected] = useState<NearbyStore | null>(null);
+  const [droppedPin, setDroppedPin] = useState<SearchCoords | null>(null);
+  const [favoriteBusy, setFavoriteBusy] = useState(false);
+  const [originBusy, setOriginBusy] = useState(false);
   const [latitudeDelta, setLatitudeDelta] = useState(SEARCH_DELTA);
   const showNames = latitudeDelta <= LABEL_ZOOM_DELTA;
+  const sheetOpen = selected != null || droppedPin != null;
 
-  const loadShops = useCallback(async (refresh = false) => {
-    if (refresh) {
-      setIsRefreshing(true);
-    } else {
-      setIsLoading(true);
-    }
-    setError(null);
-    try {
-      const coords = await resolveSearchCoords();
-      setOrigin(coords);
-      const data = await fetchNearbyShops(coords);
-      setShops(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load nearby shops.');
-      if (!refresh) {
-        setShops(null);
-        setOrigin(null);
+  const loadShops = useCallback(
+    async (refresh = false, opts?: { followGps?: boolean; origin?: SearchCoords }) => {
+      if (refresh) {
+        setIsRefreshing(true);
+      } else {
+        setIsLoading(true);
       }
-    } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
-    }
-  }, []);
+      setError(null);
+      try {
+        const useGps = opts?.followGps ?? followGpsRef.current;
+        const coords = opts?.origin ?? (await resolveSearchCoords({ followGps: useGps }));
+        setOrigin(coords);
+        const [data, ids] = await Promise.all([fetchNearbyShops(coords), listPreferredStoreIds()]);
+        setShops(data);
+        setPreferredIds(new Set(ids));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not load nearby shops.');
+        if (!refresh) {
+          setShops(null);
+          setOrigin(null);
+        }
+      } finally {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    followGpsRef.current = followGps;
+  }, [followGps]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -122,6 +161,65 @@ export default function NearbyScreen() {
         ? 'No shops nearby'
         : null;
 
+  async function toggleFavorite(shop: NearbyStore) {
+    if (!signedIn) {
+      router.push('/login');
+      return;
+    }
+    setFavoriteBusy(true);
+    try {
+      const favored = preferredIds.has(shop.id);
+      if (favored) {
+        await unpreferStore(shop.id);
+        setPreferredIds((prev) => {
+          const next = new Set(prev);
+          next.delete(shop.id);
+          return next;
+        });
+      } else {
+        await preferStore(shop.id);
+        setPreferredIds((prev) => new Set(prev).add(shop.id));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not update favorite store.');
+    } finally {
+      setFavoriteBusy(false);
+    }
+  }
+
+  async function searchFromHere(coords: SearchCoords) {
+    setOriginBusy(true);
+    setError(null);
+    try {
+      followGpsRef.current = false;
+      setFollowGps(false);
+      if (signedIn) {
+        await saveMyLocation(emptyAddress(coords));
+      }
+      setDroppedPin(null);
+      await loadShops(false, { origin: coords, followGps: false });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not search from here.');
+    } finally {
+      setOriginBusy(false);
+    }
+  }
+
+  async function useGps() {
+    followGpsRef.current = true;
+    setFollowGps(true);
+    setDroppedPin(null);
+    setSelected(null);
+    await loadShops(true, { followGps: true });
+  }
+
+  function closeSheet() {
+    setSelected(null);
+    setDroppedPin(null);
+  }
+
+  const selectedFavored = selected != null && preferredIds.has(selected.id);
+
   return (
     <View style={styles.container}>
       <MapView
@@ -129,9 +227,13 @@ export default function NearbyScreen() {
         provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
         style={styles.map}
         initialRegion={region}
-        showsUserLocation={origin != null}
+        showsUserLocation
         showsMyLocationButton={false}
-        onRegionChangeComplete={(next) => setLatitudeDelta(next.latitudeDelta)}>
+        onRegionChangeComplete={(next) => setLatitudeDelta(next.latitudeDelta)}
+        onLongPress={(event) => {
+          setSelected(null);
+          setDroppedPin(event.nativeEvent.coordinate);
+        }}>
         {origin ? (
           <Circle
             center={origin}
@@ -141,32 +243,46 @@ export default function NearbyScreen() {
             fillColor={`${theme.primary}22`}
           />
         ) : null}
-        {pins.map((shop) => (
-          <Marker
-            key={shop.id}
-            coordinate={{
-              latitude: shop.latitude as number,
-              longitude: shop.longitude as number,
-            }}
-            title={shop.name}
-            anchor={{ x: 0.5, y: 0 }}
-            tracksViewChanges={showNames}
-            onPress={() => setSelected(shop)}>
-            <View style={styles.pin} pointerEvents="none">
-              <View style={[styles.pinDot, { backgroundColor: theme.primary, borderColor: theme.background }]} />
-              {showNames ? (
-                <View style={styles.pinLabelRow}>
-                  <Text
-                    style={[styles.pinLabel, { color: theme.text, backgroundColor: theme.background }]}
-                    numberOfLines={2}>
-                    {shop.name}
-                  </Text>
-                  {snapOptedIn && shop.accepts_snap ? <SnapBadge size="sm" /> : null}
-                </View>
-              ) : null}
-            </View>
-          </Marker>
-        ))}
+        {pins.map((shop) => {
+          const favored = preferredIds.has(shop.id);
+          return (
+            <Marker
+              key={shop.id}
+              coordinate={{
+                latitude: shop.latitude as number,
+                longitude: shop.longitude as number,
+              }}
+              title={shop.name}
+              anchor={{ x: 0.5, y: 0 }}
+              tracksViewChanges={showNames || favored}
+              onPress={() => {
+                setDroppedPin(null);
+                setSelected(shop);
+              }}>
+              <View style={styles.pin} pointerEvents="none">
+                <View
+                  style={[
+                    styles.pinDot,
+                    {
+                      backgroundColor: favored ? theme.savings : theme.primary,
+                      borderColor: theme.background,
+                    },
+                  ]}
+                />
+                {showNames ? (
+                  <View style={styles.pinLabelRow}>
+                    <Text
+                      style={[styles.pinLabel, { color: theme.text, backgroundColor: theme.background }]}
+                      numberOfLines={2}>
+                      {shop.name}
+                    </Text>
+                    {snapOptedIn && shop.accepts_snap ? <SnapBadge size="sm" /> : null}
+                  </View>
+                ) : null}
+              </View>
+            </Marker>
+          );
+        })}
       </MapView>
 
       {overlayMessage ? (
@@ -184,33 +300,94 @@ export default function NearbyScreen() {
         </ThemedView>
       ) : null}
 
-      <Pressable
-        onPress={() => void loadShops(true)}
-        disabled={isRefreshing || isLoading}
-        style={[
-          styles.retry,
-          {
-            backgroundColor: theme.backgroundElement,
-            borderColor: theme.borderInk,
-            opacity: isRefreshing ? 0.6 : 1,
-          },
-        ]}>
-        <ThemedText type="smallBold">{isRefreshing ? 'Updating…' : 'Refresh'}</ThemedText>
-      </Pressable>
+      <View style={styles.controls}>
+        <Pressable
+          onPress={() => void useGps()}
+          disabled={isRefreshing || isLoading}
+          style={[
+            styles.retry,
+            {
+              backgroundColor: theme.backgroundElement,
+              borderColor: theme.borderInk,
+              opacity: isRefreshing || followGps ? 0.6 : 1,
+            },
+          ]}>
+          <ThemedText type="smallBold">{followGps ? 'Using GPS' : 'Use GPS'}</ThemedText>
+        </Pressable>
+        <Pressable
+          onPress={() => void loadShops(true)}
+          disabled={isRefreshing || isLoading}
+          style={[
+            styles.retry,
+            {
+              backgroundColor: theme.backgroundElement,
+              borderColor: theme.borderInk,
+              opacity: isRefreshing ? 0.6 : 1,
+            },
+          ]}>
+          <ThemedText type="smallBold">{isRefreshing ? 'Updating…' : 'Refresh'}</ThemedText>
+        </Pressable>
+      </View>
 
       <Host style={styles.sheetHost}>
-        <BottomSheet
-          isPresented={selected != null}
-          onDismiss={() => setSelected(null)}>
+        <BottomSheet isPresented={sheetOpen} onDismiss={closeSheet}>
           <Column>
-            <UIText>
-              {`${selected?.name ?? ''}${snapOptedIn && selected?.accepts_snap ? ' · SNAP' : ''}`}
-            </UIText>
-            {selected?.city ? <UIText>{selected.city}</UIText> : null}
-            {selected ? <UIText>{formatDistanceKm(selected.distance_km)}</UIText> : null}
+            {droppedPin ? (
+              <>
+                <UIText>Search from here?</UIText>
+                <UIText>Nearby will look for shops within 10 km of this pin.</UIText>
+                {!signedIn ? (
+                  <UIText>Sign in to save this pin as your default search origin.</UIText>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <UIText>
+                  {`${selected?.name ?? ''}${snapOptedIn && selected?.accepts_snap ? ' · SNAP' : ''}`}
+                </UIText>
+                {selected?.city ? <UIText>{selected.city}</UIText> : null}
+                {selected ? <UIText>{formatDistanceKm(selected.distance_km)}</UIText> : null}
+                {!signedIn ? <UIText>Sign in to favorite this store.</UIText> : null}
+              </>
+            )}
           </Column>
         </BottomSheet>
       </Host>
+
+      {sheetOpen ? (
+        <View style={styles.sheetActions} pointerEvents="box-none">
+          {droppedPin ? (
+            <>
+              {!signedIn ? (
+                <ButterButton label="Sign in" variant="ghost" onPress={() => router.push('/login')} />
+              ) : null}
+              <ButterButton
+                label={originBusy ? 'Searching…' : 'Search from here'}
+                variant="yellow"
+                disabled={originBusy}
+                onPress={() => void searchFromHere(droppedPin)}
+              />
+            </>
+          ) : selected ? (
+            signedIn ? (
+              <ButterButton
+                label={
+                  favoriteBusy
+                    ? 'Saving…'
+                    : selectedFavored
+                      ? 'Remove favorite'
+                      : 'Favorite store'
+                }
+                variant={selectedFavored ? 'ghost' : 'yellow'}
+                disabled={favoriteBusy}
+                onPress={() => void toggleFavorite(selected)}
+              />
+            ) : (
+              <ButterButton label="Sign in to favorite" variant="yellow" onPress={() => router.push('/login')} />
+            )
+          ) : null}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -243,10 +420,14 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     alignItems: 'center',
   },
-  retry: {
+  controls: {
     position: 'absolute',
     bottom: Spacing.six,
     alignSelf: 'center',
+    flexDirection: 'row',
+    gap: Spacing.two,
+  },
+  retry: {
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.two,
     borderRadius: Radius.chip,
@@ -254,6 +435,13 @@ const styles = StyleSheet.create({
   },
   sheetHost: {
     position: 'absolute',
+  },
+  sheetActions: {
+    position: 'absolute',
+    left: Spacing.three,
+    right: Spacing.three,
+    bottom: Spacing.six + 56,
+    gap: Spacing.two,
   },
   pin: {
     alignItems: 'center',

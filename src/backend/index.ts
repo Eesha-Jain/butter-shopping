@@ -16,6 +16,7 @@ export {
   hasSeenWelcome,
   hasSignedInBefore,
   getAiVoice,
+  getRecentVoiceTexts,
   isAiTextReplyAudioEnabled,
   isGuest,
   markHasSignedIn,
@@ -24,6 +25,7 @@ export {
   markWelcomeSeen,
   setAiTextReplyAudioEnabled,
   setAiVoice,
+  rememberVoiceText,
   setLocalGroceryCashbackBps,
 } from './preferences';
 export {
@@ -168,6 +170,7 @@ export {
   listMyGroups,
   listMyListTargets,
   listMyLocations,
+  listPreferredStoreIds,
   listMyStapleProductIds,
   listOrderItems,
   listOrderShares,

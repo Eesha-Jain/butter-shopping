@@ -16,6 +16,7 @@ export default function AppLayout() {
         }}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="staples" options={{ ...panelHeader, title: 'Staples' }} />
+        <Stack.Screen name="favorites" options={{ ...panelHeader, title: 'Favorites' }} />
         <Stack.Screen name="recipe-import" options={{ ...panelHeader, title: 'Import recipe' }} />
         <Stack.Screen name="groups" options={{ ...panelHeader, title: 'Groups' }} />
       </Stack>
