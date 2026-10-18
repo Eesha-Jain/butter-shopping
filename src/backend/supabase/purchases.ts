@@ -1,7 +1,16 @@
 import type { ExpiringPurchase, ItemHabit, Purchase } from '../types';
 import { supabase } from './client';
 import { fail } from '../errors';
+import { todayLocalDateKey } from './localTime';
 import { unwrap, unwrapOne } from './query';
+
+export type ActivePantryItem = {
+  categoryId: string | null;
+  productId: string;
+  productName: string;
+  purchasedAt: string;
+  expiresOn: string | null;
+};
 
 /**
  * Receipt lines for a group, newest first. user_id is the person who paid,
@@ -153,4 +162,52 @@ export async function addDueHabitItems(): Promise<number> {
  */
 export async function listExpiringPurchases(groupId: string): Promise<ExpiringPurchase[]> {
   return unwrap(await supabase.from('v_expiring_purchases').select('*').eq('group_id', groupId));
+}
+
+/**
+ * Household purchases that are still usable: expires_on is null (unknown) or
+ * on/after today. Used to caution recipe→list adds.
+ */
+export async function listActivePantryItems(groupId: string): Promise<ActivePantryItem[]> {
+  const purchases = await listPurchases(groupId);
+  const today = todayLocalDateKey();
+  const active = purchases.filter(
+    (row) => row.expires_on == null || row.expires_on >= today,
+  );
+  if (active.length === 0) return [];
+
+  const storeProductIds = [...new Set(active.map((row) => row.store_product_id))];
+  const listings = unwrap(
+    await supabase
+      .from('store_products')
+      .select('id, product_id')
+      .in('id', storeProductIds),
+  );
+  const productIdByListing = new Map(listings.map((row) => [row.id, row.product_id]));
+  const productIds = [...new Set(listings.map((row) => row.product_id))];
+  if (productIds.length === 0) return [];
+
+  const products = unwrap(
+    await supabase
+      .from('products')
+      .select('id, name, category_id')
+      .in('id', productIds),
+  );
+  const productById = new Map(products.map((row) => [row.id, row]));
+
+  const out: ActivePantryItem[] = [];
+  for (const purchase of active) {
+    const productId = productIdByListing.get(purchase.store_product_id);
+    if (!productId) continue;
+    const product = productById.get(productId);
+    if (!product) continue;
+    out.push({
+      categoryId: product.category_id,
+      productId: product.id,
+      productName: product.name,
+      purchasedAt: purchase.purchased_at,
+      expiresOn: purchase.expires_on,
+    });
+  }
+  return out;
 }

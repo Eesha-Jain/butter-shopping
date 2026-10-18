@@ -68,6 +68,7 @@ export {
 export {
   addListItem,
   addRecipeToList,
+  addRecipeToListWithCaution,
   buildStandardList,
   createList,
   getActiveListProductQtyMap,
@@ -77,11 +78,17 @@ export {
   listListItems,
   listMyListTargets,
   listResolvedItems,
+  previewRecipeForList,
   removeListItem,
   setListItemDone,
   updateListItem
 } from './lists';
-export type { ActiveListTarget } from './lists';
+export type {
+  ActiveListTarget,
+  RecipeListPreview,
+  RecipeListPreviewLine,
+  RecipeListSkipReason,
+} from './lists';
 export {
   formatLocalDateTime,
   getDeviceTimeZone,
@@ -138,6 +145,7 @@ export {
 } from './profiles';
 export {
   addDueHabitItems,
+  listActivePantryItems,
   listExpiringPurchases,
   listHabits,
   listMyStapleProductIds,
@@ -145,13 +153,18 @@ export {
   recordPurchase,
   saveHabit
 } from './purchases';
+export type { ActivePantryItem } from './purchases';
 export {
   addRecipeIngredient,
   createRecipe,
   getRecipeDetail,
+  importRecipeFromImage,
+  importRecipeFromText,
+  importRecipeFromUrl,
   listTrending,
   listVisibleRecipes
 } from './recipes';
+export type { ImportedRecipe, ImportedRecipeIngredient } from './recipes';
 export { analyzeRipeness } from './ripeness';
 export type { RipenessResult } from './ripeness';
 export { getProductSafety, traitsChangedSince } from './safety';
