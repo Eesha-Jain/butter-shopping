@@ -1,6 +1,9 @@
 import type { PriceOption, Profile, ShoppingPlanLine } from '../types';
+import { searchShelfPrices } from '../../api/prices';
+import { fail } from '../errors';
 import { supabase } from './client';
 import { nextPreferredGroceryDate } from './dates';
+import { listResolvedItems } from './lists';
 import { unwrap, unwrapOne } from './query';
 
 /**
@@ -77,6 +80,50 @@ export async function recommendShoppingPlan(input: {
       p_longitude: input.longitude ?? null,
     }),
   );
+}
+
+/**
+ * Searches every open list item so live and reported prices are stored, then
+ * returns the cheapest trip from recommendShoppingPlan. Sum line_cents for the
+ * total. A null store_product_id means that item has no usable price.
+ */
+export async function planLowestTrip(input: {
+  listId: string;
+  plannedFor: string;
+  zip: string;
+  latitude?: number | null;
+  longitude?: number | null;
+}): Promise<ShoppingPlanLine[]> {
+  const items = await listResolvedItems(input.listId);
+  for (const item of items) {
+    if (item.done_at || !item.display_name) continue;
+    await searchShelfPrices({ term: item.display_name, zip: input.zip });
+  }
+  return recommendShoppingPlan({
+    listId: input.listId,
+    plannedFor: input.plannedFor,
+    latitude: input.latitude,
+    longitude: input.longitude,
+  });
+}
+
+/**
+ * The next date in the coming two months when the caller's opted-in basket
+ * discounts are largest at a Washington store. Null when none apply.
+ * Pass this to recommendShoppingPlan instead of a weekday-only preference.
+ */
+export async function suggestDiscountDate(input?: {
+  latitude?: number | null;
+  longitude?: number | null;
+  radiusKm?: number;
+}): Promise<string | null> {
+  const result = await supabase.rpc('recommend_discount_date', {
+    p_latitude: input?.latitude ?? null,
+    p_longitude: input?.longitude ?? null,
+    p_radius_km: input?.radiusKm ?? 25,
+  });
+  if (result.error) fail(result.error, 'Could not choose a discount date.');
+  return result.data;
 }
 
 /** The caller's weekly target, in cents. Null means no target has been set. */

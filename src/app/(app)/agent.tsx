@@ -12,9 +12,6 @@ import {
   useColorScheme,
   View,
 } from 'react-native';
-// SDK 54 moved writeAsStringAsync/EncodingType to a "legacy" subpath; the
-// new default export uses a different File/Directory class API. Using the
-// legacy import keeps this simple file-write working without a rewrite.
 import {
   AudioModule,
   RecordingPresets,
@@ -25,9 +22,59 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Speech from 'expo-speech';
 
 import { voiceOrder, voiceOrderFromText, type VoiceOrderResult } from '@/backend/supabase/voice';
+import { useRequireAccount } from '@/auth/require-account';
+import { useSession } from '@/auth/session';
+import { Fonts, Radius, Spacing } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
+
+type Phase = 'idle' | 'listening' | 'processing';
+
+const PALETTE = {
+  light: {
+    bg: '#fff', text: '#111', hint: '#555', border: '#bbb',
+    inputBg: '#f2f2f2', placeholder: '#888', debugBg: '#0000000d', debugText: '#111',
+  },
+  dark: {
+    bg: '#000', text: '#f5f5f5', hint: '#aaa', border: '#555',
+    inputBg: '#1c1c1e', placeholder: '#999', debugBg: '#ffffff14', debugText: '#f5f5f5',
+  },
+};
+
+export default function AgentScreen() {
+  const { session } = useSession();
+  const requireAccount = useRequireAccount();
+  const theme = useTheme();
+
+  // Gate the whole screen behind an account, same as main — the backend
+  // edge function requires an authenticated user anyway (it writes to the
+  // caller's list and reads their push tokens), so show a clean sign-up
+  // prompt instead of letting an unauthenticated user hit a confusing error.
+  if (!session) {
+    return (
+      <View style={styles.gate}>
+        <Text style={[styles.gateTitle, { color: theme.text }]}>Butter AI</Text>
+        <Text style={[styles.gateBody, { color: theme.textSecondary }]}>
+          Create an account to chat with the shopping assistant.
+        </Text>
+        <Pressable
+          onPress={() => {
+            requireAccount('Sign up or log in to use Butter AI.');
+          }}
+          style={({ pressed }) => [
+            styles.cta,
+            { backgroundColor: theme.primary, opacity: pressed ? 0.85 : 1 },
+          ]}>
+          <Text style={[styles.ctaLabel, { color: theme.primaryText }]}>Sign up</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  return <VoiceAgent />;
+}
 
 /**
- * Push-to-talk AI tab.
+ * Push-to-talk AI tab (shown once the user is signed in).
  *
  * Interaction: TAP once to start listening (it keeps recording on its own,
  * no need to hold) -> animated wave rings pulse while listening -> TAP again
@@ -38,12 +85,7 @@ import { voiceOrder, voiceOrderFromText, type VoiceOrderResult } from '@/backend
  * pipeline (skipping transcription) — useful on the simulator, when the mic
  * is inconvenient, or to test the Grok-parsing/Supabase/push steps directly.
  *
- * A collapsible "Debug" panel shows the raw JSON the Edge Function returned
- * (transcript, parsed items, matched product/category/custom, push status)
- * so you can see exactly what happened in the backend without digging
- * through `supabase functions logs voice-order` — though that command shows
- * even more detail (the raw Grok response, Scribe errors, insert failures)
- * since the function also logs every stage with console.log/console.error.
+ * A collapsible "Debug" panel shows the raw JSON the Edge Function returned.
  *
  * Uses expo-audio for recording (works in Expo Go, unlike the old ElevenLabs
  * WebRTC component or expo-speech-recognition, both of which need a secure
@@ -51,36 +93,7 @@ import { voiceOrder, voiceOrderFromText, type VoiceOrderResult } from '@/backend
  * Function, which transcribes it (ElevenLabs Scribe) and asks Grok to
  * extract order items, writes them to the default list, and sends a push.
  */
-
-type Phase = 'idle' | 'listening' | 'processing';
-
-// Palette switches with the OS theme so text/inputs stay legible in both
-// light and dark mode (previously hardcoded colors like black text were
-// invisible on a dark background).
-const PALETTE = {
-  light: {
-    bg: '#fff',
-    text: '#111',
-    hint: '#555',
-    border: '#bbb',
-    inputBg: '#f2f2f2',
-    placeholder: '#888',
-    debugBg: '#0000000d',
-    debugText: '#111',
-  },
-  dark: {
-    bg: '#000',
-    text: '#f5f5f5',
-    hint: '#aaa',
-    border: '#555',
-    inputBg: '#1c1c1e',
-    placeholder: '#999',
-    debugBg: '#ffffff14',
-    debugText: '#f5f5f5',
-  },
-};
-
-export default function AgentScreen() {
+function VoiceAgent() {
   const scheme = useColorScheme();
   const c = PALETTE[scheme === 'dark' ? 'dark' : 'light'];
   const [phase, setPhase] = useState<Phase>('idle');
@@ -94,7 +107,6 @@ export default function AgentScreen() {
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const replyPlayer = useAudioPlayer();
 
-  // --- Wave animation (three rings pulsing outward while listening) ---
   const wave1 = useRef(new Animated.Value(0)).current;
   const wave2 = useRef(new Animated.Value(0)).current;
   const wave3 = useRef(new Animated.Value(0)).current;
@@ -129,11 +141,7 @@ export default function AgentScreen() {
     transform: [{ scale: val.interpolate({ inputRange: [0, 1], outputRange: [1, 2.1] }) }],
   });
 
-  // --- Blob squish: a tap-feedback bounce plus a slow idle wobble so the
-  // cow-spot shape feels alive instead of a static image. Built from three
-  // overlapping circles whose scale/position are independently animated,
-  // which reads as an amorphous blob without needing an SVG/path library. ---
-  const squish = useRef(new Animated.Value(0)).current; // 0 = rest, 1 = pressed
+  const squish = useRef(new Animated.Value(0)).current;
   const wobbleA = useRef(new Animated.Value(0)).current;
   const wobbleB = useRef(new Animated.Value(0)).current;
 
@@ -191,8 +199,6 @@ export default function AgentScreen() {
       Alert.alert('Microphone needed', 'Allow microphone access to use push to talk.');
       return false;
     }
-    // iOS requires the audio session to be explicitly put into recording
-    // mode before recorder.record() will succeed.
     await AudioModule.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
     return true;
   }, [permissionAsked]);
@@ -214,8 +220,6 @@ export default function AgentScreen() {
       setLastResult(result);
 
       if (result.replyAudioBase64) {
-        // Write the returned mp3 to a temp file and play it with the
-        // ElevenLabs voice instead of the OS's built-in TTS.
         const path = `${FileSystem.cacheDirectory}voice-reply-${Date.now()}.mp3`;
         await FileSystem.writeAsStringAsync(path, result.replyAudioBase64, {
           encoding: FileSystem.EncodingType.Base64,
@@ -223,8 +227,6 @@ export default function AgentScreen() {
         replyPlayer.replace(path);
         replyPlayer.play();
       } else {
-        // Server-side TTS failed — fall back to on-device TTS so there's
-        // always some spoken confirmation.
         Speech.speak(result.reply || 'Got it', { rate: 1.05, pitch: 1.05 });
       }
     },
@@ -258,7 +260,6 @@ export default function AgentScreen() {
     popSquish();
     if (phase === 'idle') startListening();
     else if (phase === 'listening') stopAndSend();
-    // ignore taps while processing
   }, [phase, startListening, stopAndSend, popSquish]);
 
   const sendTyped = useCallback(async () => {
@@ -303,10 +304,6 @@ export default function AgentScreen() {
         )}
 
         <Pressable onPress={onPressButton} disabled={phase === 'processing'} style={styles.talkButton}>
-          {/* Animated blob: a base circle plus two overlapping "spot" circles
-              that independently drift/scale (wobbleA/wobbleB), so the shape
-              constantly deforms like a cow-print blob instead of sitting
-              static. A quick squash-and-bounce (squish) plays on every tap. */}
           <Animated.View
             style={[
               styles.blobBase,
@@ -388,41 +385,12 @@ const styles = StyleSheet.create({
   container: { flexGrow: 1, alignItems: 'center', padding: 24, gap: 16, paddingBottom: 48 },
   title: { fontSize: 20, fontWeight: '700' },
   hint: { textAlign: 'center', minHeight: 18 },
-  buttonWrap: {
-    width: RING_SIZE,
-    height: RING_SIZE,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 24,
-  },
-  ring: {
-    position: 'absolute',
-    width: RING_SIZE,
-    height: RING_SIZE,
-    borderRadius: RING_SIZE / 2,
-    borderWidth: 2,
-    borderColor: '#c0392b',
-  },
-  talkButton: {
-    width: RING_SIZE,
-    height: RING_SIZE,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  blobBase: {
-    ...StyleSheet.absoluteFillObject,
-    borderRadius: RING_SIZE / 2,
-    backgroundColor: '#fff8e7',
-    overflow: 'hidden',
-  },
+  buttonWrap: { width: RING_SIZE, height: RING_SIZE, alignItems: 'center', justifyContent: 'center', marginTop: 24 },
+  ring: { position: 'absolute', width: RING_SIZE, height: RING_SIZE, borderRadius: RING_SIZE / 2, borderWidth: 2, borderColor: '#c0392b' },
+  talkButton: { width: RING_SIZE, height: RING_SIZE, alignItems: 'center', justifyContent: 'center' },
+  blobBase: { ...StyleSheet.absoluteFillObject, borderRadius: RING_SIZE / 2, backgroundColor: '#fff8e7', overflow: 'hidden' },
   blobBaseActive: { backgroundColor: '#ffe0d6' },
-  blobSpot: {
-    position: 'absolute',
-    width: RING_SIZE * 0.6,
-    height: RING_SIZE * 0.6,
-    borderRadius: RING_SIZE * 0.3,
-    backgroundColor: '#1a1a1a',
-  },
+  blobSpot: { position: 'absolute', width: RING_SIZE * 0.6, height: RING_SIZE * 0.6, borderRadius: RING_SIZE * 0.3, backgroundColor: '#1a1a1a' },
   blobSpotA: { top: RING_SIZE * 0.1, left: RING_SIZE * 0.08 },
   blobSpotB: { bottom: RING_SIZE * 0.05, right: RING_SIZE * 0.1, width: RING_SIZE * 0.45, height: RING_SIZE * 0.45, borderRadius: RING_SIZE * 0.225 },
   spotOverlay: { position: 'absolute' },
@@ -431,29 +399,18 @@ const styles = StyleSheet.create({
   transcript: { marginTop: 24, fontStyle: 'italic', textAlign: 'center' },
   reply: { marginTop: 8, textAlign: 'center', fontWeight: '500' },
   typedRow: { flexDirection: 'row', width: '100%', gap: 8, marginTop: 24 },
-  typedInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  sendButton: {
-    backgroundColor: '#c0392b',
-    borderRadius: 12,
-    paddingHorizontal: 18,
-    justifyContent: 'center',
-  },
+  typedInput: { flex: 1, borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10 },
+  sendButton: { backgroundColor: '#c0392b', borderRadius: 12, paddingHorizontal: 18, justifyContent: 'center' },
   sendButtonDisabled: { opacity: 0.4 },
   sendButtonLabel: { color: '#fff', fontWeight: '700' },
   debugToggle: { marginTop: 32, alignSelf: 'stretch' },
   debugToggleLabel: { fontWeight: '600', opacity: 0.7 },
-  debugBox: {
-    marginTop: 8,
-    padding: 12,
-    borderRadius: 12,
-    width: '100%',
-  },
+  debugBox: { marginTop: 8, padding: 12, borderRadius: 12, width: '100%' },
   debugText: { fontFamily: 'monospace', fontSize: 12 },
   debugHint: { fontSize: 11, opacity: 0.6, marginTop: 8 },
+  gate: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: Spacing.four, gap: Spacing.two },
+  gateTitle: { fontFamily: Fonts.sansBold, fontSize: 24 },
+  gateBody: { fontFamily: Fonts.sans, fontSize: 15, textAlign: 'center', lineHeight: 22, marginBottom: Spacing.two },
+  cta: { borderRadius: Radius.button, paddingHorizontal: Spacing.five, paddingVertical: Spacing.three },
+  ctaLabel: { fontFamily: Fonts.sansBold, fontSize: 16 },
 });

@@ -52,6 +52,47 @@ export async function listHabits(groupId: string): Promise<ItemHabit[]> {
   return unwrap(await supabase.from('item_habits').select('*').eq('group_id', groupId));
 }
 
+/**
+ * Product ids the household often buys: habit product targets first, then
+ * recent purchase product ids when habits are sparse. Max 20.
+ */
+export async function listMyStapleProductIds(groupId: string): Promise<string[]> {
+  const habits = await listHabits(groupId);
+  const fromHabits = habits
+    .map((habit) => habit.product_id)
+    .filter((id): id is string => Boolean(id));
+
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  for (const id of fromHabits) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    ordered.push(id);
+  }
+
+  if (ordered.length >= 12) {
+    return ordered.slice(0, 20);
+  }
+
+  const purchases = await listPurchases(groupId);
+  const recent = purchases.slice(0, 40);
+  if (recent.length === 0) return ordered.slice(0, 20);
+
+  const storeProductIds = [...new Set(recent.map((row) => row.store_product_id))];
+  const listings = unwrap(
+    await supabase.from('store_products').select('id, product_id').in('id', storeProductIds),
+  );
+  const productByStoreProduct = new Map(listings.map((row) => [row.id, row.product_id]));
+  for (const purchase of recent) {
+    const productId = productByStoreProduct.get(purchase.store_product_id);
+    if (!productId || seen.has(productId)) continue;
+    seen.add(productId);
+    ordered.push(productId);
+    if (ordered.length >= 20) break;
+  }
+  return ordered;
+}
+
 /** Creates or replaces the group's habit for one product or one category. */
 export async function saveHabit(input: {
   groupId: string;

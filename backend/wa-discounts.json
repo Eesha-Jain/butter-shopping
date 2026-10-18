@@ -1,0 +1,32 @@
+[
+  {
+    "chain": "Fred Meyer",
+    "percent": 10,
+    "requiresGroup": "senior",
+    "weekdays": [2],
+    "monthDays": null,
+    "monthOrdinals": [1],
+    "startsAt": "2026-01-01T00:00:00Z",
+    "endsAt": "2027-12-31T23:59:59Z"
+  },
+  {
+    "chain": "Uwajimaya",
+    "percent": 10,
+    "requiresGroup": "senior",
+    "weekdays": [2],
+    "monthDays": null,
+    "monthOrdinals": null,
+    "startsAt": "2026-01-01T00:00:00Z",
+    "endsAt": "2027-12-31T23:59:59Z"
+  },
+  {
+    "chain": "Uwajimaya",
+    "percent": 10,
+    "requiresGroup": "student",
+    "weekdays": [5],
+    "monthDays": null,
+    "monthOrdinals": null,
+    "startsAt": "2026-01-01T00:00:00Z",
+    "endsAt": "2027-12-31T23:59:59Z"
+  }
+]

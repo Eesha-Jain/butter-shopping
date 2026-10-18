@@ -44,30 +44,19 @@ export const Colors = {
 
 export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
 
-export const Fonts = Platform.select({
-  ios: {
-    /** iOS `UIFontDescriptorSystemDesignDefault` */
-    sans: 'system-ui',
-    /** iOS `UIFontDescriptorSystemDesignSerif` */
-    serif: 'ui-serif',
-    /** iOS `UIFontDescriptorSystemDesignRounded` */
-    rounded: 'ui-rounded',
-    /** iOS `UIFontDescriptorSystemDesignMonospaced` */
-    mono: 'ui-monospace',
-  },
-  default: {
-    sans: 'normal',
-    serif: 'serif',
-    rounded: 'normal',
-    mono: 'monospace',
-  },
-  web: {
-    sans: 'var(--font-display)',
-    serif: 'var(--font-serif)',
-    rounded: 'var(--font-rounded)',
-    mono: 'var(--font-mono)',
-  },
-});
+/** Loaded in root layout via `@expo-google-fonts/comic-neue`. */
+export const Fonts = {
+  /** Body / UI copy (matches login & signup). */
+  sans: 'ComicNeue_400Regular',
+  /** Emphasized UI copy. */
+  sansBold: 'ComicNeue_700Bold',
+  mono: Platform.select({
+    ios: 'ui-monospace',
+    android: 'monospace',
+    default: 'monospace',
+    web: 'var(--font-mono)',
+  }) as string,
+};
 
 export const Spacing = {
   half: 2,
