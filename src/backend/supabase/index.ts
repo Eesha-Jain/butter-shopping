@@ -3,8 +3,12 @@
  * table queries directly. See README.md for which function belongs to which task.
  */
 export { AppError } from '../errors';
-export { evenShareCents, payerRemainderCents } from './money';
-export { nextPreferredGroceryDate } from './dates';
+export type {
+  FoodRuleMode, FulfillmentMethod,
+  GroupKind, TraitKind,
+  TraitRelation,
+  TripStatus
+} from '../types';
 export {
   getSession,
   onAuthStateChange,
@@ -12,8 +16,9 @@ export {
   signIn,
   signInWithGoogle,
   signOut,
-  signUp,
+  signUp
 } from './auth';
+export { nextPreferredGroceryDate } from './dates';
 export {
   getMyProfile,
   listFoodTraits,
@@ -28,8 +33,10 @@ export {
   setMyFoodRules,
   unpreferStore,
   updateMyProfile,
-  uploadMyAvatar,
+  uploadMyAvatar
 } from './profiles';
+export { evenShareCents, payerRemainderCents } from './money';
+export { registerPushToken, removePushToken, sendOrderConfirmationPush } from './notifications';
 export {
   createGroup,
   joinGroup,
@@ -133,19 +140,20 @@ export {
   listMyStapleProductIds,
   listPurchases,
   recordPurchase,
-  saveHabit,
+  saveHabit
 } from './purchases';
 export {
   addRecipeIngredient,
   createRecipe,
   getRecipeDetail,
   listTrending,
-  listVisibleRecipes,
+  listVisibleRecipes
 } from './recipes';
-export { getProductSafety, traitsChangedSince } from './safety';
-export { registerPushToken, removePushToken, sendOrderConfirmationPush } from './notifications';
 export { analyzeRipeness } from './ripeness';
 export type { RipenessResult } from './ripeness';
+export { getProductSafety, traitsChangedSince } from './safety';
+export { listMyFavoriteProductIds, setProductFavorite } from './favorites';
+export * from './voice';
 export { listMyFavoriteProductIds, setProductFavorite } from './favorites';
 export type {
   FulfillmentMethod,

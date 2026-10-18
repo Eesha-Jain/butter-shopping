@@ -4,7 +4,6 @@
   "main": "expo-router/entry",
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^15.0.2",
-    "@elevenlabs/react": "^1.18.0",
     "@elevenlabs/react-native": "^1.2.30",
     "@expo-google-fonts/comic-neue": "^0.4.1",
     "@expo/ui": "~57.0.25",
@@ -31,6 +30,7 @@
     "expo-location": "~57.0.21",
     "expo-notifications": "~57.0.23",
     "expo-router": "~57.0.28",
+    "expo-speech": "~57.0.3",
     "expo-speech-recognition": "^58.0.0",
     "expo-splash-screen": "~57.0.10",
     "expo-sqlite": "~57.0.4",

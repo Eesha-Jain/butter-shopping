@@ -43,4 +43,5 @@ example
 /ios
 /android
 
+supabase/.temp/.env
 supabase/.temp/
