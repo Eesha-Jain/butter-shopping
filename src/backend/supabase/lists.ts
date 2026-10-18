@@ -5,12 +5,13 @@ import { unwrap, unwrapOne, unwrapVoid } from './query';
 import { listMyGroups } from './groups';
 import { addDueHabitItems, listActivePantryItems, listHabits } from './purchases';
 
-export type RecipeListSkipReason = 'still_have' | 'already_on_list';
+export type RecipeListSkipReason = 'still_have' | 'already_on_list' | 'not_in_catalog';
 
 export type RecipeListPreviewLine = {
   ingredientId: string;
   label: string;
   categoryId: string | null;
+  productId: string | null;
   amountBase: number | null;
   reason?: RecipeListSkipReason;
   lastPurchasedAt?: string | null;
@@ -379,7 +380,7 @@ export async function buildStandardList(input?: {
       await supabase.from('recipe_ingredients').select('*').eq('recipe_id', recipeId),
     );
     for (const ingredient of ingredients) {
-      const productId = await productIdForIngredient(ingredient.category_id);
+      const productId = await productIdForIngredient(ingredient);
       if (!productId) continue;
       const candidate = {
         product_id: productId,
@@ -416,7 +417,7 @@ export async function addRecipeToList(input: { listId: string; recipeId: string 
   );
   let added = 0;
   for (const ingredient of ingredients) {
-    const productId = await productIdForIngredient(ingredient.category_id);
+    const productId = await productIdForIngredient(ingredient);
     if (!productId) continue;
     await addListItem({
       listId: input.listId,
@@ -429,17 +430,84 @@ export async function addRecipeToList(input: { listId: string; recipeId: string 
   return added;
 }
 
-/** First active catalog product in a recipe ingredient's category, if any. */
-async function productIdForIngredient(categoryId: string | null): Promise<string | null> {
-  if (!categoryId) return null;
-  const product = await supabase
-    .from('products')
-    .select('id')
-    .eq('is_active', true)
-    .eq('category_id', categoryId)
-    .limit(1)
-    .maybeSingle();
-  return product.data?.id ?? null;
+const RECIPE_LINE_NOISE = new Set([
+  'tbsp',
+  'tsp',
+  'cup',
+  'cups',
+  'ounce',
+  'ounces',
+  'pound',
+  'pounds',
+  'clove',
+  'cloves',
+  'large',
+  'small',
+  'medium',
+  'unsalted',
+  'salted',
+  'fresh',
+  'dried',
+  'chopped',
+  'diced',
+  'sliced',
+  'softened',
+  'optional',
+  'taste',
+  'and',
+  'the',
+]);
+
+/** Prefer an exact product name, otherwise the shortest name that contains the term. */
+async function productMatchingName(term: string): Promise<{ id: string; name: string } | null> {
+  const cleaned = term.replace(/[%_,]/g, '').trim();
+  if (cleaned.length < 2) return null;
+  const rows = unwrap(
+    await supabase
+      .from('products')
+      .select('id, name')
+      .eq('is_active', true)
+      .ilike('name', `%${cleaned}%`)
+      .limit(20),
+  );
+  if (rows.length === 0) return null;
+  const needle = cleaned.toLowerCase();
+  const exact = rows.find((row) => row.name.trim().toLowerCase() === needle);
+  if (exact) return exact;
+  return [...rows].sort((a, b) => a.name.length - b.name.length)[0] ?? null;
+}
+
+/** Stored product, or one more search from the raw ingredient line. */
+async function productForIngredient(
+  ingredient: Pick<RecipeIngredient, 'product_id' | 'raw_text'>,
+): Promise<{ id: string; name: string } | null> {
+  if (ingredient.product_id) {
+    const stored = await supabase
+      .from('products')
+      .select('id, name')
+      .eq('id', ingredient.product_id)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (stored.error) fail(stored.error, 'Could not load the matched product.');
+    if (stored.data) return stored.data;
+  }
+  const fromLine = await productMatchingName(ingredient.raw_text);
+  if (fromLine) return fromLine;
+  const words = ingredient.raw_text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((word) => word.length >= 3 && !RECIPE_LINE_NOISE.has(word) && !/^\d+$/.test(word));
+  const longest = [...words].sort((a, b) => b.length - a.length)[0];
+  if (!longest || longest === ingredient.raw_text.trim().toLowerCase()) return null;
+  return productMatchingName(longest);
+}
+
+async function productIdForIngredient(
+  ingredient: Pick<RecipeIngredient, 'product_id' | 'raw_text'>,
+): Promise<string | null> {
+  const match = await productForIngredient(ingredient);
+  return match?.id ?? null;
 }
 function normalizeName(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -488,16 +556,22 @@ export async function previewRecipeForList(recipeId: string): Promise<RecipeList
   const skipped: RecipeListPreviewLine[] = [];
 
   for (const ingredient of ingredients) {
+    const product = await productForIngredient(ingredient);
     const line: RecipeListPreviewLine = {
       ingredientId: ingredient.id,
-      label: ingredient.raw_text,
+      label: product?.name ?? ingredient.raw_text,
       categoryId: ingredient.category_id,
+      productId: product?.id ?? null,
       amountBase: ingredient.amount_base,
     };
+    if (!product) {
+      skipped.push({ ...line, reason: 'not_in_catalog' });
+      continue;
+    }
     const candidate = {
-      product_id: null as string | null,
-      category_id: ingredient.category_id,
-      custom_name: ingredient.category_id ? null : ingredient.raw_text,
+      product_id: product.id,
+      category_id: null,
+      custom_name: null,
       done_at: null as string | null,
     };
     const key = openItemKey(candidate);
@@ -537,7 +611,9 @@ export async function addRecipeToListWithCaution(input: {
   const force = new Set(input.forceIngredientIds ?? []);
   const toAdd = [
     ...preview.willAdd,
-    ...preview.skipped.filter((row) => force.has(row.ingredientId)),
+    ...preview.skipped.filter(
+      (row) => row.reason !== 'not_in_catalog' && force.has(row.ingredientId),
+    ),
   ];
 
   const existing = await listListItems(listId);
@@ -547,18 +623,18 @@ export async function addRecipeToListWithCaution(input: {
 
   let added = 0;
   for (const line of toAdd) {
+    if (!line.productId || line.reason === 'not_in_catalog') continue;
     const candidate = {
-      product_id: null as string | null,
-      category_id: line.categoryId,
-      custom_name: line.categoryId ? null : line.label,
+      product_id: line.productId,
+      category_id: null,
+      custom_name: null,
       done_at: null as string | null,
     };
     const key = openItemKey(candidate);
     if (key && keys.has(key)) continue;
     await addListItem({
       listId,
-      categoryId: line.categoryId ?? undefined,
-      customName: line.categoryId ? undefined : line.label,
+      productId: line.productId,
       amountBase: line.amountBase ?? undefined,
       sourceRecipeId: input.recipeId,
     });
