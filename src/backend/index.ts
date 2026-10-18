@@ -52,6 +52,7 @@ export {
   ensureCatalogForTerm,
   evenShareCents,
   fetchNearbyShops,
+  resolveSearchCoords,
   finalizeOrder,
   findOrIngestProductByUpc,
   findProductByUpc,
@@ -152,6 +153,7 @@ export type {
   ActiveListTarget,
   ProductStoreOffer,
   RipenessResult,
+  SearchCoords,
   SessionFoodRule,
   ShopSort,
 } from './supabase';

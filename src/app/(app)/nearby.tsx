@@ -1,25 +1,36 @@
-import { useCallback, useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  View,
-} from 'react-native';
+import { BottomSheet, Column, Host, Text as UIText } from '@expo/ui';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import MapView, { Marker, type Region } from 'react-native-maps';
 
-import { fetchNearbyShops, type NearbyStore } from '@/backend';
+import {
+  fetchNearbyShops,
+  resolveSearchCoords,
+  type NearbyStore,
+  type SearchCoords,
+} from '@/backend';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { BottomTabInset, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+
+const SEARCH_DELTA = 0.2;
+const FALLBACK_REGION: Region = {
+  latitude: 47.6062,
+  longitude: -122.3321,
+  latitudeDelta: SEARCH_DELTA,
+  longitudeDelta: SEARCH_DELTA,
+};
 
 export default function NearbyScreen() {
   const theme = useTheme();
+  const mapRef = useRef<MapView>(null);
+  const [origin, setOrigin] = useState<SearchCoords | null>(null);
   const [shops, setShops] = useState<NearbyStore[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [selected, setSelected] = useState<NearbyStore | null>(null);
 
   const loadShops = useCallback(async (refresh = false) => {
     if (refresh) {
@@ -29,12 +40,15 @@ export default function NearbyScreen() {
     }
     setError(null);
     try {
-      const data = await fetchNearbyShops();
+      const coords = await resolveSearchCoords();
+      setOrigin(coords);
+      const data = await fetchNearbyShops(coords);
       setShops(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load nearby shops.');
       if (!refresh) {
         setShops(null);
+        setOrigin(null);
       }
     } finally {
       setIsLoading(false);
@@ -43,79 +57,120 @@ export default function NearbyScreen() {
   }, []);
 
   useEffect(() => {
-    void loadShops();
+    const timer = setTimeout(() => {
+      void loadShops();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [loadShops]);
 
-  if (isLoading && shops == null) {
-    return (
-      <ThemedView style={styles.centered}>
-        <ActivityIndicator color={theme.text} />
-        <ThemedText type="small" themeColor="textSecondary">
-          Finding shops near you
-        </ThemedText>
-      </ThemedView>
-    );
-  }
+  const pins = (shops ?? []).filter(
+    (shop) =>
+      shop.latitude != null &&
+      shop.longitude != null &&
+      Number.isFinite(shop.latitude) &&
+      Number.isFinite(shop.longitude),
+  );
 
-  if (error && shops == null) {
-    return (
-      <ThemedView style={styles.centered}>
-        <ThemedText>{error}</ThemedText>
-        <Pressable onPress={() => void loadShops()}>
-          <ThemedText type="linkPrimary">Try again</ThemedText>
-        </Pressable>
-      </ThemedView>
-    );
-  }
+  useEffect(() => {
+    const coordinates = [
+      ...(origin ? [origin] : []),
+      ...(shops ?? [])
+        .filter(
+          (shop) =>
+            shop.latitude != null &&
+            shop.longitude != null &&
+            Number.isFinite(shop.latitude) &&
+            Number.isFinite(shop.longitude),
+        )
+        .map((shop) => ({
+          latitude: shop.latitude as number,
+          longitude: shop.longitude as number,
+        })),
+    ];
+    if (coordinates.length === 0) {
+      return;
+    }
+    mapRef.current?.fitToCoordinates(coordinates, {
+      edgePadding: { top: 72, right: 40, bottom: 72, left: 40 },
+      animated: true,
+    });
+  }, [origin, shops]);
+
+  const region: Region = origin
+    ? {
+        latitude: origin.latitude,
+        longitude: origin.longitude,
+        latitudeDelta: SEARCH_DELTA,
+        longitudeDelta: SEARCH_DELTA,
+      }
+    : FALLBACK_REGION;
+
+  const showEmpty = !isLoading && !error && (shops ?? []).length === 0;
+  const overlayMessage = error
+    ? error
+    : isLoading && shops == null
+      ? 'Finding shops near you'
+      : showEmpty
+        ? 'No shops nearby'
+        : null;
 
   return (
-    <FlatList
-      data={shops ?? []}
-      keyExtractor={(item) => item.id}
-      contentInsetAdjustmentBehavior="automatic"
-      contentContainerStyle={styles.listContent}
-      keyboardShouldPersistTaps="handled"
-      refreshControl={
-        <RefreshControl
-          refreshing={isRefreshing}
-          onRefresh={() => void loadShops(true)}
-          tintColor={theme.text}
-        />
-      }
-      ListHeaderComponent={
-        error ? (
-          <ThemedText type="small" themeColor="textSecondary">
-            {error}
-          </ThemedText>
-        ) : undefined
-      }
-      ListEmptyComponent={
-        <ThemedView style={styles.empty}>
-          <ThemedText type="subtitle">No shops nearby</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            Try a wider area, or check that location is allowed.
-          </ThemedText>
-          <Pressable onPress={() => void loadShops()}>
-            <ThemedText type="linkPrimary">Try again</ThemedText>
-          </Pressable>
+    <View style={styles.container}>
+      <MapView
+        ref={mapRef}
+        style={styles.map}
+        initialRegion={region}
+        showsUserLocation={origin != null}
+        showsMyLocationButton={false}>
+        {pins.map((shop) => (
+          <Marker
+            key={shop.id}
+            coordinate={{
+              latitude: shop.latitude as number,
+              longitude: shop.longitude as number,
+            }}
+            title={shop.name}
+            onPress={() => setSelected(shop)}
+          />
+        ))}
+      </MapView>
+
+      {overlayMessage ? (
+        <ThemedView type="backgroundElement" style={styles.overlay}>
+          {isLoading && shops == null ? <ActivityIndicator color={theme.text} /> : null}
+          <ThemedText type={showEmpty ? 'subtitle' : 'small'}>{overlayMessage}</ThemedText>
+          {showEmpty ? (
+            <ThemedText type="small" themeColor="textSecondary">
+              Try a wider area, or check that location is allowed.
+            </ThemedText>
+          ) : null}
+          {error || showEmpty ? (
+            <Pressable onPress={() => void loadShops()}>
+              <ThemedText type="linkPrimary">Try again</ThemedText>
+            </Pressable>
+          ) : null}
         </ThemedView>
-      }
-      renderItem={({ item }) => (
-        <ThemedView type="backgroundElement" style={styles.row}>
-          <View style={styles.rowText}>
-            <ThemedText>{item.name}</ThemedText>
-            {item.city ? (
-              <ThemedText type="small" themeColor="textSecondary">
-                {item.city}
-              </ThemedText>
-            ) : null}
-          </View>
-          <ThemedText type="small" themeColor="textSecondary">
-            {formatDistanceKm(item.distance_km)}
-          </ThemedText>
-        </ThemedView>
-      )}
-    />
+      ) : null}
+
+      <Pressable
+        onPress={() => void loadShops(true)}
+        disabled={isRefreshing || isLoading}
+        style={[styles.retry, { backgroundColor: theme.backgroundElement, opacity: isRefreshing ? 0.6 : 1 }]}>
+        <ThemedText type="smallBold">{isRefreshing ? 'Updating…' : 'Refresh'}</ThemedText>
+      </Pressable>
+
+      <Host style={styles.sheetHost}>
+        <BottomSheet
+          isPresented={selected != null}
+          onDismiss={() => setSelected(null)}>
+          <Column>
+            <UIText>{selected?.name ?? ''}</UIText>
+            {selected?.city ? <UIText>{selected.city}</UIText> : null}
+            {selected ? <UIText>{formatDistanceKm(selected.distance_km)}</UIText> : null}
+          </Column>
+        </BottomSheet>
+      </Host>
+    </View>
   );
 }
 
@@ -131,34 +186,31 @@ function formatDistanceKm(distanceKm: number | null) {
 }
 
 const styles = StyleSheet.create({
-  centered: {
+  container: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: Spacing.four,
-    gap: Spacing.three,
   },
-  empty: {
-    padding: Spacing.four,
-    gap: Spacing.two,
-    alignItems: 'center',
+  map: {
+    ...StyleSheet.absoluteFill,
   },
-  listContent: {
-    paddingHorizontal: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    gap: Spacing.two,
-  },
-  row: {
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.three,
+  overlay: {
+    position: 'absolute',
+    top: Spacing.six,
+    left: Spacing.three,
+    right: Spacing.three,
+    padding: Spacing.three,
     borderRadius: Spacing.three,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     gap: Spacing.two,
+    alignItems: 'center',
   },
-  rowText: {
-    flex: 1,
-    gap: Spacing.half,
+  retry: {
+    position: 'absolute',
+    bottom: Spacing.six,
+    alignSelf: 'center',
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.two,
+    borderRadius: Spacing.three,
+  },
+  sheetHost: {
+    position: 'absolute',
   },
 });

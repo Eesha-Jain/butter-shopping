@@ -90,7 +90,13 @@ export {
   rulesFromUserFoodRules,
 } from './foodFilters';
 export type { SessionFoodRule, ShopSort } from './foodFilters';
-export { fetchNearbyShops, getUserCoords, resolveShopZip } from './locationService';
+export {
+  fetchNearbyShops,
+  getUserCoords,
+  resolveSearchCoords,
+  resolveShopZip,
+} from './locationService';
+export type { SearchCoords } from './locationService';
 export {
   getWeeklyBudgetCents,
   planLowestTrip,
