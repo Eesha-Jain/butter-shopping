@@ -40,6 +40,7 @@ export type {
   PushToken,
   Recipe,
   RecipeDetail,
+  ReportableStore,
   RecipeIngredient,
   ResolvedListItem,
   ShareStatus,
