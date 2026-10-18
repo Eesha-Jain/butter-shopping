@@ -44,6 +44,14 @@ export const CATEGORY_KEYWORDS = [
       "plastic wrap",
       "ziploc",
       "trash",
+      // Personal care — before fruit tokens (e.g. Banana Boat sunscreen).
+      "sunscreen",
+      "sunblock",
+      "sun block",
+      "after sun",
+      "spf",
+      "banana boat",
+      "bananaboat",
     ],
   },
   // Bakery overrides fruit tokens in compound names.
@@ -63,6 +71,11 @@ export const CATEGORY_KEYWORDS = [
   {
     category: "Meat & Seafood",
     patterns: ["chicken", "beef", "salmon", "turkey", "pork", "shrimp", "tofu"],
+  },
+  // Snacks before Fruits so "avocado chips" / fruit-flavored crisps land here.
+  {
+    category: "Snacks",
+    patterns: ["chip", "chips", "crisp", "granola", "cracker", "cookie", "ramen", "cereal", "bar"],
   },
   // Fruit (incl. purees) — same family as fresh bananas.
   {
@@ -116,7 +129,6 @@ export const CATEGORY_KEYWORDS = [
       "vegetable",
     ],
   },
-  { category: "Snacks", patterns: ["chip", "granola", "cracker", "cookie", "ramen", "cereal", "bar"] },
   {
     category: "Pantry",
     patterns: ["rice", "pasta", "oil", "peanut butter", "bean", "salsa", "hummus", "flour", "sugar"],

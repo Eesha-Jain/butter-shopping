@@ -55,6 +55,17 @@ export function categoryFromOffProduct(off: OffLike | null | undefined): string 
     return "Beverages";
   }
 
+  // Snacks before Fruits so chip tags win over fruit-flavor / avocado tags.
+  if (
+    text.includes("en:snacks") ||
+    text.includes("en:chips") ||
+    text.includes("en:chocolates") ||
+    text.includes("en:cereals") ||
+    text.includes("salty-snacks")
+  ) {
+    return "Snacks";
+  }
+
   if (
     text.includes("en:fruits") ||
     text.includes("en:fresh-fruits") ||
@@ -103,16 +114,6 @@ export function categoryFromOffProduct(off: OffLike | null | undefined): string 
 
   if (text.includes("en:frozen") || text.includes("frozen-foods") || text.includes("ice-creams")) {
     return "Frozen";
-  }
-
-  if (
-    text.includes("en:snacks") ||
-    text.includes("en:chips") ||
-    text.includes("en:chocolates") ||
-    text.includes("en:cereals") ||
-    text.includes("salty-snacks")
-  ) {
-    return "Snacks";
   }
 
   if (
