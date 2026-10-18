@@ -10,6 +10,10 @@ import { unwrapVoid } from './query';
 
 WebBrowser.maybeCompleteAuthSession();
 
+/**
+ * Expo Go remaps this to exp://…; development / store builds use
+ * buttershopping://auth/callback. Allowlist both in Supabase Auth URL config.
+ */
 const redirectTo = makeRedirectUri({
   scheme: 'buttershopping',
   path: 'auth/callback',
@@ -135,6 +139,10 @@ async function createSessionFromUrl(url: string): Promise<Session | null> {
 /**
  * Opens Google OAuth (PKCE). On native, uses an in-app browser and deep link;
  * on web, follows the browser redirect.
+ *
+ * Android Google login is reliable in a development build (claims
+ * buttershopping://). Expo Go on Android often fails the Custom Tabs handoff;
+ * use `npm run start:dev` with the shared APK, or email/password there.
  */
 export async function signInWithGoogle(): Promise<Session | null> {
   const result = await supabase.auth.signInWithOAuth({

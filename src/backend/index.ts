@@ -172,8 +172,10 @@ export {
   signInWithGoogle,
   signOut,
   signUp,
+  suggestBestShopDate,
   suggestDiscountDate,
   suggestGroceryDate,
+  getWeeklyShoppingBoard,
   traitsChangedSince,
   unpreferStore,
   updateGroup,
@@ -184,10 +186,16 @@ export {
 
 export type {
   ActiveListTarget,
+  BestShopDay,
   CategoryProductSection,
   ProductStoreOffer,
   RipenessResult,
   SearchCoords,
   SessionFoodRule,
+  ShopDayReason,
+  ShopDayStoreHint,
   ShopSort,
+  WeeklyBoardChip,
+  WeeklyBoardColumn,
+  WeeklyShoppingBoard,
 } from './supabase';

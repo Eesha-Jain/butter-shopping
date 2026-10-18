@@ -104,9 +104,13 @@ export {
   planLowestTrip,
   priceOptions,
   recommendShoppingPlan,
+  suggestBestShopDate,
   suggestDiscountDate,
   suggestGroceryDate
 } from './planning';
+export type { BestShopDay, ShopDayReason, ShopDayStoreHint } from './planning';
+export { getWeeklyShoppingBoard } from './weeklyShopping';
+export type { WeeklyBoardChip, WeeklyBoardColumn, WeeklyShoppingBoard } from './weeklyShopping';
 export {
   getMyProfile,
   listFoodTraits,
