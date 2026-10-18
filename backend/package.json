@@ -10,7 +10,8 @@
     "refresh:kroger": "node bootstrap-staples.js --zip=98195 --chains=qfc,fredMeyer --concurrency=3",
     "scrape:demo": "node scrape-demo-full.js --zip=98195",
     "scrape:demo:tj": "node scrape-demo-full.js --zip=98195 --only=tj",
-    "scrape:demo:safeway": "node scrape-demo-full.js --zip=98195 --only=safeway"
+    "scrape:demo:safeway": "node scrape-demo-full.js --zip=98195 --only=safeway",
+    "import:weekly-ads": "node import-weekly-ads.js"
   },
   "keywords": [],
   "type": "module",

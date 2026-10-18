@@ -28,9 +28,11 @@ import {
   ensureCatalogForTerm,
   formatPromotionBadge,
   promotionSavingsHint,
+  shelfSaleHint,
   getActiveListProductQtyMap,
   fetchNearbyShops,
   getCheapestPriceCentsByProductIds,
+  getCheapestShelfSaleByProductIds,
   getStorePriceCentsByProductIds,
   type OpenPricesGeo,
   getEffectiveGroceryCashbackBps,
@@ -81,12 +83,20 @@ import { ProductDetailSheet } from '@/components/shop/product-detail-sheet';
 import { ProductPeek } from '@/components/shop/product-peek';
 import { ShopFiltersDrawer } from '@/components/shop/shop-filters-drawer';
 import { ShopProfileDrawer } from '@/components/shop/shop-profile-drawer';
+import { SnapBadge } from '@/components/shop/snap-badge';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { ButterChip } from '@/components/ui/butter-chip';
 import { ButterSearchField } from '@/components/ui/butter-search-field';
 import { BottomTabInset, Radius, SheetChrome, Spacing, Type } from '@/constants/theme';
+import { useSnapOptedIn } from '@/hooks/use-snap-opted-in';
 import { useTheme } from '@/hooks/use-theme';
+
+function categoryIsSnapEligible(category: ProductCategory | undefined): boolean {
+  if (!category) return false;
+  if (typeof category.snap_eligible === 'boolean') return category.snap_eligible;
+  return category.name.toLowerCase() !== 'other';
+}
 
 const VISIBLE_CATEGORIES = 8;
 
@@ -128,6 +138,7 @@ export default function ShopScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { isGuest, requestSignIn, signOut } = useSession();
+  const snapOptedIn = useSnapOptedIn();
   const {
     targets: listTargets,
     activeTarget,
@@ -161,11 +172,35 @@ export default function ShopScreen() {
   const [products, setProducts] = useState<Product[]>([]);
   const [categorySections, setCategorySections] = useState<CategoryProductSection[]>([]);
   const [promotions, setPromotions] = useState<Map<string, Promotion>>(new Map());
+  const [shelfSales, setShelfSales] = useState<
+    Map<string, NonNullable<ReturnType<typeof shelfSaleHint>>>
+  >(() => new Map());
   const [checkingStores, setCheckingStores] = useState(false);
   const [nearbyStores, setNearbyStores] = useState<NearbyStore[]>([]);
   const [selectedStore, setSelectedStore] = useState<NearbyStore | null>(null);
   const [shelfPrices, setShelfPrices] = useState<Map<string, number>>(() => new Map());
   const [cashbackBps, setCashbackBps] = useState<number | null>(null);
+
+  const refreshShelfSales = useCallback(async (ids: string[]) => {
+    const unique = [...new Set(ids.filter(Boolean))];
+    if (unique.length === 0) {
+      setShelfSales(new Map());
+      return new Set<string>();
+    }
+    try {
+      const rows = await getCheapestShelfSaleByProductIds(unique);
+      const next = new Map<string, NonNullable<ReturnType<typeof shelfSaleHint>>>();
+      for (const [id, row] of rows) {
+        const hint = shelfSaleHint(row.priceCents, row.regularPriceCents);
+        if (hint) next.set(id, hint);
+      }
+      setShelfSales(next);
+      return new Set(next.keys());
+    } catch {
+      setShelfSales(new Map());
+      return new Set<string>();
+    }
+  }, []);
 
   const [traits, setTraits] = useState<FoodTrait[]>([]);
   const [preferenceRules, setPreferenceRules] = useState<SessionFoodRule[]>([]);
@@ -187,6 +222,15 @@ export default function ShopScreen() {
   const isSearching = searchQuery.length > 0;
 
   const traitsById = useMemo(() => new Map(traits.map((trait) => [trait.id, trait])), [traits]);
+  const categoryById = useMemo(
+    () => new Map(categories.map((category) => [category.id, category])),
+    [categories],
+  );
+  const productShowsSnap = useCallback(
+    (product: Product) =>
+      snapOptedIn && categoryIsSnapEligible(categoryById.get(product.category_id ?? '')),
+    [snapOptedIn, categoryById],
+  );
 
   const activeFilterChips = useMemo(() => {
     const chips: { key: string; label: string; onRemove: () => void }[] = [];
@@ -445,12 +489,14 @@ export default function ShopScreen() {
           const netPriceMap = applyCashbackToPriceMap(priceMap, nextCashbackBps);
           setCashbackBps(nextCashbackBps);
           setShelfPrices(netPriceMap);
+          const shelfSaleIds = await refreshShelfSales(rawProducts.map((row) => row.id));
+          const saleIds = new Set([...promotionProductIds, ...shelfSaleIds]);
           setProducts(
             applyFoodFilters(rawProducts, sessionRules, indexTraitsByProduct(traitsForProducts), {
               sort,
               stapleIds,
               onSaleOnly,
-              promotionProductIds,
+              promotionProductIds: saleIds,
               priceCentsByProduct: netPriceMap,
             }),
           );
@@ -474,13 +520,19 @@ export default function ShopScreen() {
           const netPriceMap = applyCashbackToPriceMap(priceMap, nextCashbackBps);
           setCashbackBps(nextCashbackBps);
           setShelfPrices(netPriceMap);
+          const [shelfSaleIds, enrichedPromo] = await Promise.all([
+            refreshShelfSales(allIds),
+            getProductPromotionMap(allIds),
+          ]);
+          if (!cancelled) setPromotions(enrichedPromo);
+          const saleIds = new Set([...enrichedPromo.keys(), ...shelfSaleIds]);
 
           const traitsByProduct = indexTraitsByProduct(traitsForProducts);
           const filterOpts = {
             sort,
             stapleIds,
             onSaleOnly,
-            promotionProductIds,
+            promotionProductIds: saleIds,
             priceCentsByProduct: netPriceMap,
           };
           setCategorySections(
@@ -527,13 +579,19 @@ export default function ShopScreen() {
           const netPriceMap = applyCashbackToPriceMap(priceMap, nextCashbackBps);
           setCashbackBps(nextCashbackBps);
           setShelfPrices(netPriceMap);
+          const productIds = rawProducts.map((row) => row.id);
+          const [shelfSaleIds, enrichedPromo] = await Promise.all([
+            refreshShelfSales(productIds),
+            getProductPromotionMap(productIds),
+          ]);
+          if (!cancelled) setPromotions(enrichedPromo);
 
           setProducts(
             applyFoodFilters(rawProducts, sessionRules, indexTraitsByProduct(traitsForProducts), {
               sort,
               stapleIds,
               onSaleOnly,
-              promotionProductIds,
+              promotionProductIds: new Set([...enrichedPromo.keys(), ...shelfSaleIds]),
               priceCentsByProduct: netPriceMap,
             }),
           );
@@ -561,6 +619,7 @@ export default function ShopScreen() {
     isGuest,
     onSaleOnly,
     refreshQtyMap,
+    refreshShelfSales,
     selectedCategoryId,
     selectedStore,
     sessionRules,
@@ -835,9 +894,13 @@ export default function ShopScreen() {
   const renderProductCard = (product: Product, index = 0) => {
     const promo = promotions.get(product.id) ?? null;
     const priceCents = shelfPrices.get(product.id) ?? null;
-    const hint = promo ? promotionSavingsHint(promo, priceCents) : null;
+    const shelfHint = !promo ? (shelfSales.get(product.id) ?? null) : null;
+    const hint = promo ? promotionSavingsHint(promo, priceCents) : shelfHint;
+    const saleBadge = promo
+      ? formatPromotionBadge(promo)
+      : (shelfHint?.badge ?? null);
     const priceNote =
-      !promo && cashbackBps != null && cashbackBps > 0 && priceCents != null
+      !promo && !shelfHint && cashbackBps != null && cashbackBps > 0 && priceCents != null
         ? 'after cash back'
         : null;
     return (
@@ -845,10 +908,11 @@ export default function ShopScreen() {
         key={product.id}
         product={product}
         index={index}
-        saleBadge={promo ? formatPromotionBadge(promo) : null}
+        saleBadge={saleBadge}
         compareAtCents={hint?.compareAtCents}
         savingsLabel={hint?.savingsLabel}
         priceNote={priceNote}
+        showSnap={productShowsSnap(product)}
         quantityOnList={effectiveQtyMap.get(product.id)?.quantity}
         priceCents={priceCents}
         onPress={() => openProduct(product)}
@@ -1128,6 +1192,9 @@ export default function ShopScreen() {
                     label={`${selectedStore.name} ×`}
                     selected
                     onPress={() => setSelectedStore(null)}
+                    icon={
+                      snapOptedIn && selectedStore.accepts_snap ? <SnapBadge size="sm" /> : undefined
+                    }
                   />
                 ) : null}
                 {activeFilterChips.map((chip) => (
@@ -1279,6 +1346,7 @@ export default function ShopScreen() {
             draftOnSaleOnly={onSaleOnly}
             nearbyStores={nearbyStores}
             selectedStoreId={selectedStore?.id ?? null}
+            showSnapBadges={snapOptedIn}
             onSelectStore={(store) => setSelectedStore(store)}
             onClose={() => setFiltersOpen(false)}
             onResetToPreferences={() => preferenceRules}
@@ -1359,6 +1427,11 @@ export default function ShopScreen() {
               : null
           }
           preferenceRules={sessionRules}
+          snapEligible={
+            selectedProduct
+              ? categoryIsSnapEligible(categoryById.get(selectedProduct.category_id ?? ''))
+              : false
+          }
           quantityOnList={
             selectedProduct ? effectiveQtyMap.get(selectedProduct.id)?.quantity : undefined
           }

@@ -22,9 +22,94 @@ import {
   type OpenPricesGeo,
 } from './open-prices';
 import { unwrap, unwrapOne, unwrapVoid } from './query';
+import {
+  canonicalizeUpc,
+  upcLookupValues,
+} from '@/utils/product-identity';
 
 /** Search-path chains: Kroger APIs only (scrapes run via bootstrap ingest). */
 const SEARCH_CHAINS = 'qfc,fredMeyer';
+
+/** Prefer display_name on cards when present. */
+export function productCardName(product: Pick<Product, 'name' | 'display_name'>): string {
+  const display = product.display_name?.trim();
+  return display || product.name;
+}
+
+/** Stable group key for cross-store identity. */
+export function productGroupKey(product: Pick<Product, 'id' | 'canonical_upc' | 'fingerprint' | 'upc'>): string {
+  if (product.canonical_upc) return `u:${product.canonical_upc}`;
+  const canon = canonicalizeUpc(product.upc);
+  if (canon) return `u:${canon}`;
+  if (product.fingerprint) return `f:${product.fingerprint}`;
+  return `id:${product.id}`;
+}
+
+/**
+ * All product ids that share UPC/fingerprint with this product (includes self).
+ * Used for browse pricing and PDP multi-store offers.
+ */
+export async function resolveProductGroupIds(productId: string): Promise<string[]> {
+  if (!productId) return [];
+  const product = unwrap(
+    await supabase
+      .from('products')
+      .select('id, upc, canonical_upc, fingerprint')
+      .eq('id', productId)
+      .maybeSingle(),
+  ) as Pick<Product, 'id' | 'upc' | 'canonical_upc' | 'fingerprint'> | null;
+  if (!product) return [productId];
+
+  const ids = new Set<string>([productId]);
+  const canon = product.canonical_upc ?? canonicalizeUpc(product.upc);
+  if (canon) {
+    const byCanon = unwrap(
+      await supabase
+        .from('products')
+        .select('id')
+        .eq('is_active', true)
+        .eq('canonical_upc', canon),
+    ) as { id: string }[];
+    for (const row of byCanon) ids.add(row.id);
+  }
+  const upcValues = upcLookupValues(product.upc);
+  if (upcValues.length > 0) {
+    const siblings = unwrap(
+      await supabase.from('products').select('id').eq('is_active', true).in('upc', upcValues),
+    ) as { id: string }[];
+    for (const row of siblings) ids.add(row.id);
+  }
+  if (product.fingerprint) {
+    const soft = unwrap(
+      await supabase
+        .from('products')
+        .select('id')
+        .eq('is_active', true)
+        .eq('fingerprint', product.fingerprint),
+    ) as { id: string }[];
+    for (const row of soft) ids.add(row.id);
+  }
+  return [...ids];
+}
+
+/** Collapse sibling products to one card (richest image / display name wins). */
+export function dedupeProductsByGroup(products: Product[]): Product[] {
+  const buckets = new Map<string, Product>();
+  const score = (p: Product) =>
+    (p.image_path ? 4 : 0) +
+    (p.display_name ? 2 : 0) +
+    (p.brand ? 1 : 0) +
+    (p.canonical_upc || p.upc ? 1 : 0);
+
+  for (const product of products) {
+    const key = productGroupKey(product);
+    const prior = buckets.get(key);
+    if (!prior || score(product) > score(prior)) {
+      buckets.set(key, product);
+    }
+  }
+  return [...buckets.values()];
+}
 
 const CLIENT_INGEST_COOLDOWN_MS = 10 * 60 * 1000;
 const ingestCooldown = new Map<string, number>();
@@ -94,7 +179,8 @@ export async function listCategories(input?: { limit?: number }): Promise<Produc
  * cannot dominate the first screen.
  */
 function diversifyProducts(rows: Product[], limit: number): Product[] {
-  if (rows.length <= limit) return rows;
+  const unique = dedupeProductsByGroup(rows);
+  if (unique.length <= limit) return unique;
 
   const groupKey = (product: Product) => {
     const brand = product.brand?.trim().toLowerCase();
@@ -104,7 +190,7 @@ function diversifyProducts(rows: Product[], limit: number): Product[] {
   };
 
   const buckets = new Map<string, Product[]>();
-  for (const row of rows) {
+  for (const row of unique) {
     const key = groupKey(row);
     const list = buckets.get(key) ?? [];
     list.push(row);
@@ -124,7 +210,7 @@ function diversifyProducts(rows: Product[], limit: number): Product[] {
       progressed = true;
     }
   }
-  return picked;
+  return picked.slice(0, limit);
 }
 
 const DEFAULT_EXCLUDE_CATEGORY_NAMES = ['Other'];
@@ -272,6 +358,7 @@ export async function getProductTraitsForIds(productIds: string[]): Promise<Prod
 
 /**
  * Cheapest known shelf price (cents) per product across available store listings.
+ * Expands UPC/fingerprint siblings so cross-store duplicates share one low price.
  * Missing ids mean no observed price yet.
  */
 export async function getCheapestPriceCentsByProductIds(
@@ -282,14 +369,76 @@ export async function getCheapestPriceCentsByProductIds(
   const prices = new Map<string, number>();
   if (unique.length === 0) return prices;
 
+  const products = unwrap(
+    await supabase
+      .from('products')
+      .select('id, upc, canonical_upc, fingerprint')
+      .in('id', unique)
+      .eq('is_active', true),
+  ) as Pick<Product, 'id' | 'upc' | 'canonical_upc' | 'fingerprint'>[];
+
+  const groupKeyById = new Map<string, string>();
+  const idsByGroup = new Map<string, Set<string>>();
+  for (const product of products) {
+    const key = productGroupKey(product);
+    groupKeyById.set(product.id, key);
+    const set = idsByGroup.get(key) ?? new Set<string>();
+    set.add(product.id);
+    idsByGroup.set(key, set);
+  }
+
+  // Expand soft siblings not in the request set (same fingerprint / canonical UPC).
+  const canonKeys = [
+    ...new Set(
+      products
+        .map((p) => p.canonical_upc ?? canonicalizeUpc(p.upc))
+        .filter((v): v is string => Boolean(v)),
+    ),
+  ];
+  const fingerprints = [
+    ...new Set(products.map((p) => p.fingerprint).filter((v): v is string => Boolean(v))),
+  ];
+  const extraBatches: Pick<Product, 'id' | 'upc' | 'canonical_upc' | 'fingerprint'>[][] = [];
+  if (canonKeys.length > 0) {
+    extraBatches.push(
+      unwrap(
+        await supabase
+          .from('products')
+          .select('id, upc, canonical_upc, fingerprint')
+          .eq('is_active', true)
+          .in('canonical_upc', canonKeys),
+      ) as Pick<Product, 'id' | 'upc' | 'canonical_upc' | 'fingerprint'>[],
+    );
+  }
+  if (fingerprints.length > 0) {
+    extraBatches.push(
+      unwrap(
+        await supabase
+          .from('products')
+          .select('id, upc, canonical_upc, fingerprint')
+          .eq('is_active', true)
+          .in('fingerprint', fingerprints),
+      ) as Pick<Product, 'id' | 'upc' | 'canonical_upc' | 'fingerprint'>[],
+    );
+  }
+  for (const product of extraBatches.flat()) {
+    const key = productGroupKey(product);
+    const set = idsByGroup.get(key) ?? new Set<string>();
+    set.add(product.id);
+    idsByGroup.set(key, set);
+    groupKeyById.set(product.id, key);
+  }
+
+  const allIds = [...new Set([...groupKeyById.keys()])];
   const listings = unwrap(
     await supabase
       .from('store_products')
       .select('id, product_id')
-      .in('product_id', unique)
+      .in('product_id', allIds)
       .eq('is_available', true),
   );
 
+  const groupMin = new Map<string, number>();
   if (listings.length > 0) {
     const storeProductIds = listings.map((row) => row.id);
     const current = unwrap(
@@ -302,22 +451,27 @@ export async function getCheapestPriceCentsByProductIds(
     for (const listing of listings) {
       const cents = priceByStoreProduct.get(listing.id);
       if (cents == null) continue;
-      const prior = prices.get(listing.product_id);
-      if (prior == null || cents < prior) {
-        prices.set(listing.product_id, cents);
-      }
+      const key = groupKeyById.get(listing.product_id);
+      if (!key) continue;
+      const prior = groupMin.get(key);
+      if (prior == null || cents < prior) groupMin.set(key, cents);
     }
+  }
+
+  for (const id of unique) {
+    const key = groupKeyById.get(id);
+    if (!key) continue;
+    const cents = groupMin.get(key);
+    if (cents != null) prices.set(id, cents);
   }
 
   // Fill gaps with Open Prices (cached, geo-preferring) when products have UPCs.
   const missingIds = unique.filter((id) => !prices.has(id));
   if (missingIds.length === 0) return prices;
 
-  const products = unwrap(
-    await supabase.from('products').select('id, upc').in('id', missingIds),
-  ) as { id: string; upc: string | null }[];
   const upcByProduct = new Map<string, string>();
   for (const row of products) {
+    if (!missingIds.includes(row.id)) continue;
     const upc = String(row.upc ?? '').replace(/\D/g, '');
     if (/^\d{8,14}$/.test(upc)) upcByProduct.set(row.id, upc);
   }
@@ -398,7 +552,8 @@ export async function listStoreShelf(
     products = products.filter((product) => product.category_id != null && ids.has(product.category_id));
   }
 
-  return products
+  const deduped = dedupeProductsByGroup(products);
+  return deduped
     .flatMap((product) => {
       const priceCents = priceByProduct.get(product.id);
       return priceCents == null ? [] : [{ product, priceCents }];
@@ -427,8 +582,10 @@ export async function getStorePriceCentsByProductIds(
   return pricesForListings(listings);
 }
 
-/** Product-scoped live promotions keyed by product id. */
-export async function getProductPromotionMap(): Promise<Map<string, Promotion>> {
+/** Product-scoped live promotions keyed by product id (and sibling group ids). */
+export async function getProductPromotionMap(
+  productIds?: string[],
+): Promise<Map<string, Promotion>> {
   const rows = await listCurrentPromotions();
   const map = new Map<string, Promotion>();
   for (const promo of rows) {
@@ -437,11 +594,28 @@ export async function getProductPromotionMap(): Promise<Map<string, Promotion>> 
       map.set(promo.product_id, promo);
     }
   }
+  if (!productIds?.length) return map;
+
+  // Propagate a promo on any sibling to every requested id in that group.
+  const needed = productIds.filter((id) => !map.has(id));
+  await Promise.all(
+    needed.map(async (id) => {
+      const group = await resolveProductGroupIds(id);
+      for (const sibling of group) {
+        const promo = map.get(sibling);
+        if (promo) {
+          map.set(id, promo);
+          return;
+        }
+      }
+    }),
+  );
   return map;
 }
 
 /** Short badge copy for a promotion. */
 export function formatPromotionBadge(promo: Promotion): string {
+  if (promo.label?.trim()) return promo.label.trim();
   if (promo.discount_type === 'percent_off') {
     return `${promo.discount_value}% off`;
   }
@@ -449,7 +623,114 @@ export function formatPromotionBadge(promo: Promotion): string {
     const dollars = (promo.discount_value / 100).toFixed(promo.discount_value % 100 === 0 ? 0 : 2);
     return `$${dollars} off`;
   }
-  return 'BOGO';
+  const buy = promo.buy_quantity ?? 1;
+  const get = promo.get_quantity ?? 1;
+  if (buy === 1 && get === 1) return 'BOGO';
+  return `Buy ${buy} get ${get} free`;
+}
+
+/** One-line how-it-applies for PDP (null when badge alone is enough). */
+export function formatPromotionTerms(promo: Promotion): string | null {
+  if (promo.discount_type === 'bogo') {
+    const buy = promo.buy_quantity ?? 1;
+    const get = promo.get_quantity ?? 1;
+    if (buy === 1 && get === 1) return 'Buy one, get one free';
+    return `Pay for ${buy}, get ${get} free`;
+  }
+  if (promo.discount_type === 'percent_off') {
+    return `${promo.discount_value}% off the shelf price`;
+  }
+  if (promo.discount_type === 'amount_off') {
+    const dollars = (promo.discount_value / 100).toFixed(promo.discount_value % 100 === 0 ? 0 : 2);
+    return `$${dollars} off each unit`;
+  }
+  return null;
+}
+
+/** Synthetic promo-like badge from shelf regular vs sale price. */
+export type ShelfSaleHint = {
+  badge: string;
+  compareAtCents: number;
+  savingsLabel: string;
+};
+
+export function shelfSaleHint(
+  priceCents: number | null | undefined,
+  regularPriceCents: number | null | undefined,
+): ShelfSaleHint | null {
+  if (
+    priceCents == null ||
+    regularPriceCents == null ||
+    regularPriceCents <= priceCents ||
+    priceCents < 0
+  ) {
+    return null;
+  }
+  const save = regularPriceCents - priceCents;
+  const pct = Math.round((save / regularPriceCents) * 100);
+  const dollars = (save / 100).toFixed(save % 100 === 0 ? 0 : 2);
+  const badge = pct >= 5 ? `${pct}% off` : `$${dollars} off`;
+  return {
+    badge,
+    compareAtCents: regularPriceCents,
+    savingsLabel: `Save $${dollars}`,
+  };
+}
+
+/**
+ * Cheapest shelf price + regular (when on sale) per product, expanding siblings.
+ */
+export async function getCheapestShelfSaleByProductIds(
+  productIds: string[],
+): Promise<Map<string, { priceCents: number; regularPriceCents: number | null }>> {
+  const unique = [...new Set(productIds.filter(Boolean))];
+  const out = new Map<string, { priceCents: number; regularPriceCents: number | null }>();
+  if (unique.length === 0) return out;
+
+  const priceMap = await getCheapestPriceCentsByProductIds(unique);
+  const listings = unwrap(
+    await supabase
+      .from('store_products')
+      .select('id, product_id')
+      .in('product_id', unique)
+      .eq('is_available', true),
+  );
+  if (listings.length === 0) {
+    for (const [id, priceCents] of priceMap) {
+      out.set(id, { priceCents, regularPriceCents: null });
+    }
+    return out;
+  }
+  const current = unwrap(
+    await supabase
+      .from('trusted_current_prices')
+      .select('store_product_id, price_cents, regular_price_cents')
+      .in(
+        'store_product_id',
+        listings.map((row) => row.id),
+      ),
+  );
+  const byListing = new Map(
+    current.map((row) => [
+      row.store_product_id,
+      {
+        priceCents: row.price_cents as number,
+        regularPriceCents: (row.regular_price_cents as number | null) ?? null,
+      },
+    ]),
+  );
+  for (const listing of listings) {
+    const row = byListing.get(listing.id);
+    if (!row) continue;
+    const prior = out.get(listing.product_id);
+    if (!prior || row.priceCents < prior.priceCents) {
+      out.set(listing.product_id, row);
+    }
+  }
+  for (const [id, priceCents] of priceMap) {
+    if (!out.has(id)) out.set(id, { priceCents, regularPriceCents: null });
+  }
+  return out;
 }
 
 export type PromotionSavingsHint = {
@@ -515,9 +796,24 @@ export async function searchProducts(
  * A null result means unknown, not that the barcode is unsafe.
  */
 export async function findProductByUpc(upc: string): Promise<Product | null> {
-  return unwrap(
-    await supabase.from('products').select('*').eq('upc', upc).eq('is_active', true).maybeSingle(),
+  const canon = canonicalizeUpc(upc);
+  if (canon) {
+    const byCanon = unwrap(
+      await supabase
+        .from('products')
+        .select('*')
+        .eq('canonical_upc', canon)
+        .eq('is_active', true)
+        .maybeSingle(),
+    );
+    if (byCanon) return byCanon;
+  }
+  const values = upcLookupValues(upc);
+  if (values.length === 0) return null;
+  const rows = unwrap(
+    await supabase.from('products').select('*').in('upc', values).eq('is_active', true).limit(1),
   );
+  return rows[0] ?? null;
 }
 
 /**
@@ -597,42 +893,19 @@ export type ProductStoreOffer = {
   isAvailable: boolean;
   /** ISO timestamptz from trusted_current_prices.created_at */
   observedAt: string;
+  /** Store accepts SNAP/EBT (from stores.accepts_snap). */
+  acceptsSnap: boolean;
 };
-
-/** UPC digit variants so split product rows across chains still merge on PDP. */
-function upcLookupValues(value: string | null | undefined): string[] {
-  const digits = String(value ?? '').replace(/\D/g, '');
-  if (!digits) return [];
-  const stripped = digits.replace(/^0+/, '') || '0';
-  return [...new Set([digits, stripped, stripped.padStart(12, '0'), stripped.padStart(13, '0')])];
-}
 
 /**
  * Shelf offers for one catalog product across stores (for PDP comparisons).
- * When the product has a UPC, also includes listings from sibling product rows
- * that share that barcode (common when scrapes created separate products).
+ * Includes sibling product rows that share canonical UPC or fingerprint.
  * Cheapest first; one offer per store (keeps lowest price).
  */
 export async function listProductStoreOffers(productId: string): Promise<ProductStoreOffer[]> {
   if (!productId) return [];
 
-  const productResult = await supabase
-    .from('products')
-    .select('id, upc')
-    .eq('id', productId)
-    .maybeSingle();
-  const product = productResult.error ? null : productResult.data;
-
-  let productIds = [productId];
-  const upcValues = upcLookupValues(product?.upc ?? null);
-  if (upcValues.length > 0) {
-    const siblings = unwrap(
-      await supabase.from('products').select('id').in('upc', upcValues),
-    ) as { id: string }[];
-    if (siblings.length > 0) {
-      productIds = [...new Set(siblings.map((row) => row.id))];
-    }
-  }
+  const productIds = await resolveProductGroupIds(productId);
 
   const listings = unwrap(
     await supabase
@@ -644,7 +917,10 @@ export async function listProductStoreOffers(productId: string): Promise<Product
 
   const storeIds = [...new Set(listings.map((row) => row.store_id))];
   const stores = unwrap(
-    await supabase.from('stores').select('id, name, chain_id').in('id', storeIds),
+    await supabase
+      .from('stores')
+      .select('id, name, chain_id, accepts_snap')
+      .in('id', storeIds),
   );
   const chainIds = [...new Set(stores.map((row) => row.chain_id).filter(Boolean))] as string[];
   const chains =
@@ -683,6 +959,7 @@ export async function listProductStoreOffers(productId: string): Promise<Product
       priceCents: price.priceCents,
       isAvailable: listing.is_available,
       observedAt: price.observedAt,
+      acceptsSnap: Boolean(store?.accepts_snap),
     };
     const existing = byStore.get(listing.store_id);
     if (!existing || offer.priceCents < existing.priceCents) {
@@ -710,6 +987,7 @@ function openPricesAsOffers(rows: OpenPriceRow[]): ProductStoreOffer[] {
       priceCents: row.priceCents as number,
       isAvailable: true,
       observedAt: row.date ? new Date(row.date).toISOString() : new Date().toISOString(),
+      acceptsSnap: false,
     }));
 }
 
@@ -854,9 +1132,16 @@ export async function getCurrentPrice(storeProductId: string): Promise<CurrentPr
 
 /** Promotions that have not ended. Filter further by store, chain, or date in the screen. */
 export async function listCurrentPromotions(): Promise<Promotion[]> {
-  return unwrap(
-    await supabase.from('promotions').select('*').gt('ends_at', new Date().toISOString()).limit(100),
+  const pageSize = 500;
+  const rows = unwrap(
+    await supabase
+      .from('promotions')
+      .select('*')
+      .gt('ends_at', new Date().toISOString())
+      .order('ends_at', { ascending: true })
+      .limit(pageSize),
   );
+  return rows;
 }
 
 /** Every store a signed-in user may attach a shelf-price report to. */

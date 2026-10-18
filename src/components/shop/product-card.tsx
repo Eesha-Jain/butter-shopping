@@ -7,8 +7,9 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
-import type { Product } from '@/backend';
+import { productCardName, type Product } from '@/backend';
 import { ProductPhoto } from '@/components/shop/product-photo';
+import { SnapBadge } from '@/components/shop/snap-badge';
 import { ThemedText } from '@/components/themed-text';
 import { ButterBlock } from '@/components/ui/butter-block';
 import { Fonts, Spacing } from '@/constants/theme';
@@ -23,6 +24,8 @@ type Props = {
   savingsLabel?: string | null;
   /** Quiet note when net price includes cash back (no promo). */
   priceNote?: string | null;
+  /** Show SNAP badge when the shopper opted in and this food is eligible. */
+  showSnap?: boolean;
   quantityOnList?: number;
   sponsored?: boolean;
   /** Narrow carousel width (staples / trending). */
@@ -57,6 +60,7 @@ export function ProductCard({
   compareAtCents,
   savingsLabel,
   priceNote,
+  showSnap,
   quantityOnList,
   sponsored,
   compact,
@@ -78,6 +82,7 @@ export function ProductCard({
   const blockColor = onList ? theme.backgroundSelected : theme.accentSoft;
   const blockSize = compact ? 140 : 160;
   const photoSize = Math.round(blockSize * 0.72);
+  const title = productCardName(product);
   const showCompare =
     compareAtCents != null && priceCents != null && compareAtCents > priceCents;
 
@@ -114,18 +119,18 @@ export function ProductCard({
       onPressOut={() => setPressScale(press, 1, 140)}
       style={[styles.card, compact && styles.cardCompact, animatedStyle]}
       accessibilityRole="button"
-      accessibilityLabel={product.name}>
+      accessibilityLabel={title}>
       <View style={styles.blockStage}>
         <ButterBlock size={blockSize} color={blockColor}>
           <ProductPhoto
             imagePath={product.image_path}
-            placeholderLetter={product.name}
+            placeholderLetter={title}
             size={photoSize}
           />
         </ButterBlock>
         {saleBadge ? (
           <View style={[styles.saleMark, { backgroundColor: theme.primary }]}>
-            <ThemedText type="smallBold" style={{ color: theme.primaryText, fontSize: 12 }}>
+            <ThemedText type="smallBold" style={{ color: theme.primaryText, fontSize: 11 }}>
               {saleBadge}
             </ThemedText>
           </View>
@@ -133,9 +138,12 @@ export function ProductCard({
       </View>
 
       <View style={styles.body}>
-        <ThemedText type="smallBold" numberOfLines={2} style={styles.name}>
-          {product.name}
-        </ThemedText>
+        <View style={styles.nameRow}>
+          <ThemedText type="smallBold" numberOfLines={2} style={styles.name}>
+            {title}
+          </ThemedText>
+          {showSnap ? <SnapBadge size="sm" /> : null}
+        </View>
         {sponsored ? (
           <ThemedText type="small" themeColor="textSecondary">
             Sponsored
@@ -222,9 +230,10 @@ const styles = StyleSheet.create({
   saleMark: {
     position: 'absolute',
     top: Spacing.one,
-    left: Spacing.two,
+    right: Spacing.two,
     zIndex: 2,
-    paddingHorizontal: Spacing.two + 2,
+    maxWidth: '88%',
+    paddingHorizontal: Spacing.two,
     paddingVertical: Spacing.one,
     borderRadius: Spacing.one,
   },
@@ -234,7 +243,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.one,
     justifyContent: 'space-between',
   },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.one,
+  },
   name: {
+    flex: 1,
     lineHeight: 18,
   },
   priceRow: {

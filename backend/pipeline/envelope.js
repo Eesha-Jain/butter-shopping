@@ -40,6 +40,9 @@
  * @property {string | null} [storeRef]
  * @property {'percent_off' | 'amount_off' | 'bogo'} discountType
  * @property {number} discountValue
+ * @property {number | null} [buyQuantity]
+ * @property {number | null} [getQuantity]
+ * @property {string | null} [label]
  * @property {string | null} [requiresGroup]
  * @property {number[] | null} [weekdays]
  * @property {number[] | null} [monthDays]
@@ -48,6 +51,7 @@
  * @property {string} endsAt
  * @property {string | null} [productUpc]
  * @property {string | null} [productName]
+ * @property {string | null} [productBrand]
  * @property {string | null} [externalRef]
  */
 
@@ -99,6 +103,9 @@ export function promotionOffer(input) {
     storeRef: input.storeRef ?? null,
     discountType: input.discountType ?? "percent_off",
     discountValue: input.discountValue,
+    buyQuantity: input.buyQuantity ?? null,
+    getQuantity: input.getQuantity ?? null,
+    label: input.label ?? null,
     requiresGroup: input.requiresGroup ?? null,
     weekdays: input.weekdays ?? null,
     monthDays: input.monthDays ?? null,
@@ -107,6 +114,7 @@ export function promotionOffer(input) {
     endsAt: input.endsAt,
     productUpc: input.productUpc ?? null,
     productName: input.productName ?? null,
+    productBrand: input.productBrand ?? null,
     externalRef: input.externalRef ?? null,
   };
 }
