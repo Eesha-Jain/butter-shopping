@@ -77,8 +77,8 @@ const LISTEN_OPTIONS = {
 
 const SILENCE_MS = 5000;
 const SPEECH_DB = -50;
-const COW_MOO_SHORT = require('../../../assets/audio/cow-moo-short.mp3');
-const COW_MOO_LONG = require('../../../assets/audio/cow-moo-long.mp3');
+const COW_MOO_SHORT = require('@/assets/audio/cow-moo-short.mp3');
+const COW_MOO_LONG = require('@/assets/audio/cow-moo-long.mp3');
 
 /** ElevenLabs writes non-speech as tags such as "[outro jingle]". */
 function stripAudioTags(value: string): string {
