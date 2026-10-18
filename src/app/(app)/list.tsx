@@ -508,14 +508,14 @@ export default function PlanScreen() {
   };
 
   const onOrderStore = async (storeId: string) => {
-    if (!listId || !groupId || !selectedYmd || orderingStoreId) return;
+    if (!listId || !groupId || !isGroceryDay || orderingStoreId) return;
     setOrderingStoreId(storeId);
     setError(null);
     try {
       const result = await placeStoreOrderFromList({
         listId,
         groupId,
-        plannedFor: selectedYmd,
+        plannedFor: activeYmd,
         storeId,
       });
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -557,14 +557,16 @@ export default function PlanScreen() {
   };
 
   const stickyVisible =
-    segment === 'plan' && !isGuest && openItems.length > 0 && selectedYmd != null;
+    segment === 'calendar' && !isGuest && isGroceryDay && dayOpenItemIds.size > 0;
+  // Native tabs float over content; clear the bar plus the home indicator.
+  const tabBarClearance = BottomTabInset + insets.bottom;
 
   if (isGuest) {
     return (
-      <ThemedView style={[styles.root, { paddingTop: insets.top + Spacing.three }]}>
+      <ThemedView style={[styles.root, { paddingTop: insets.top + Spacing.one }]}>
         <ScrollView
-          contentContainerStyle={styles.guestContent}
-          contentInsetAdjustmentBehavior="automatic">
+          contentContainerStyle={[styles.guestContent, { paddingBottom: tabBarClearance + Spacing.four }]}
+          contentInsetAdjustmentBehavior="never">
           <Animated.View entering={FadeInDown.duration(280)} style={styles.header}>
             <ThemedText type="smallBold" style={styles.pageTitle}>
               Plan
@@ -598,7 +600,7 @@ export default function PlanScreen() {
     );
   }
 
-  if ((isLoading || listsLoading) && segment === 'plan' && listItems.length === 0 && !error) {
+  if ((isLoading || listsLoading) && isPlanView && listItems.length === 0 && !error) {
     return (
       <ThemedView style={styles.centered}>
         <ActivityIndicator color={theme.secondary} />
@@ -613,19 +615,19 @@ export default function PlanScreen() {
     <ThemedView style={styles.root}>
       <ScrollView
         ref={scrollRef}
-        contentInsetAdjustmentBehavior="automatic"
+        contentInsetAdjustmentBehavior="never"
         contentContainerStyle={[
           styles.scrollContent,
           {
-            paddingTop: insets.top + Spacing.two,
-            paddingBottom: BottomTabInset + Spacing.four + (stickyVisible ? 72 : 0),
+            paddingTop: insets.top + Spacing.one,
+            paddingBottom: tabBarClearance + Spacing.four + (stickyVisible ? 72 : 0),
           },
         ]}
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing || (segment === 'past' && pastLoading)}
             onRefresh={() => {
-              if (segment === 'plan') void loadPlan(true);
+              if (isPlanView) void loadPlan(true);
               else void loadPast();
             }}
             tintColor={theme.text}
