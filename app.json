@@ -72,11 +72,12 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Butter uses your photos for your profile picture and shelf price reports.",
-          "cameraPermission": "Butter uses your camera for your profile picture and shelf price photos.",
+          "photosPermission": "Butter uses your photos for your profile picture, shelf price reports, and recipe imports.",
+          "cameraPermission": "Butter uses your camera for your profile picture, shelf price photos, and recipe imports.",
           "microphonePermission": false
         }
       ],
+      "expo-document-picker",
       "@livekit/react-native-expo-plugin",
       "@config-plugins/react-native-webrtc",
       "expo-asset"

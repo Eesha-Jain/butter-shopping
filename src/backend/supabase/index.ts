@@ -81,7 +81,9 @@ export type { GroupMemberWithProfile } from './groups';
 export {
   addListItem,
   addRecipeToList,
+  addRecipeToListWithCaution,
   buildStandardList,
+  catalogLinesForItems,
   createList,
   getActiveListProductQtyMap,
   getDefaultGroceryList,
@@ -90,11 +92,19 @@ export {
   listListItems,
   listMyListTargets,
   listResolvedItems,
+  openProductOnList,
+  previewRecipeForList,
   removeListItem,
   setListItemDone,
   updateListItem
 } from './lists';
-export type { ActiveListTarget } from './lists';
+export type {
+  ActiveListTarget,
+  CatalogLine,
+  RecipeListPreview,
+  RecipeListPreviewLine,
+  RecipeListSkipReason,
+} from './lists';
 export {
   formatLocalDateTime,
   getDeviceTimeZone,
@@ -156,6 +166,7 @@ export {
 } from './profiles';
 export {
   addDueHabitItems,
+  listActivePantryItems,
   listExpiringPurchases,
   listHabits,
   listMyStapleProductIds,
@@ -163,13 +174,18 @@ export {
   recordPurchase,
   saveHabit
 } from './purchases';
+export type { ActivePantryItem } from './purchases';
 export {
   addRecipeIngredient,
   createRecipe,
   getRecipeDetail,
+  importRecipeFromImage,
+  importRecipeFromText,
+  importRecipeFromUrl,
   listTrending,
   listVisibleRecipes
 } from './recipes';
+export type { ImportedRecipe, ImportedRecipeIngredient } from './recipes';
 export { analyzeRipeness } from './ripeness';
 export type { RipenessResult } from './ripeness';
 export { getProductSafety, traitsChangedSince } from './safety';

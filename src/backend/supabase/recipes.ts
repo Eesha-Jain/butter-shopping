@@ -3,6 +3,66 @@ import { supabase } from './client';
 import { fail } from '../errors';
 import { unwrap, unwrapOne } from './query';
 
+export type ImportedRecipeIngredient = {
+  id: string;
+  rawText: string;
+  canonicalName: string;
+  categoryId: string | null;
+  amountBase: number | null;
+};
+
+export type ImportedRecipe = {
+  recipeId: string;
+  title: string;
+  sourceUrl: string | null;
+  ingredients: ImportedRecipeIngredient[];
+};
+
+type RecipeImportResponse = ImportedRecipe & { error?: string };
+
+async function invokeRecipeImport(body: Record<string, unknown>): Promise<ImportedRecipe> {
+  const result = await supabase.functions.invoke('recipe-import', { body });
+  if (result.error) fail(result.error, 'Could not import that recipe.');
+  const data = result.data as RecipeImportResponse | null;
+  if (!data || data.error) fail(data?.error ?? 'Recipe import returned no data.');
+  if (!data.recipeId) fail('Recipe import did not return a recipe id.');
+  return {
+    recipeId: data.recipeId,
+    title: data.title,
+    sourceUrl: data.sourceUrl ?? null,
+    ingredients: data.ingredients ?? [],
+  };
+}
+
+/** Paste plain recipe text; Edge Function parses with Grok and saves ingredients. */
+export async function importRecipeFromText(input: {
+  text: string;
+  title?: string;
+}): Promise<ImportedRecipe> {
+  return invokeRecipeImport({
+    mode: 'text',
+    text: input.text,
+    title: input.title,
+  });
+}
+
+/** Fetch a recipe URL (JSON-LD when available), parse, and save. */
+export async function importRecipeFromUrl(url: string): Promise<ImportedRecipe> {
+  return invokeRecipeImport({ mode: 'url', url });
+}
+
+/** Send a recipe photo (base64, no data-URL prefix) for vision parse + save. */
+export async function importRecipeFromImage(input: {
+  imageBase64: string;
+  contentType?: string;
+}): Promise<ImportedRecipe> {
+  return invokeRecipeImport({
+    mode: 'image',
+    imageBase64: input.imageBase64,
+    contentType: input.contentType ?? 'image/jpeg',
+  });
+}
+
 /**
  * Trending feed for a campus. Organic rows have a score. Sponsored rows have a
  * null score and must be labeled Sponsored. A sponsored placement is not added
