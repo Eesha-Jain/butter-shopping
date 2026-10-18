@@ -8,7 +8,16 @@ import {
   View,
 } from 'react-native';
 
-import { fetchNearbyShops, type NearbyStore } from '@/backend';
+import { router } from 'expo-router';
+
+import { useSession } from '@/auth/session';
+import {
+  fetchNearbyShops,
+  listPreferredStoreIds,
+  preferStore,
+  unpreferStore,
+  type NearbyStore,
+} from '@/backend';
 import { SnapBadge } from '@/components/shop/snap-badge';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -19,10 +28,14 @@ import { useTheme } from '@/hooks/use-theme';
 export default function NearbyScreen() {
   const theme = useTheme();
   const snapOptedIn = useSnapOptedIn();
+  const { session, isGuest } = useSession();
+  const signedIn = Boolean(session) && !isGuest;
   const [shops, setShops] = useState<NearbyStore[] | null>(null);
+  const [preferredIds, setPreferredIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [busyStoreId, setBusyStoreId] = useState<string | null>(null);
 
   const loadShops = useCallback(async (refresh = false) => {
     if (refresh) {
@@ -32,8 +45,9 @@ export default function NearbyScreen() {
     }
     setError(null);
     try {
-      const data = await fetchNearbyShops();
+      const [data, ids] = await Promise.all([fetchNearbyShops(), listPreferredStoreIds()]);
       setShops(data);
+      setPreferredIds(new Set(ids));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load nearby shops.');
       if (!refresh) {
@@ -44,6 +58,32 @@ export default function NearbyScreen() {
       setIsRefreshing(false);
     }
   }, []);
+
+  async function toggleFavorite(shop: NearbyStore) {
+    if (!signedIn) {
+      router.push('/login');
+      return;
+    }
+    setBusyStoreId(shop.id);
+    try {
+      const favored = preferredIds.has(shop.id);
+      if (favored) {
+        await unpreferStore(shop.id);
+        setPreferredIds((prev) => {
+          const next = new Set(prev);
+          next.delete(shop.id);
+          return next;
+        });
+      } else {
+        await preferStore(shop.id);
+        setPreferredIds((prev) => new Set(prev).add(shop.id));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not update favorite store.');
+    } finally {
+      setBusyStoreId(null);
+    }
+  }
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -106,24 +146,44 @@ export default function NearbyScreen() {
           </Pressable>
         </ThemedView>
       }
-      renderItem={({ item }) => (
-        <ThemedView type="backgroundElement" style={styles.row}>
-          <View style={styles.rowText}>
-            <View style={styles.nameRow}>
-              <ThemedText style={styles.nameFlex}>{item.name}</ThemedText>
-              {snapOptedIn && item.accepts_snap ? <SnapBadge size="sm" /> : null}
+      renderItem={({ item }) => {
+        const favored = preferredIds.has(item.id);
+        return (
+          <ThemedView type="backgroundElement" style={styles.row}>
+            <View style={styles.rowText}>
+              <View style={styles.nameRow}>
+                <ThemedText style={styles.nameFlex}>{item.name}</ThemedText>
+                {snapOptedIn && item.accepts_snap ? <SnapBadge size="sm" /> : null}
+              </View>
+              {item.city ? (
+                <ThemedText type="small" themeColor="textSecondary">
+                  {item.city}
+                </ThemedText>
+              ) : null}
             </View>
-            {item.city ? (
+            <View style={styles.rowMeta}>
               <ThemedText type="small" themeColor="textSecondary">
-                {item.city}
+                {formatDistanceKm(item.distance_km)}
               </ThemedText>
-            ) : null}
-          </View>
-          <ThemedText type="small" themeColor="textSecondary">
-            {formatDistanceKm(item.distance_km)}
-          </ThemedText>
-        </ThemedView>
-      )}
+              <Pressable
+                onPress={() => void toggleFavorite(item)}
+                disabled={busyStoreId === item.id}
+                accessibilityRole="button"
+                accessibilityLabel={favored ? 'Remove favorite' : 'Favorite store'}>
+                <ThemedText type="linkPrimary">
+                  {busyStoreId === item.id
+                    ? '…'
+                    : signedIn
+                      ? favored
+                        ? 'Saved'
+                        : 'Save'
+                      : 'Sign in'}
+                </ThemedText>
+              </Pressable>
+            </View>
+          </ThemedView>
+        );
+      }}
     />
   );
 }
@@ -177,5 +237,9 @@ const styles = StyleSheet.create({
   },
   nameFlex: {
     flexShrink: 1,
+  },
+  rowMeta: {
+    alignItems: 'flex-end',
+    gap: Spacing.half,
   },
 });

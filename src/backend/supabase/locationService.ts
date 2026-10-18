@@ -78,14 +78,33 @@ async function fallbackCoords(): Promise<SearchCoords | null> {
   }
 }
 
-/** Device GPS, or the saved default address when permission is denied. */
-export async function resolveSearchCoords(): Promise<SearchCoords | null> {
-  const { status } = await Location.requestForegroundPermissionsAsync();
-  if (status === 'granted') {
+async function gpsCoords(): Promise<SearchCoords | null> {
+  try {
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') {
+      return null;
+    }
     const { coords } = await Location.getCurrentPositionAsync({});
     return { latitude: coords.latitude, longitude: coords.longitude };
+  } catch {
+    return null;
   }
-  return fallbackCoords();
+}
+
+/**
+ * Saved default map pin when present, otherwise device GPS.
+ * Pass followGps to ignore the saved pin for this call (Use GPS on Nearby).
+ */
+export async function resolveSearchCoords(options?: {
+  followGps?: boolean;
+}): Promise<SearchCoords | null> {
+  if (!options?.followGps) {
+    const saved = await fallbackCoords();
+    if (saved) return saved;
+  }
+  const gps = await gpsCoords();
+  if (gps) return gps;
+  return options?.followGps ? fallbackCoords() : null;
 }
 
 function distanceKm(from: SearchCoords, latitude: number, longitude: number): number {
@@ -99,7 +118,7 @@ function distanceKm(from: SearchCoords, latitude: number, longitude: number): nu
 }
 
 /**
- * Shops within 10 km of the device, or of the saved default address if GPS is denied.
+ * Shops within 10 km of the given origin, or of resolveSearchCoords() when omitted.
  * Map pins use store coordinates even when the store has no priced products yet.
  */
 export async function fetchNearbyShops(origin?: SearchCoords | null): Promise<NearbyStore[]> {

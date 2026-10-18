@@ -332,10 +332,6 @@ function clarificationQuantity(text: string, label: string): number | null {
   return null;
 }
 
-/** One cow-hide blotch, same family of shapes as the shop cards. */
-const SPLOTCH =
-  'M30 18C46 12 58 24 76 20C94 16 108 28 104 46C100 62 108 76 92 86C76 96 62 82 48 82C30 82 18 66 22 48C24 36 18 24 30 18Z';
-
 export default function AgentScreen() {
   const { session } = useSession();
   const requireAccount = useRequireAccount();
@@ -438,20 +434,16 @@ function VoiceAgent() {
       try {
         const rows = await listMyLocations();
         const home = rows.find((row) => row.is_default) ?? rows[0] ?? null;
-        const saved = home
-          ? [home.label, home.address_line1, home.city, home.region, home.postal_code]
-              .filter((part) => part && part.trim())
-              .join(', ')
-          : '';
-        if (saved) {
-          if (active) locationRef.current = saved;
+        const area = [home?.city, home?.region].filter((part) => part && part.trim()).join(', ');
+        if (area) {
+          if (active) locationRef.current = area;
           return;
         }
         const permission = await Location.getForegroundPermissionsAsync();
         if (!permission.granted) return;
         const place = await Location.getCurrentPositionAsync({});
         if (active) {
-          locationRef.current = `${place.coords.latitude.toFixed(3)}, ${place.coords.longitude.toFixed(3)}`;
+          locationRef.current = `${place.coords.latitude.toFixed(2)}, ${place.coords.longitude.toFixed(2)}`;
         }
       } catch {
         // Voice still works without a place.
@@ -462,30 +454,40 @@ function VoiceAgent() {
     };
   }, []);
 
-  const nudge = useRef(new Animated.Value(0)).current;
+  const pulse = useRef(new Animated.Value(0)).current;
 
-  const popSquish = useCallback(() => {
-    nudge.setValue(0);
-    Animated.sequence([
-      Animated.timing(nudge, {
-        toValue: 1,
-        duration: 180,
+  useEffect(() => {
+    if (phase !== 'listening') {
+      pulse.stopAnimation();
+      Animated.timing(pulse, {
+        toValue: 0,
+        duration: 220,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
-      }),
-      Animated.spring(nudge, {
-        toValue: 0,
-        friction: 4,
-        tension: 80,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, [nudge]);
+      }).start();
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 900,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0,
+          duration: 900,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [phase, pulse]);
 
-  const splotchShift = nudge.interpolate({ inputRange: [0, 1], outputRange: [0, 22] });
-  const splotchLift = nudge.interpolate({ inputRange: [0, 1], outputRange: [0, -10] });
-  const splotchTurn = nudge.interpolate({ inputRange: [0, 1], outputRange: ['-8deg', '16deg'] });
-  const splotchScale = nudge.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] });
+  const spotScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.14] });
 
   const phaseRef = useRef<Phase>('idle');
   const listenEpoch = useRef(0);
@@ -1246,19 +1248,17 @@ function VoiceAgent() {
   const onPressInTalk = useCallback(() => {
     if (phaseRef.current !== 'idle') return;
     pressStartedListen.current = true;
-    popSquish();
     void startListening();
-  }, [popSquish, startListening]);
+  }, [startListening]);
 
   const onPressTalk = useCallback(() => {
     if (pressStartedListen.current) {
       pressStartedListen.current = false;
       return;
     }
-    popSquish();
     if (phaseRef.current === 'listening') void stopAndSend();
     else if (phaseRef.current === 'idle') void startListening();
-  }, [popSquish, startListening, stopAndSend]);
+  }, [startListening, stopAndSend]);
 
   const sendTyped = useCallback(async () => {
     const text = typedText.trim();
@@ -1317,7 +1317,7 @@ function VoiceAgent() {
   const label =
     phase === 'processing' ? 'Thinking…' : phase === 'listening' ? 'Listening… tap to stop' : 'Tap to talk';
 
-  const splotchColor = phase === 'listening' ? theme.primaryDark : theme.text;
+  const butter = theme.primary;
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]} edges={['top']}>
@@ -1337,21 +1337,21 @@ function VoiceAgent() {
           style={styles.talkButton}
           accessibilityRole="button"
           accessibilityLabel={label}>
-          <Animated.View
-            style={{
-              transform: [
-                { translateX: splotchShift },
-                { translateY: splotchLift },
-                { rotate: splotchTurn },
-                { scale: splotchScale },
-              ],
-            }}>
-            <Svg width={200} height={168} viewBox="0 0 124 110">
-              <Path d={SPLOTCH} fill={splotchColor} />
+          <Animated.View style={{ transform: [{ scale: spotScale }] }}>
+            <Svg width={210} height={148} viewBox="0 0 200 140">
+              <Path
+                d="M38 74C20 52 42 30 74 32C98 18 124 34 148 28C174 22 192 46 184 68C196 88 174 112 146 106C118 118 88 104 64 108C38 112 12 96 38 74Z"
+                fill={butter}
+              />
+              <Path
+                d="M72 56C94 44 132 48 146 60C128 70 92 72 72 56Z"
+                fill="#FFF6C2"
+                opacity={0.85}
+              />
             </Svg>
           </Animated.View>
           {phase === 'processing' ? (
-            <ActivityIndicator color={theme.primary} style={styles.spotOverlay} />
+            <ActivityIndicator color={theme.text} style={styles.spotOverlay} />
           ) : null}
         </Pressable>
 
@@ -1615,7 +1615,7 @@ const styles = StyleSheet.create({
   },
   title: { fontFamily: Fonts.sansBold, fontSize: 28, alignSelf: 'flex-start' },
   hint: { fontFamily: Fonts.sans, fontSize: 15, lineHeight: 22, alignSelf: 'flex-start' },
-  talkButton: { width: 200, height: 168, alignItems: 'center', justifyContent: 'center', marginTop: Spacing.three },
+  talkButton: { width: 220, height: 168, alignItems: 'center', justifyContent: 'center', marginTop: Spacing.three },
   spotOverlay: { position: 'absolute' },
   transcript: { fontFamily: Fonts.sans, fontSize: 16, fontStyle: 'italic', textAlign: 'center' },
   reply: { fontFamily: Fonts.sansBold, fontSize: 16, textAlign: 'center', lineHeight: 22 },

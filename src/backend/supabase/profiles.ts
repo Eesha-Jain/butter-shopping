@@ -197,6 +197,16 @@ export async function listMyLocations(): Promise<UserLocation[]> {
   return unwrap(await supabase.from('user_locations').select('*').eq('user_id', userId));
 }
 
+/** Store ids the caller marked as preferred. Empty when signed out. */
+export async function listPreferredStoreIds(): Promise<string[]> {
+  const userId = await getOptionalUserId();
+  if (!userId) return [];
+  const rows = unwrap(
+    await supabase.from('user_stores').select('store_id').eq('user_id', userId),
+  );
+  return rows.map((row) => row.store_id);
+}
+
 /**
  * Remembers a preferred store. This does not limit shopping plans by itself.
  */

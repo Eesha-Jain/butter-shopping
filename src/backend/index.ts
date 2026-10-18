@@ -169,6 +169,7 @@ export {
   listMyGroups,
   listMyListTargets,
   listMyLocations,
+  listPreferredStoreIds,
   listMyStapleProductIds,
   listOrderItems,
   listOrderShares,
