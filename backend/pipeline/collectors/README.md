@@ -19,9 +19,18 @@ Do not call Supabase REST from a new adapter. Emit an envelope and call ingest.
 | Weekly ads (JSON) | [`weekly-ad.js`](weekly-ad.js) + [`../../import-weekly-ads.js`](../../import-weekly-ads.js) | `promotion` | Product-scoped circular deals; sample [`../../weekly-ads.sample.json`](../../weekly-ads.sample.json) |
 | Manual shelf report | `report_manual_price` RPC | `user_report` (SQL path) | Trusted authority over api/scrape |
 
-## Adding a weekly-ad scraper
+## Per-store rule
 
-1. Fetch the ad for one store or chain (HTML/JSON).
+Card cash back (the shopper's grocery rate and Visa merchant offers) is not a store coupon. Do not add a collector for it here.
+
+- Trader Joe's contributes a shelf price only. Do not import the Fearless Flyer as a promotion, and do not invent a loyalty or coupon row. `promoPriceCents` stays null.
+- QFC and Fred Meyer sale prices come from the Kroger Products API for a specific store (`locationId`, client-credentials `product.compact`). That is regular versus promo shelf cents, not a clipped coupon. Do not add Kroger account login or coupon clipping.
+- Safeway sale prices come from the public product feed. Do not scrape Just for U or any logged-in coupon page.
+- A weekly-ad promotion is allowed only when the deal list is already supplied (the existing JSON import). `import-weekly-ads.js` refuses a file whose chain is Trader Joe's.
+
+## Adding a weekly-ad import
+
+1. Start from a JSON file that already lists the deals (`chainName`, `startsAt`, `endsAt`, `deals`). Do not add a circular scraper here.
 2. Map rows into deal objects and call `weeklyAdPromotionOffers({ chainName, startsAt, endsAt, deals })`.
 3. For each envelope, `ingestPromotion(envelope)` (or run `node import-weekly-ads.js ads.json`).
 4. Prefer a stable `externalRef` (e.g. `weekly-ad:safeway:2026-10-15:sku`) so re-runs upsert.

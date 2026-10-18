@@ -58,7 +58,10 @@ export async function fetchProductByUpc(upc) {
 
 /**
  * Sets category_id on active products that still have none, using the keyword map.
- * Also reclassifies Pantry rows that should move to Other (non-food keywords).
+ * Also reclassifies:
+ * - Pantry → Other (non-food keywords)
+ * - Fruits / Vegetables / Produce → Snacks or Other when the map disagrees
+ *   (e.g. avocado chips, Banana Boat sunscreen), skipping category_source=manual.
  * Returns { updated, byCategory }.
  */
 export async function assignProductCategories() {
@@ -67,20 +70,32 @@ export async function assignProductCategories() {
   const byName = new Map((categories ?? []).map((row) => [String(row.name).toLowerCase(), row.id]));
   const pantryId = byName.get("pantry") ?? null;
   const otherId = byName.get("other") ?? null;
+  const snacksId = byName.get("snacks") ?? null;
+  const produceFamilyIds = ["fruits", "vegetables", "produce"]
+    .map((name) => byName.get(name))
+    .filter(Boolean);
 
-  // Null category_id, plus Pantry rows that should move to Other (non-food keywords / unmatched).
-  const [uncategorized, pantryRows] = await Promise.all([
-    rest("products?category_id=is.null&is_active=eq.true&select=id,name,category_id&limit=1000"),
+  const select = "id,name,category_id,category_source";
+  // Null category_id, Pantry → Other candidates, and produce-family rows that may be snacks/sunscreen.
+  const [uncategorized, pantryRows, ...produceBatches] = await Promise.all([
+    rest(`products?category_id=is.null&is_active=eq.true&select=${select}&limit=1000`),
     pantryId
       ? rest(
-          `products?category_id=eq.${pantryId}&is_active=eq.true&select=id,name,category_id&limit=1000`,
+          `products?category_id=eq.${pantryId}&is_active=eq.true&select=${select}&limit=1000`,
         )
       : Promise.resolve([]),
+    ...produceFamilyIds.map((id) =>
+      rest(`products?category_id=eq.${id}&is_active=eq.true&select=${select}&limit=1000`),
+    ),
   ]);
 
   const seen = new Set();
   const queue = [];
-  for (const product of [...(uncategorized ?? []), ...(pantryRows ?? [])]) {
+  for (const product of [
+    ...(uncategorized ?? []),
+    ...(pantryRows ?? []),
+    ...produceBatches.flatMap((batch) => batch ?? []),
+  ]) {
     if (!product?.id || seen.has(product.id)) continue;
     seen.add(product.id);
     queue.push(product);
@@ -92,11 +107,20 @@ export async function assignProductCategories() {
     while (queue.length > 0) {
       const product = queue.shift();
       if (!product) return;
+      if (product.category_source === "manual") continue;
       const categoryName = categoryForProductName(product.name);
       const categoryId = byName.get(String(categoryName).toLowerCase());
       if (!categoryId) continue;
-      // Only reclassify Pantry → Other (or null → mapped). Leave correct Pantry food alone.
+      const inProduceFamily = produceFamilyIds.includes(product.category_id);
+      // Pantry → only Other; produce family → only Snacks or Other; null → any mapped.
       if (product.category_id === pantryId && categoryId !== otherId) continue;
+      if (
+        inProduceFamily &&
+        categoryId !== otherId &&
+        categoryId !== snacksId
+      ) {
+        continue;
+      }
       if (product.category_id === categoryId) continue;
       await rest(`products?id=eq.${product.id}`, {
         method: "PATCH",

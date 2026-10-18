@@ -25,12 +25,18 @@ function usage() {
   process.exit(1);
 }
 
+/** Trader Joe's publishes a shelf price, not a coupon circular. */
+function isTraderJoesChain(chainName) {
+  const hay = String(chainName ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/['’]/g, "");
+  return hay.includes("trader joe");
+}
+
 async function main() {
   const file = process.argv[2];
   if (!file) usage();
-  if (!canIngest()) {
-    throw new Error("Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to import ads.");
-  }
 
   const payload = JSON.parse(readFileSync(resolve(file), "utf8"));
   const chainName = String(payload.chainName ?? "").trim();
@@ -39,6 +45,14 @@ async function main() {
   const deals = Array.isArray(payload.deals) ? payload.deals : [];
   if (!chainName || !startsAt || !endsAt) {
     throw new Error("ads.json requires chainName, startsAt, endsAt.");
+  }
+  if (isTraderJoesChain(chainName)) {
+    throw new Error(
+      "Trader Joe's has no coupon circular. Refusing to import weekly-ad promotions for this chain.",
+    );
+  }
+  if (!canIngest()) {
+    throw new Error("Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to import ads.");
   }
   if (deals.length === 0) {
     console.log("No deals in file.");
