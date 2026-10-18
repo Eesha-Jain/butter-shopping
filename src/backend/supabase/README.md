@@ -153,7 +153,11 @@ images live in `public-assets`. The database stores the file path only.
 | Join or leave | `joinGroup`, `leaveGroup` | The group id, or an error for the personal group. |
 | See who owes whom | `listGroupBalances` | Unpaid shares. |
 | Add milk, a barcode, or a custom line | `addListItem` | The list item. Pass exactly one target. |
-| Add a recipe to the list | `addRecipeToList` | How many ingredient lines were added. |
+| Add a recipe to the list | `addRecipeToList` | How many ingredient lines were added (no purchase caution). |
+| Import recipe (text / URL / photo) | `importRecipeFromText`, `importRecipeFromUrl`, `importRecipeFromImage` | Calls Edge Function `recipe-import` (`XAI_API_KEY`). |
+| Preview recipe → list with caution | `previewRecipeForList` | Splits will-add vs skipped (still have / already on list). |
+| Add recipe with caution | `addRecipeToListWithCaution` | Adds will-add lines; optional `forceIngredientIds` for skipped. |
+| Active pantry for caution | `listActivePantryItems` | Purchases with `expires_on` null or ≥ today. |
 | Show the list | `listResolvedItems` | Names and the cheapest shelf price, before coupons and food rules. |
 | Choose the grocery day | `suggestGroceryDate` | The next preferred calendar date. |
 | Best day from price history | `suggestBestShopDate` | Uses append-only `prices` day-of-week stats near a ZIP, plus promotions and preferred days. Returns `shopOn` + `reasonLabel`. |

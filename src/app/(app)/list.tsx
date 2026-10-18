@@ -170,6 +170,12 @@ export default function GroceryListScreen() {
                 <ThemedText type="smallBold">Staples</ThemedText>
               </Pressable>
             </Link>
+            <Link href="/recipe-import" asChild>
+              <Pressable
+                style={StyleSheet.flatten([styles.button, { borderColor: theme.border }])}>
+                <ThemedText type="smallBold">Import recipe</ThemedText>
+              </Pressable>
+            </Link>
           </View>
           {recipes.length > 0 ? (
             <View style={styles.recipeBlock}>
