@@ -1,9 +1,16 @@
 import * as Haptics from 'expo-haptics';
+import { SymbolView, type AndroidSymbol, type SFSymbol } from 'expo-symbols';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Fonts, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+
+const BEST_PRICE_SYMBOL = {
+  ios: 'dollarsign.circle.fill',
+  android: 'sell',
+  web: 'sell',
+} satisfies { ios: SFSymbol; android: AndroidSymbol; web: AndroidSymbol };
 
 export type WeekDayCell = {
   ymd: string;
@@ -46,11 +53,16 @@ export function WeekStrip({ days, selectedYmd, onSelect }: Props) {
                 onSelect(day.ymd);
               }}
               accessibilityRole="button"
+              accessibilityLabel={`${day.weekday} ${day.dayNum}${day.isRecommended ? ', lowest prices' : ''}`}
               accessibilityState={{ selected }}
               style={[
                 styles.cell,
                 {
-                  backgroundColor: selected ? theme.secondary : theme.background,
+                  backgroundColor: selected
+                    ? theme.secondary
+                    : day.isRecommended
+                      ? theme.backgroundSelected
+                      : theme.background,
                   borderColor: selected || accent ? theme.borderInk : theme.border,
                   opacity: selected || accent ? 1 : 0.55,
                 },
@@ -74,11 +86,10 @@ export function WeekStrip({ days, selectedYmd, onSelect }: Props) {
               </ThemedText>
               <View style={styles.dots}>
                 {day.isRecommended ? (
-                  <View
-                    style={[
-                      styles.dot,
-                      { backgroundColor: selected ? theme.primary : theme.secondary },
-                    ]}
+                  <SymbolView
+                    name={BEST_PRICE_SYMBOL}
+                    size={12}
+                    tintColor={selected ? theme.primary : theme.primaryDark}
                   />
                 ) : null}
                 {day.hasHabitsDue ? (
@@ -134,7 +145,7 @@ const styles = StyleSheet.create({
   dots: {
     flexDirection: 'row',
     gap: 3,
-    minHeight: 6,
+    minHeight: 12,
     alignItems: 'center',
   },
   badge: {

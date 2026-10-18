@@ -356,9 +356,22 @@ export async function getProductTraitsForIds(productIds: string[]): Promise<Prod
   return unwrap(await supabase.from('product_traits').select('*').in('product_id', unique));
 }
 
+// Keeps `.in()` URLs short and row counts under PostgREST's default 1000-row cap.
+const IN_CHUNK = 50;
+
+function chunk<T>(items: T[], size = IN_CHUNK): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
 /**
  * Cheapest known shelf price (cents) per product across available store listings.
+<<<<<<< HEAD
  * Expands UPC/fingerprint siblings so cross-store duplicates share one low price.
+=======
+ * Includes listings on same-UPC sibling rows (matches the PDP offer list).
+>>>>>>> 0c28983def681cb6223460403f276accdbf9dd81
  * Missing ids mean no observed price yet.
  */
 export async function getCheapestPriceCentsByProductIds(
@@ -369,6 +382,7 @@ export async function getCheapestPriceCentsByProductIds(
   const prices = new Map<string, number>();
   if (unique.length === 0) return prices;
 
+<<<<<<< HEAD
   const products = unwrap(
     await supabase
       .from('products')
@@ -437,24 +451,94 @@ export async function getCheapestPriceCentsByProductIds(
       .in('product_id', allIds)
       .eq('is_available', true),
   );
+=======
+  const products = (
+    await Promise.all(
+      chunk(unique).map(async (ids) =>
+        unwrap(await supabase.from('products').select('id, upc').in('id', ids)) as {
+          id: string;
+          upc: string | null;
+        }[],
+      ),
+    )
+  ).flat();
+
+  // Map every listing-owning product id back to the requested ids it should price.
+  const ownersById = new Map<string, Set<string>>(unique.map((id) => [id, new Set([id])]));
+  const requestersByUpc = new Map<string, Set<string>>();
+  for (const row of products) {
+    for (const variant of upcLookupValues(row.upc)) {
+      const set = requestersByUpc.get(variant) ?? new Set<string>();
+      set.add(row.id);
+      requestersByUpc.set(variant, set);
+    }
+  }
+  if (requestersByUpc.size > 0) {
+    const siblings = (
+      await Promise.all(
+        chunk([...requestersByUpc.keys()]).map(async (upcs) =>
+          unwrap(await supabase.from('products').select('id, upc').in('upc', upcs)) as {
+            id: string;
+            upc: string | null;
+          }[],
+        ),
+      )
+    ).flat();
+    for (const sibling of siblings) {
+      for (const variant of upcLookupValues(sibling.upc)) {
+        const requesters = requestersByUpc.get(variant);
+        if (!requesters) continue;
+        const owners = ownersById.get(sibling.id) ?? new Set<string>();
+        for (const id of requesters) owners.add(id);
+        ownersById.set(sibling.id, owners);
+      }
+    }
+  }
+
+  const listings = (
+    await Promise.all(
+      chunk([...ownersById.keys()]).map(async (ids) =>
+        unwrap(
+          await supabase
+            .from('store_products')
+            .select('id, product_id')
+            .in('product_id', ids)
+            .eq('is_available', true),
+        ),
+      ),
+    )
+  ).flat();
+>>>>>>> 0c28983def681cb6223460403f276accdbf9dd81
 
   const groupMin = new Map<string, number>();
   if (listings.length > 0) {
-    const storeProductIds = listings.map((row) => row.id);
-    const current = unwrap(
-      await supabase
-        .from('trusted_current_prices')
-        .select('store_product_id, price_cents')
-        .in('store_product_id', storeProductIds),
-    );
+    const current = (
+      await Promise.all(
+        chunk(listings.map((row) => row.id)).map(async (ids) =>
+          unwrap(
+            await supabase
+              .from('trusted_current_prices')
+              .select('store_product_id, price_cents')
+              .in('store_product_id', ids),
+          ),
+        ),
+      )
+    ).flat();
     const priceByStoreProduct = new Map(current.map((row) => [row.store_product_id, row.price_cents]));
     for (const listing of listings) {
       const cents = priceByStoreProduct.get(listing.id);
       if (cents == null) continue;
+<<<<<<< HEAD
       const key = groupKeyById.get(listing.product_id);
       if (!key) continue;
       const prior = groupMin.get(key);
       if (prior == null || cents < prior) groupMin.set(key, cents);
+=======
+      for (const owner of ownersById.get(listing.product_id) ?? []) {
+        const prior = prices.get(owner);
+        if (prior == null || cents < prior) prices.set(owner, cents);
+      }
+>>>>>>> 0c28983def681cb6223460403f276accdbf9dd81
     }
   }
 
@@ -466,12 +550,16 @@ export async function getCheapestPriceCentsByProductIds(
   }
 
   // Fill gaps with Open Prices (cached, geo-preferring) when products have UPCs.
-  const missingIds = unique.filter((id) => !prices.has(id));
-  if (missingIds.length === 0) return prices;
+  const missingIds = new Set(unique.filter((id) => !prices.has(id)));
+  if (missingIds.size === 0) return prices;
 
   const upcByProduct = new Map<string, string>();
   for (const row of products) {
+<<<<<<< HEAD
     if (!missingIds.includes(row.id)) continue;
+=======
+    if (!missingIds.has(row.id)) continue;
+>>>>>>> 0c28983def681cb6223460403f276accdbf9dd81
     const upc = String(row.upc ?? '').replace(/\D/g, '');
     if (/^\d{8,14}$/.test(upc)) upcByProduct.set(row.id, upc);
   }

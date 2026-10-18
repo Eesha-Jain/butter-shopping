@@ -15,7 +15,10 @@ update public.product_categories
 set snap_eligible = false
 where lower(name) = 'other';
 
-create or replace function public.nearby_shops(
+-- Return type adds accepts_snap; CREATE OR REPLACE cannot change OUT columns.
+drop function if exists public.nearby_shops(double precision, double precision, numeric);
+
+create function public.nearby_shops(
   p_latitude double precision,
   p_longitude double precision,
   p_radius_km numeric default 25

@@ -97,12 +97,3 @@ export function assignGroceryDay(plan: GroceryDayPlan, dueYmd: string | null): s
   }
   return pick;
 }
-
-export function groceryDayBlurb(reasons: readonly GroceryDayReason[], bestShopLabel?: string | null): string {
-  const bits: string[] = [];
-  if (reasons.includes('bestPrice')) bits.push(bestShopLabel || 'Lowest prices this week.');
-  if (reasons.includes('bestDeal')) bits.push('Best discount day for you.');
-  if (reasons.includes('preferred')) bits.push('One of your usual grocery days.');
-  if (reasons.includes('staples')) bits.push('Staples run out around now.');
-  return bits.join(' ');
-}
