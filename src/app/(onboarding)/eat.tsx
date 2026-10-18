@@ -1,30 +1,36 @@
-import { router } from 'expo-router';
+import { router, type Href } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { completeOnboardingWithDraft } from '@/auth/finish-onboarding';
 import { useOnboardingDraft } from '@/auth/onboarding-draft';
 import { useSession } from '@/auth/session';
-import { persistOnboardingDraft } from '@/auth/finish-onboarding';
 import {
   groupTraitsForFilterUi,
   listFoodTraits,
   type FoodTrait,
   type SessionFoodRule,
 } from '@/backend';
-import { Chip, OnboardingShell } from '@/components/onboarding/onboarding-shell';
-import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
-
-const AVOID_LIMIT = 8;
-const PREFER_LIMIT = 6;
+import {
+  Chip,
+  OnboardingLabel,
+  OnboardingShell,
+} from '@/components/onboarding/onboarding-shell';
+import { Fonts, Spacing } from '@/constants/theme';
 
 export default function OnboardingEatScreen() {
-  const theme = useTheme();
   const { isGuest, finishOnboarding } = useSession();
   const draft = useOnboardingDraft();
   const [traits, setTraits] = useState<FoodTrait[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const finishPrefs = () => {
+    void completeOnboardingWithDraft({
+      isGuest,
+      finishOnboarding,
+      draft: draft.toPayload(),
+    });
+  };
 
   useEffect(() => {
     let active = true;
@@ -43,9 +49,10 @@ export default function OnboardingEatScreen() {
     };
   }, []);
 
+  // Avoid / prefer chips come from food_traits in Supabase — no hard-coded list.
   const grouped = useMemo(() => groupTraitsForFilterUi(traits), [traits]);
-  const avoidTraits = grouped.avoid.slice(0, AVOID_LIMIT);
-  const preferTraits = grouped.requirePrefer.slice(0, PREFER_LIMIT);
+  const avoidTraits = grouped.avoid;
+  const preferTraits = grouped.requirePrefer;
 
   const selected = (traitId: string, mode: SessionFoodRule['mode']) =>
     draft.foodRules.some((rule) => rule.trait_id === traitId && rule.mode === mode);
@@ -56,34 +63,18 @@ export default function OnboardingEatScreen() {
     draft.setFoodRules(exists ? without : [...without, { trait_id: traitId, mode }]);
   };
 
-  const skipAll = async () => {
-    try {
-      await persistOnboardingDraft({
-        isGuest,
-        foodRules: draft.foodRules,
-        discountCodes: draft.discountCodes,
-        cashbackBps: draft.cashbackBps,
-        transportMode: draft.transportMode,
-        maxStores: draft.maxStores,
-      });
-    } catch {
-      // Enter app anyway.
-    }
-    finishOnboarding();
-  };
-
   return (
     <OnboardingShell
-      step={1}
-      title="How do you eat?"
-      subtitle="Tap anything to avoid or prefer. You can change this later in filters."
-      onSkip={() => void skipAll()}
-      onContinue={() => router.push('/(onboarding)/save')}>
+      step={3}
+      title="Anything you avoid or prefer?"
+      subtitle="Tap a few — you can change this later."
+      onSkip={finishPrefs}
+      onContinue={() => router.push('/(onboarding)/save' as Href)}>
       {loading ? (
-        <ActivityIndicator color={theme.primary} />
+        <ActivityIndicator color="#000000" />
       ) : (
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          <ThemedText type="smallBold">Avoid</ThemedText>
+          <OnboardingLabel>Avoid</OnboardingLabel>
           <View style={styles.chips}>
             {avoidTraits.map((trait) => (
               <Chip
@@ -94,9 +85,7 @@ export default function OnboardingEatScreen() {
               />
             ))}
           </View>
-          <ThemedText type="smallBold" style={styles.section}>
-            Prefer
-          </ThemedText>
+          <OnboardingLabel>Prefer</OnboardingLabel>
           <View style={styles.chips}>
             {preferTraits.map((trait) => (
               <Chip
@@ -108,9 +97,7 @@ export default function OnboardingEatScreen() {
             ))}
           </View>
           {traits.length === 0 ? (
-            <ThemedText type="small" themeColor="textSecondary">
-              Food traits aren’t loaded yet — skip and set filters anytime in Shop.
-            </ThemedText>
+            <Text style={styles.hint}>No filters loaded yet — skip and set them in Shop.</Text>
           ) : null}
         </ScrollView>
       )}
@@ -121,14 +108,17 @@ export default function OnboardingEatScreen() {
 const styles = StyleSheet.create({
   scroll: {
     gap: Spacing.two,
-    paddingBottom: Spacing.four,
+    paddingBottom: Spacing.two,
   },
   chips: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.two,
   },
-  section: {
+  hint: {
+    fontFamily: Fonts.sans,
+    fontSize: 14,
+    color: '#333333',
     marginTop: Spacing.two,
   },
 });

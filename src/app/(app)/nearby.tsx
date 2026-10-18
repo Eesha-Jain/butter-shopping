@@ -1,7 +1,7 @@
 import { BottomSheet, Column, Host, Text as UIText } from '@expo/ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
-import MapView, { Marker, type Region } from 'react-native-maps';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import MapView, { Marker, PROVIDER_GOOGLE, type Region } from 'react-native-maps';
 
 import {
   fetchNearbyShops,
@@ -11,10 +11,12 @@ import {
 } from '@/backend';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Spacing } from '@/constants/theme';
+import { ButterButton } from '@/components/ui/butter-button';
+import { Fonts, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 const SEARCH_DELTA = 0.2;
+const LABEL_ZOOM_DELTA = 0.05;
 const FALLBACK_REGION: Region = {
   latitude: 47.6062,
   longitude: -122.3321,
@@ -31,6 +33,8 @@ export default function NearbyScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selected, setSelected] = useState<NearbyStore | null>(null);
+  const [latitudeDelta, setLatitudeDelta] = useState(SEARCH_DELTA);
+  const showNames = latitudeDelta <= LABEL_ZOOM_DELTA;
 
   const loadShops = useCallback(async (refresh = false) => {
     if (refresh) {
@@ -118,10 +122,12 @@ export default function NearbyScreen() {
     <View style={styles.container}>
       <MapView
         ref={mapRef}
+        provider={PROVIDER_GOOGLE}
         style={styles.map}
         initialRegion={region}
         showsUserLocation={origin != null}
-        showsMyLocationButton={false}>
+        showsMyLocationButton={false}
+        onRegionChangeComplete={(next) => setLatitudeDelta(next.latitudeDelta)}>
         {pins.map((shop) => (
           <Marker
             key={shop.id}
@@ -130,8 +136,18 @@ export default function NearbyScreen() {
               longitude: shop.longitude as number,
             }}
             title={shop.name}
-            onPress={() => setSelected(shop)}
-          />
+            anchor={showNames ? { x: 0.5, y: 0 } : undefined}
+            tracksViewChanges={showNames}
+            onPress={() => setSelected(shop)}>
+            {showNames ? (
+              <View style={styles.pin}>
+                <View style={[styles.pinDot, { backgroundColor: theme.primary, borderColor: theme.background }]} />
+                <Text style={[styles.pinLabel, { color: theme.text, backgroundColor: theme.background }]} numberOfLines={2}>
+                  {shop.name}
+                </Text>
+              </View>
+            ) : null}
+          </Marker>
         ))}
       </MapView>
 
@@ -145,9 +161,7 @@ export default function NearbyScreen() {
             </ThemedText>
           ) : null}
           {error || showEmpty ? (
-            <Pressable onPress={() => void loadShops()}>
-              <ThemedText type="linkPrimary">Try again</ThemedText>
-            </Pressable>
+            <ButterButton label="Try again" variant="yellow" onPress={() => void loadShops()} />
           ) : null}
         </ThemedView>
       ) : null}
@@ -155,7 +169,14 @@ export default function NearbyScreen() {
       <Pressable
         onPress={() => void loadShops(true)}
         disabled={isRefreshing || isLoading}
-        style={[styles.retry, { backgroundColor: theme.backgroundElement, opacity: isRefreshing ? 0.6 : 1 }]}>
+        style={[
+          styles.retry,
+          {
+            backgroundColor: theme.backgroundElement,
+            borderColor: theme.borderInk,
+            opacity: isRefreshing ? 0.6 : 1,
+          },
+        ]}>
         <ThemedText type="smallBold">{isRefreshing ? 'Updating…' : 'Refresh'}</ThemedText>
       </Pressable>
 
@@ -198,7 +219,7 @@ const styles = StyleSheet.create({
     left: Spacing.three,
     right: Spacing.three,
     padding: Spacing.three,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
     gap: Spacing.two,
     alignItems: 'center',
   },
@@ -208,9 +229,30 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.two,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.chip,
+    borderWidth: 2,
   },
   sheetHost: {
     position: 'absolute',
+  },
+  pin: {
+    alignItems: 'center',
+    width: 120,
+  },
+  pinDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 2,
+  },
+  pinLabel: {
+    marginTop: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    overflow: 'hidden',
+    fontSize: 12,
+    fontFamily: Fonts.sansBold,
+    textAlign: 'center',
   },
 });

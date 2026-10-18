@@ -1,21 +1,20 @@
 import { fail } from '../errors';
+import { getOptionalUserId } from './auth';
 import { supabase } from './client';
 import { unwrap, unwrapVoid } from './query';
 
 async function requireUserId(): Promise<string> {
-  const result = await supabase.auth.getUser();
-  if (result.error || !result.data.user) {
-    fail(result.error ?? 'Sign in first.');
-  }
-  return result.data.user.id;
+  const userId = await getOptionalUserId();
+  if (!userId) fail('Sign in first.');
+  return userId;
 }
 
 /** Product ids the signed-in user has favorited. Empty when signed out. */
 export async function listMyFavoriteProductIds(): Promise<string[]> {
-  const user = await supabase.auth.getUser();
-  if (!user.data.user) return [];
+  const userId = await getOptionalUserId();
+  if (!userId) return [];
   const rows = unwrap(
-    await supabase.from('product_favorites').select('product_id').eq('user_id', user.data.user.id),
+    await supabase.from('product_favorites').select('product_id').eq('user_id', userId),
   );
   return rows.map((row) => row.product_id);
 }

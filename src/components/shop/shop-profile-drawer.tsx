@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  DevSettings,
   Easing,
   Modal,
   Platform,
@@ -18,6 +19,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
+  clearLocalData,
   getEffectiveGroceryCashbackBps,
   isAiTextReplyAudioEnabled,
   publicImageUrl,
@@ -28,8 +30,11 @@ import {
   showSuccessToast,
   uploadMyAvatar,
 } from '@/backend';
+import type { AuthMode } from '@/auth/auth-mode';
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { ButterButton } from '@/components/ui/butter-button';
+import { ButterChip } from '@/components/ui/butter-chip';
+import { Radius, SheetChrome, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 const SLIDE_MS = 280;
@@ -42,8 +47,8 @@ type Props = {
   avatarVersion: number;
   isGuest: boolean;
   onClose: () => void;
-  onSignOut: () => void;
-  onSignIn: () => void;
+  onSignOut: () => void | Promise<void>;
+  onRequestAuth: (mode: AuthMode) => void;
   onAvatarChanged: (path: string | null) => void;
 };
 
@@ -55,7 +60,7 @@ export function ShopProfileDrawer({
   isGuest,
   onClose,
   onSignOut,
-  onSignIn,
+  onRequestAuth,
   onAvatarChanged,
 }: Props) {
   const theme = useTheme();
@@ -121,7 +126,7 @@ export function ShopProfileDrawer({
 
   const pickAndUpload = async (source: 'library' | 'camera') => {
     if (isGuest) {
-      onSignIn();
+      onRequestAuth('signUp');
       return;
     }
 
@@ -171,7 +176,7 @@ export function ShopProfileDrawer({
 
   const handleChangePhoto = () => {
     if (isGuest) {
-      onSignIn();
+      onRequestAuth('signUp');
       return;
     }
 
@@ -226,6 +231,38 @@ export function ShopProfileDrawer({
     ]);
   };
 
+  /** TEMP: clears guest prefs / cart / onboarding flag, signs out, reloads. */
+  const handleResetLocalData = () => {
+    Alert.alert(
+      'Reset local data',
+      'Clear guest cart, favorites, onboarding, and sign out? The app will reload.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: () => {
+            requestClose(() => {
+              void (async () => {
+                try {
+                  clearLocalData();
+                  await onSignOut();
+                } catch {
+                  // Still reload so a partial clear is usable.
+                }
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.location.reload();
+                  return;
+                }
+                DevSettings.reload();
+              })();
+            });
+          },
+        },
+      ],
+    );
+  };
+
   return (
     <Modal
       visible={visible}
@@ -244,12 +281,14 @@ export function ShopProfileDrawer({
               backgroundColor: theme.background,
               paddingTop: insets.top + Spacing.three,
               paddingBottom: insets.bottom + Spacing.three,
-              borderRightColor: theme.border,
+              borderRightColor: theme.borderInk,
               transform: [{ translateX }],
             },
           ]}>
           <View style={styles.header}>
-            <ThemedText type="subtitle">Profile</ThemedText>
+            <ThemedText type="smallBold" style={styles.title}>
+              Profile
+            </ThemedText>
             <Pressable
               onPress={() => requestClose()}
               hitSlop={12}
@@ -266,10 +305,16 @@ export function ShopProfileDrawer({
           <View style={styles.avatarBlock}>
             <Pressable
               onPress={handleChangePhoto}
-              disabled={uploading}
-              style={[styles.avatarRing, { backgroundColor: theme.backgroundElement }]}
+              disabled={uploading || isGuest}
+              style={[
+                styles.avatarRing,
+                {
+                  backgroundColor: theme.backgroundElement,
+                  borderColor: theme.borderInk,
+                },
+              ]}
               accessibilityRole="button"
-              accessibilityLabel="Change profile photo">
+              accessibilityLabel={isGuest ? 'Guest account' : 'Change profile photo'}>
               {avatarUrl ? (
                 <Image source={{ uri: avatarUrl }} style={styles.avatarImage} contentFit="cover" />
               ) : (
@@ -289,11 +334,11 @@ export function ShopProfileDrawer({
                 </View>
               ) : null}
             </Pressable>
-            <Pressable onPress={handleChangePhoto} disabled={uploading}>
-              <ThemedText type="linkPrimary">
-                {isGuest ? 'Sign in to add a photo' : 'Change photo'}
-              </ThemedText>
-            </Pressable>
+            {!isGuest ? (
+              <Pressable onPress={handleChangePhoto} disabled={uploading}>
+                <ThemedText type="linkPrimary">Change photo</ThemedText>
+              </Pressable>
+            ) : null}
             {!isGuest && avatarPath ? (
               <Pressable onPress={handleRemovePhoto} disabled={uploading}>
                 <ThemedText type="small" themeColor="textSecondary">
@@ -303,16 +348,30 @@ export function ShopProfileDrawer({
             ) : null}
           </View>
 
-          <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
+          <View
+            style={[
+              styles.card,
+              { backgroundColor: theme.backgroundElement, borderColor: theme.borderInk },
+            ]}>
             <ThemedText type="smallBold">
-              {isGuest ? 'Guest' : displayName?.trim() || 'Butter shopper'}
+              {isGuest ? 'Guest account' : displayName?.trim() || 'Butter shopper'}
             </ThemedText>
             <ThemedText type="small" themeColor="textSecondary">
-              {isGuest ? 'Browsing without an account' : 'Signed in'}
+              {isGuest
+                ? "You're browsing without an account. Sign up or log in to save your cart and preferences."
+                : 'Signed in'}
             </ThemedText>
           </View>
 
-          <View style={[styles.card, { backgroundColor: theme.backgroundElement, gap: Spacing.two }]}>
+          <View
+            style={[
+              styles.card,
+              {
+                backgroundColor: theme.backgroundElement,
+                borderColor: theme.borderInk,
+                gap: Spacing.two,
+              },
+            ]}>
             <ThemedText type="smallBold">
               Grocery cash back
               {cashbackBps != null ? `: ${cashbackBps / 100}%` : ': off'}
@@ -322,8 +381,10 @@ export function ShopProfileDrawer({
             </ThemedText>
             <View style={styles.cashbackRow}>
               {[100, 200, 300].map((bps) => (
-                <Pressable
+                <ButterChip
                   key={bps}
+                  label={`${bps / 100}%`}
+                  selected={cashbackBps === bps}
                   onPress={() => {
                     void (async () => {
                       const next = cashbackBps === bps ? null : bps;
@@ -335,16 +396,7 @@ export function ShopProfileDrawer({
                       }
                     })();
                   }}
-                  style={[
-                    styles.cashbackChip,
-                    {
-                      borderColor: theme.border,
-                      backgroundColor:
-                        cashbackBps === bps ? theme.backgroundSelected : theme.background,
-                    },
-                  ]}>
-                  <ThemedText type="smallBold">{bps / 100}%</ThemedText>
-                </Pressable>
+                />
               ))}
             </View>
           </View>
@@ -371,13 +423,18 @@ export function ShopProfileDrawer({
           </View>
 
           {isGuest ? (
-            <Pressable
-              onPress={() => requestClose(onSignIn)}
-              style={[styles.primaryBtn, { backgroundColor: theme.primary }]}>
-              <ThemedText type="smallBold" style={{ color: theme.primaryText }}>
-                Sign in
-              </ThemedText>
-            </Pressable>
+            <View style={styles.authActions}>
+              <ButterButton
+                label="Sign up"
+                variant="ink"
+                onPress={() => requestClose(() => onRequestAuth('signUp'))}
+              />
+              <ButterButton
+                label="Log in"
+                variant="ghost"
+                onPress={() => requestClose(() => onRequestAuth('logIn'))}
+              />
+            </View>
           ) : (
             <Pressable
               onPress={() => requestClose(onSignOut)}
@@ -385,6 +442,15 @@ export function ShopProfileDrawer({
               <ThemedText type="smallBold">Sign out</ThemedText>
             </Pressable>
           )}
+
+          {/* TEMP: testing only — remove before shipping */}
+          <Pressable
+            onPress={handleResetLocalData}
+            style={[styles.outlineBtn, { borderColor: theme.border, marginTop: 'auto' }]}>
+            <ThemedText type="smallBold" themeColor="textSecondary">
+              Reset local data
+            </ThemedText>
+          </Pressable>
         </Animated.View>
       </View>
     </Modal>
@@ -398,11 +464,11 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    backgroundColor: SheetChrome.scrim,
   },
   panel: {
     height: '100%',
-    borderRightWidth: StyleSheet.hairlineWidth,
+    borderRightWidth: 2,
     paddingHorizontal: Spacing.three,
     gap: Spacing.three,
   },
@@ -411,16 +477,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  title: {
+    fontSize: Type.section,
+  },
   cashbackRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.two,
-  },
-  cashbackChip: {
-    borderWidth: 1,
-    borderRadius: Spacing.three,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
   },
   settingRow: {
     flexDirection: 'row',
@@ -442,6 +505,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
+    borderWidth: 2,
   },
   avatarImage: {
     width: '100%',
@@ -449,24 +513,23 @@ const styles = StyleSheet.create({
   },
   avatarOverlay: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    backgroundColor: SheetChrome.scrim,
     alignItems: 'center',
     justifyContent: 'center',
   },
   card: {
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
+    borderWidth: 2,
     padding: Spacing.three,
     gap: Spacing.one,
   },
-  primaryBtn: {
-    alignItems: 'center',
-    paddingVertical: Spacing.three,
-    borderRadius: Spacing.three,
+  authActions: {
+    gap: Spacing.two,
   },
   outlineBtn: {
     alignItems: 'center',
     paddingVertical: Spacing.three,
-    borderRadius: Spacing.three,
-    borderWidth: 1,
+    borderRadius: Radius.button,
+    borderWidth: 2,
   },
 });

@@ -29,6 +29,8 @@
  * @property {number | null} [promoPriceCents]
  * @property {number | null} [sizeBaseAmount]
  * @property {'g' | 'ml' | 'ct' | null} [sizeBaseUnit]
+ * @property {string | null} [imageUrl]
+ * @property {boolean} [available]
  * @property {string | null} [observedAt]
  *
  * @typedef {object} PromotionOffer
@@ -78,6 +80,8 @@ export function shelfOffer(input) {
     promoPriceCents: input.promoPriceCents ?? null,
     sizeBaseAmount: input.sizeBaseAmount ?? null,
     sizeBaseUnit: input.sizeBaseUnit ?? null,
+    imageUrl: input.imageUrl ?? null,
+    available: input.available !== false,
     observedAt: input.observedAt ?? null,
   };
 }

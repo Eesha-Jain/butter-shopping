@@ -1,3 +1,5 @@
+import '@/backend/supabase/crypto-polyfill';
+
 import {
   ComicNeue_400Regular,
   ComicNeue_700Bold,
@@ -11,6 +13,7 @@ import { useEffect, useMemo } from 'react';
 import { ImageBackground, StyleSheet, useColorScheme } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { ActiveListProvider } from '@/auth/active-list';
 import { GuestCartProvider } from '@/auth/guest-cart-context';
 import { SessionProvider, useSession } from '@/auth/session';
 import { Colors } from '@/constants/theme';
@@ -56,20 +59,22 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={styles.background}>
       <SessionProvider>
-        <GuestCartProvider>
-          <BottomSheetModalProvider>
-            <ThemeProvider value={navigationTheme}>
-              <ImageBackground
-                source={require('@/assets/images/background.png')}
-                style={[styles.background, { backgroundColor: Colors[scheme].background }]}
-                imageStyle={styles.backgroundImage}
-                resizeMode="cover">
-                <SplashScreenController fontsReady={fontsLoaded || !!fontError} />
-                {fontsLoaded || fontError ? <RootNavigator /> : null}
-              </ImageBackground>
-            </ThemeProvider>
-          </BottomSheetModalProvider>
-        </GuestCartProvider>
+        <ActiveListProvider>
+          <GuestCartProvider>
+            <BottomSheetModalProvider>
+              <ThemeProvider value={navigationTheme}>
+                <ImageBackground
+                  source={require('@/assets/images/background.png')}
+                  style={[styles.background, { backgroundColor: Colors[scheme].background }]}
+                  imageStyle={styles.backgroundImage}
+                  resizeMode="cover">
+                  <SplashScreenController fontsReady={fontsLoaded || !!fontError} />
+                  {fontsLoaded || fontError ? <RootNavigator /> : null}
+                </ImageBackground>
+              </ThemeProvider>
+            </BottomSheetModalProvider>
+          </GuestCartProvider>
+        </ActiveListProvider>
       </SessionProvider>
     </GestureHandlerRootView>
   );
@@ -94,13 +99,16 @@ function RootNavigator() {
     return null;
   }
 
-  // Wait for onboarding gate once the user can enter the app.
-  if (canUseApp && needsOnboardingFlow == null) {
+  // Wait until the onboarding gate is resolved.
+  if (needsOnboardingFlow == null) {
     return null;
   }
 
-  const showOnboarding = canUseApp && needsOnboardingFlow === true;
+  // First open / incomplete prefs: welcome → auth → eat/save/shop.
+  const showOnboarding = needsOnboardingFlow === true;
   const showApp = canUseApp && needsOnboardingFlow === false;
+  // Returning users who finished onboarding but are signed out.
+  const showAuth = !canUseApp && needsOnboardingFlow === false;
 
   return (
     <Stack
@@ -109,12 +117,12 @@ function RootNavigator() {
         contentStyle: { backgroundColor: 'transparent' },
       }}>
       <Stack.Protected guard={showOnboarding}>
-        <Stack.Screen name="(onboarding)" />
+        <Stack.Screen name="(onboarding)" options={{ animation: 'fade' }} />
       </Stack.Protected>
       <Stack.Protected guard={showApp}>
         <Stack.Screen name="(app)" />
       </Stack.Protected>
-      <Stack.Protected guard={!canUseApp}>
+      <Stack.Protected guard={showAuth}>
         <Stack.Screen name="(auth)" />
       </Stack.Protected>
     </Stack>

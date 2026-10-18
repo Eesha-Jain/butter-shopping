@@ -7,6 +7,7 @@ export type {
   FoodRuleMode, FulfillmentMethod, GroupKind, TraitKind, TraitRelation, TripStatus
 } from '../types';
 export {
+  getOptionalUserId,
   getSession,
   onAuthStateChange,
   requestPasswordReset,
@@ -20,43 +21,67 @@ export {
   findOrIngestProductByUpc,
   findProductByUpc,
   formatPromotionBadge,
+  promotionSavingsHint,
   getCheapestPriceCentsByProductIds,
+  getStorePriceCentsByProductIds,
   getCurrentPrice,
   getProductPromotionMap, getProductsByIds, getProductTraitsForIds, getStore,
   listActiveProducts,
   listCampusPopularProducts,
   listCategories, listCurrentPromotions, listProductsGroupedByCategory,
-  listProductStoreOffers, listReportableStores, listReportedOffers, nearbyShops,
+  listProductStoreOffers, listReportableStores, listReportedOffers, listStoreShelf, nearbyShops,
   productWarnings,
   refreshProductStoreOffers,
   registerReportableStore,
   reportManualPrice,
   reportPrice,
+  reportStoreProductAvailability,
   searchCategories,
-  searchProducts
+  searchProducts,
+  uploadPriceEvidence,
 } from './catalog';
 export type { CategoryProductSection, ProductStoreOffer } from './catalog';
+export {
+  contributeReportedPriceToOpenPrices,
+  fetchOpenPricesByUpc,
+  fetchOpenPricesByUpcs,
+  getOpenPricesCentsByUpcs,
+  openPricesGeoKey,
+} from './open-prices';
+export type { OpenPriceRow, OpenPricesGeo } from './open-prices';
 export { nextPreferredGroceryDate } from './dates';
 export { listMyFavoriteProductIds, setProductFavorite } from './favorites';
 export {
   applyFoodFilters,
+  areAllTraitsAvoided,
+  groupAvoidTraitsForFilterUi,
   groupTraitsForFilterUi,
   indexTraitsByProduct,
-  rulesFromUserFoodRules
+  rulesFromUserFoodRules,
+  toggleAvoidGroup,
 } from './foodFilters';
-export type { SessionFoodRule, ShopSort } from './foodFilters';
+export type {
+  AvoidTraitGroup,
+  AvoidTraitGroupId,
+  SessionFoodRule,
+  ShopSort,
+} from './foodFilters';
 export {
   createGroup,
+  getGroup,
   joinGroup,
   leaveGroup,
   listGroupBalances,
   listGroupMembers,
+  listGroupMembersWithProfiles,
   listMyGroups,
-  updateGroup
+  updateGroup,
 } from './groups';
+export type { GroupMemberWithProfile } from './groups';
 export {
   addListItem,
   addRecipeToList,
+  addRecipeToListWithCaution,
   buildStandardList,
   catalogLinesForItems,
   createList,
@@ -68,11 +93,18 @@ export {
   listMyListTargets,
   listResolvedItems,
   openProductOnList,
+  previewRecipeForList,
   removeListItem,
   setListItemDone,
   updateListItem
 } from './lists';
-export type { ActiveListTarget, CatalogLine } from './lists';
+export type {
+  ActiveListTarget,
+  CatalogLine,
+  RecipeListPreview,
+  RecipeListPreviewLine,
+  RecipeListSkipReason,
+} from './lists';
 export {
   formatLocalDateTime,
   getDeviceTimeZone,
@@ -92,13 +124,17 @@ export {
   confirmOrder,
   createTripFromList,
   finalizeOrder,
+  findOpenTrip,
   getTrip,
+  listGroupOrders,
   listOrderItems,
   listOrderShares,
   markSharePaid,
+  placeStoreOrderFromList,
   previewEvenSplit,
-  requestCheckoutLink
+  requestCheckoutLink,
 } from './orders';
+export type { GroupOrderRow } from './orders';
 export {
   getWeeklyBudgetCents,
   planLowestTrip,
@@ -108,7 +144,10 @@ export {
   suggestDiscountDate,
   suggestGroceryDate
 } from './planning';
-export type { BestShopDay } from './planning';
+export type { BestShopDay, ShopDayReason, ShopDayStoreHint } from './planning';
+export { getWeeklyShoppingBoard } from './weeklyShopping';
+export type { WeeklyBoardChip, WeeklyBoardColumn, WeeklyShoppingBoard } from './weeklyShopping';
+export { listColleges, resolveCollegeId } from './colleges';
 export {
   getMyProfile,
   listFoodTraits,
@@ -127,6 +166,7 @@ export {
 } from './profiles';
 export {
   addDueHabitItems,
+  listActivePantryItems,
   listExpiringPurchases,
   listHabits,
   listMyStapleProductIds,
@@ -134,13 +174,18 @@ export {
   recordPurchase,
   saveHabit
 } from './purchases';
+export type { ActivePantryItem } from './purchases';
 export {
   addRecipeIngredient,
   createRecipe,
   getRecipeDetail,
+  importRecipeFromImage,
+  importRecipeFromText,
+  importRecipeFromUrl,
   listTrending,
   listVisibleRecipes
 } from './recipes';
+export type { ImportedRecipe, ImportedRecipeIngredient } from './recipes';
 export { analyzeRipeness } from './ripeness';
 export type { RipenessResult } from './ripeness';
 export { getProductSafety, traitsChangedSince } from './safety';

@@ -1,21 +1,25 @@
-// src/api/openPrices.js
-const OPEN_PRICES = "https://prices.openfoodfacts.org/api/v1";
+// src/api/openPrices.js — prefer backend proxy (CORS + stable shape)
+import { BACKEND_URL } from './config';
 
-// Open Prices looks up by barcode (UPC/EAN), not by name
+/**
+ * Crowd-sourced prices by barcode (Open Prices / Open Food Facts).
+ * @param {string} barcode
+ */
 export async function getCrowdsourcedPrices(barcode) {
-  const url =
-    `${OPEN_PRICES}/prices?product_code=${barcode}` +
-    `&order_by=-date&size=10`; // newest first, 10 results
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("Open Prices request failed");
-  const json = await res.json();
+  const code = String(barcode ?? '').replace(/\D/g, '');
+  if (!/^\d{8,14}$/.test(code)) return [];
 
-  return json.items.map((p) => ({
-    price: p.price,
+  const res = await fetch(`${BACKEND_URL}/api/open-prices?upc=${encodeURIComponent(code)}`);
+  if (!res.ok) throw new Error('Open Prices request failed');
+  const json = await res.json();
+  const prices = Array.isArray(json.prices) ? json.prices : [];
+
+  return prices.map((p) => ({
+    price: p.priceCents != null ? p.priceCents / 100 : null,
     currency: p.currency,
     date: p.date,
-    store: p.location?.osm_name ?? "Unknown store",
-    city: p.location?.osm_address_city,
-    source: "Open Prices",
+    store: p.storeName ?? 'Unknown store',
+    city: p.city,
+    source: 'Open Prices',
   }));
 }

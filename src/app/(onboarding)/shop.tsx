@@ -1,10 +1,13 @@
 import { StyleSheet, View } from 'react-native';
 
-import { persistOnboardingDraft } from '@/auth/finish-onboarding';
+import { completeOnboardingWithDraft } from '@/auth/finish-onboarding';
 import { useOnboardingDraft, type TransportMode } from '@/auth/onboarding-draft';
 import { useSession } from '@/auth/session';
-import { Chip, OnboardingShell } from '@/components/onboarding/onboarding-shell';
-import { ThemedText } from '@/components/themed-text';
+import {
+  Chip,
+  OnboardingLabel,
+  OnboardingShell,
+} from '@/components/onboarding/onboarding-shell';
 import { Spacing } from '@/constants/theme';
 
 const TRANSPORT: { id: TransportMode; label: string }[] = [
@@ -13,6 +16,7 @@ const TRANSPORT: { id: TransportMode; label: string }[] = [
   { id: 'transit', label: 'Transit' },
   { id: 'drive', label: 'Drive' },
   { id: 'rideshare', label: 'Rideshare' },
+  { id: 'delivered', label: 'Delivered' },
 ];
 
 const STORE_CAPS = [
@@ -25,47 +29,35 @@ export default function OnboardingShopScreen() {
   const { isGuest, finishOnboarding } = useSession();
   const draft = useOnboardingDraft();
 
-  const persistAndFinish = async () => {
-    try {
-      await persistOnboardingDraft({
-        isGuest,
-        foodRules: draft.foodRules,
-        discountCodes: draft.discountCodes,
-        cashbackBps: draft.cashbackBps,
-        transportMode: draft.transportMode,
-        maxStores: draft.maxStores,
-      });
-    } catch {
-      // Still let them into the app; prefs can be set later.
-    }
-    finishOnboarding();
+  const finishPrefs = () => {
+    void completeOnboardingWithDraft({
+      isGuest,
+      finishOnboarding,
+      draft: draft.toPayload(),
+    });
   };
 
   return (
     <OnboardingShell
-      step={3}
-      title="How do you shop?"
-      subtitle="Helps Butter prefer nearby stores that fit how you get around."
-      continueLabel="Start shopping"
-      onSkip={() => void persistAndFinish()}
-      onContinue={() => void persistAndFinish()}>
-      <ThemedText type="smallBold">Getting groceries</ThemedText>
+      step={5}
+      title="How do you usually get groceries?"
+      subtitle="Pick every mode you use — so I can prefer stores that fit your trip."
+      continueLabel="Finish"
+      onSkip={finishPrefs}
+      onContinue={finishPrefs}>
+      <OnboardingLabel>I usually</OnboardingLabel>
       <View style={styles.chips}>
         {TRANSPORT.map((row) => (
           <Chip
             key={row.id}
             label={row.label}
-            selected={draft.transportMode === row.id}
-            onPress={() =>
-              draft.setTransportMode(draft.transportMode === row.id ? null : row.id)
-            }
+            selected={draft.transportModes.includes(row.id)}
+            onPress={() => draft.toggleTransportMode(row.id)}
           />
         ))}
       </View>
 
-      <ThemedText type="smallBold" style={styles.section}>
-        Stores per trip
-      </ThemedText>
+      <OnboardingLabel>Stores per trip</OnboardingLabel>
       <View style={styles.chips}>
         {STORE_CAPS.map((row) => (
           <Chip
@@ -85,8 +77,5 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.two,
-  },
-  section: {
-    marginTop: Spacing.three,
   },
 });

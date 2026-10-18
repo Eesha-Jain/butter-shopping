@@ -10,6 +10,10 @@ import { unwrapVoid } from './query';
 
 WebBrowser.maybeCompleteAuthSession();
 
+/**
+ * Expo Go remaps this to exp://…; development / store builds use
+ * buttershopping://auth/callback. Allowlist both in Supabase Auth URL config.
+ */
 const redirectTo = makeRedirectUri({
   scheme: 'buttershopping',
   path: 'auth/callback',
@@ -87,6 +91,16 @@ export async function getSession(): Promise<Session | null> {
 }
 
 /**
+ * Signed-in user id, or null for guests / signed-out.
+ * Does not toast — Supabase's "Auth session missing!" is expected without a session.
+ */
+export async function getOptionalUserId(): Promise<string | null> {
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data.user) return null;
+  return data.user.id;
+}
+
+/**
  * Subscribes to sign-in, sign-out, and token refresh. Call the returned
  * function when the screen unmounts.
  */
@@ -110,21 +124,43 @@ export async function requestPasswordReset(email: string): Promise<void> {
   unwrapVoid(await supabase.auth.resetPasswordForEmail(email));
 }
 
+function friendlyOAuthError(raw: string): string {
+  const text = decodeURIComponent(raw.replace(/\+/g, ' ')).trim();
+  const lower = text.toLowerCase();
+  if (lower.includes('redirect') || lower.includes('redirect_uri')) {
+    return (
+      'Redirect URL not allowed. In Supabase → Authentication → URL Configuration, ' +
+      `add ${redirectTo} (or buttershopping://**) next to exp://**.`
+    );
+  }
+  if (lower.includes('code challenge') || lower.includes('pkce')) {
+    return 'Sign-in security check failed. Fully reload the app and try Google again.';
+  }
+  return text || 'Could not complete Google sign-in.';
+}
+
 async function createSessionFromUrl(url: string): Promise<Session | null> {
   const { params, errorCode } = getAuthParams(url);
-  if (errorCode) fail(errorCode, 'Could not complete Google sign-in.');
+  if (errorCode) fail(friendlyOAuthError(errorCode));
 
   const code = params.code;
   if (code) {
     const result = await supabase.auth.exchangeCodeForSession(code);
-    if (result.error) fail(result.error, 'Could not complete Google sign-in.');
+    if (result.error) {
+      fail(friendlyOAuthError(result.error.message || 'Could not complete Google sign-in.'));
+    }
     if (result.data.session) noteSignedIn();
     return result.data.session;
   }
 
   const access_token = params.access_token;
   const refresh_token = params.refresh_token;
-  if (!access_token) return null;
+  if (!access_token) {
+    fail(
+      'Google sign-in returned without a session. Confirm Supabase allows ' +
+        `${redirectTo} (or buttershopping://**).`,
+    );
+  }
 
   const result = await supabase.auth.setSession({ access_token, refresh_token });
   if (result.error) fail(result.error, 'Could not complete Google sign-in.');
@@ -135,8 +171,16 @@ async function createSessionFromUrl(url: string): Promise<Session | null> {
 /**
  * Opens Google OAuth (PKCE). On native, uses an in-app browser and deep link;
  * on web, follows the browser redirect.
+ *
+ * Android Google login is reliable in a development build (claims
+ * buttershopping://). Expo Go on Android often fails the Custom Tabs handoff;
+ * use `npm run start:dev` with the shared APK, or email/password there.
  */
 export async function signInWithGoogle(): Promise<Session | null> {
+  if (__DEV__) {
+    console.log('[auth] Google redirectTo =', redirectTo);
+  }
+
   const result = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
@@ -153,6 +197,16 @@ export async function signInWithGoogle(): Promise<Session | null> {
   }
 
   const authResult = await WebBrowser.openAuthSessionAsync(result.data.url, redirectTo);
-  if (authResult.type !== 'success') return null;
+  if (authResult.type !== 'success') {
+    if (__DEV__) {
+      console.log('[auth] AuthSession result =', authResult.type);
+    }
+    // User closed the browser — not an error toast.
+    return null;
+  }
+
+  if (__DEV__) {
+    console.log('[auth] AuthSession callback url =', authResult.url);
+  }
   return createSessionFromUrl(authResult.url);
 }

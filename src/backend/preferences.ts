@@ -1,4 +1,25 @@
-import { getItem, removeItem, setItem } from './storage';
+import { getItem, removeItem, setItem, type StorageKey } from './storage';
+
+const ALL_STORAGE_KEYS: StorageKey[] = [
+  'hasSignedIn',
+  'isGuest',
+  'guestCart',
+  'guestFavorites',
+  'guestOnboarding',
+  'onboardingCompleted',
+  'hasSeenWelcome',
+  'groceryCashbackBps',
+];
+
+/**
+ * Wipe on-device prefs (guest cart, onboarding flag, etc.).
+ * TEMP: for local testing — pair with sign-out + app reload.
+ */
+export function clearLocalData(): void {
+  for (const key of ALL_STORAGE_KEYS) {
+    removeItem(key);
+  }
+}
 
 /**
  * Whether this device has completed a sign-in or sign-up before.
@@ -32,6 +53,15 @@ export function hasCompletedOnboardingLocally(): boolean {
 
 export function markOnboardingCompletedLocally(): void {
   setItem('onboardingCompleted', '1');
+}
+
+/** Whether this install has already shown the welcome screen. */
+export function hasSeenWelcome(): boolean {
+  return getItem('hasSeenWelcome') === '1';
+}
+
+export function markWelcomeSeen(): void {
+  setItem('hasSeenWelcome', '1');
 }
 
 /** Guest (or device) grocery cashback in basis points. */

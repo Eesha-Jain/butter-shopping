@@ -5,11 +5,16 @@ import type {
   OrderShare,
   OrderSummary,
   ShoppingTrip,
+  TripStatus,
 } from '../types';
 import { supabase } from './client';
 import { fail } from '../errors';
 import { evenShareCents, payerRemainderCents } from './money';
 import { unwrap, unwrapOne, unwrapVoid } from './query';
+
+export type GroupOrderRow = OrderSummary & {
+  store_name: string;
+};
 
 /**
  * Creates a trip on plannedFor and one draft order for each store that can fill
@@ -61,6 +66,61 @@ export async function getTrip(tripId: string): Promise<{ trip: ShoppingTrip; ord
   );
   const orders = unwrap(await supabase.from('v_order_summary').select('*').eq('trip_id', tripId));
   return { trip, orders };
+}
+
+/**
+ * Open draft trip for a group on a calendar date, if one exists.
+ * Used so Order does not create duplicate trips for the same day.
+ */
+export async function findOpenTrip(
+  groupId: string,
+  plannedFor: string,
+): Promise<ShoppingTrip | null> {
+  const { data, error } = await supabase
+    .from('shopping_trips')
+    .select('*')
+    .eq('group_id', groupId)
+    .eq('planned_for', plannedFor)
+    .eq('status', 'draft')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) fail(error, 'Could not look up an open trip.');
+  return data;
+}
+
+/**
+ * Orders for a group (past placed, or drafts). Newest planned_for first.
+ * Enriches v_order_summary with store display names.
+ */
+export async function listGroupOrders(
+  groupId: string,
+  options?: { status?: TripStatus | TripStatus[] },
+): Promise<GroupOrderRow[]> {
+  let query = supabase.from('v_order_summary').select('*').eq('group_id', groupId);
+  const status = options?.status;
+  if (Array.isArray(status)) {
+    if (status.length === 1) {
+      query = query.eq('status', status[0]);
+    } else if (status.length > 1) {
+      query = query.in('status', status);
+    }
+  } else if (status) {
+    query = query.eq('status', status);
+  }
+  const rows = unwrap(await query.order('planned_for', { ascending: false }));
+  if (rows.length === 0) return [];
+
+  const storeIds = [...new Set(rows.map((row) => row.store_id))];
+  const stores = unwrap(
+    await supabase.from('stores').select('id, name').in('id', storeIds),
+  );
+  const nameById = new Map(stores.map((store) => [store.id, store.name]));
+
+  return rows.map((row) => ({
+    ...row,
+    store_name: nameById.get(row.store_id) ?? 'Store',
+  }));
 }
 
 /** Frozen lines for one store order. unit_price_cents is the planning estimate. */
@@ -144,4 +204,42 @@ export function previewEvenSplit(totalCents: number, memberCount: number): {
     eachNonPayerOwesCents: evenShareCents(totalCents, memberCount),
     payerCoversCents: payerRemainderCents(totalCents, memberCount),
   };
+}
+
+/**
+ * Ensures a draft trip for the day, then confirms + finalizes the draft order
+ * for one store. Optionally requests a checkout URL before finalize.
+ */
+export async function placeStoreOrderFromList(input: {
+  listId: string;
+  groupId: string;
+  plannedFor: string;
+  storeId: string;
+}): Promise<{ orderId: string; checkoutUrl: string | null }> {
+  let trip = await findOpenTrip(input.groupId, input.plannedFor);
+  const tripId =
+    trip?.id ??
+    (await createTripFromList({
+      listId: input.listId,
+      plannedFor: input.plannedFor,
+      fulfillmentMethod: 'self_pickup',
+    }));
+
+  const { orders } = await getTrip(tripId);
+  const draft = orders.find(
+    (row) => row.store_id === input.storeId && row.status === 'draft',
+  );
+  if (!draft) {
+    fail('No draft order for that store. Refresh the plan and try again.');
+  }
+
+  await confirmOrder(draft.order_id);
+  let checkoutUrl: string | null = draft.checkout_url;
+  try {
+    checkoutUrl = await requestCheckoutLink(draft.order_id);
+  } catch {
+    // Checkout link is optional; finalize still places the order.
+  }
+  await finalizeOrder(draft.order_id);
+  return { orderId: draft.order_id, checkoutUrl };
 }

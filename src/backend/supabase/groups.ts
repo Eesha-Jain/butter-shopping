@@ -3,6 +3,11 @@ import { fail } from '../errors';
 import { supabase } from './client';
 import { unwrap, unwrapOne, unwrapVoid } from './query';
 
+export type GroupMemberWithProfile = GroupMember & {
+  display_name: string | null;
+  avatar_path: string | null;
+};
+
 async function requireSignedIn(message: string): Promise<void> {
   const { data, error } = await supabase.auth.getUser();
   if (error || !data.user) {
@@ -16,6 +21,14 @@ async function requireSignedIn(message: string): Promise<void> {
  */
 export async function listMyGroups(): Promise<Group[]> {
   return unwrap(await supabase.from('groups').select('*').order('created_at'));
+}
+
+/** One group the caller can read (must be a member via RLS). */
+export async function getGroup(groupId: string): Promise<Group> {
+  return unwrapOne(
+    await supabase.from('groups').select('*').eq('id', groupId).maybeSingle(),
+    'Group not found.',
+  );
 }
 
 /**
@@ -51,6 +64,34 @@ export async function leaveGroup(groupId: string): Promise<void> {
 /** Members of a group the caller belongs to. */
 export async function listGroupMembers(groupId: string): Promise<GroupMember[]> {
   return unwrap(await supabase.from('group_members').select('*').eq('group_id', groupId));
+}
+
+/**
+ * Members plus display name / avatar for the roster UI.
+ * Requires profiles_read_group_peers RLS so co-member profiles are visible.
+ */
+export async function listGroupMembersWithProfiles(
+  groupId: string,
+): Promise<GroupMemberWithProfile[]> {
+  const members = unwrap(
+    await supabase.from('group_members').select('*').eq('group_id', groupId).order('created_at'),
+  );
+  if (members.length === 0) {
+    return [];
+  }
+  const userIds = members.map((row) => row.user_id);
+  const profiles = unwrap(
+    await supabase.from('profiles').select('id, display_name, avatar_path').in('id', userIds),
+  );
+  const byId = new Map(profiles.map((row) => [row.id, row]));
+  return members.map((member) => {
+    const profile = byId.get(member.user_id);
+    return {
+      ...member,
+      display_name: profile?.display_name ?? null,
+      avatar_path: profile?.avatar_path ?? null,
+    };
+  });
 }
 
 /**

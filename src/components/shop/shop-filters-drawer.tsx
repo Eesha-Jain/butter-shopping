@@ -14,9 +14,17 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { FoodTrait, SessionFoodRule, ShopSort } from '@/backend';
-import { groupTraitsForFilterUi } from '@/backend';
+import {
+  areAllTraitsAvoided,
+  groupAvoidTraitsForFilterUi,
+  groupTraitsForFilterUi,
+  toggleAvoidGroup,
+} from '@/backend';
+import type { NearbyStore } from '@/backend/types';
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { ButterButton } from '@/components/ui/butter-button';
+import { ButterChip } from '@/components/ui/butter-chip';
+import { SheetChrome, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 const SLIDE_MS = 280;
@@ -28,6 +36,9 @@ type Props = {
   draftRules: SessionFoodRule[];
   draftSort: ShopSort;
   draftOnSaleOnly: boolean;
+  nearbyStores?: NearbyStore[];
+  selectedStoreId?: string | null;
+  onSelectStore?: (store: NearbyStore | null) => void;
   onClose: () => void;
   onApply: (next: {
     rules: SessionFoodRule[];
@@ -38,7 +49,7 @@ type Props = {
 };
 
 const SORTS: { id: ShopSort; label: string }[] = [
-  { id: 'default', label: 'Default' },
+  { id: 'default', label: 'Recommended' },
   { id: 'cheapest', label: 'Cheapest' },
   { id: 'name', label: 'Name' },
 ];
@@ -49,6 +60,9 @@ export function ShopFiltersDrawer({
   draftRules,
   draftSort,
   draftOnSaleOnly,
+  nearbyStores = [],
+  selectedStoreId = null,
+  onSelectStore,
   onClose,
   onApply,
   onResetToPreferences,
@@ -108,20 +122,35 @@ export function ShopFiltersDrawer({
   };
 
   const grouped = useMemo(() => groupTraitsForFilterUi(traits), [traits]);
+  const avoidGroups = useMemo(
+    () => groupAvoidTraitsForFilterUi(grouped.avoid),
+    [grouped.avoid],
+  );
   const ruleMap = useMemo(() => new Map(rules.map((rule) => [rule.trait_id, rule.mode])), [rules]);
 
-  const setAvoid = (traitId: string, enabled: boolean) => {
+  const toggleAvoid = (traitId: string) => {
     setRules((prev) => {
+      const isAvoided = prev.some((rule) => rule.trait_id === traitId && rule.mode === 'avoid');
       const next = prev.filter((rule) => rule.trait_id !== traitId);
-      if (enabled) next.push({ trait_id: traitId, mode: 'avoid' });
+      if (!isAvoided) {
+        next.push({ trait_id: traitId, mode: 'avoid' });
+      }
       return next;
     });
   };
 
-  const setRequirePrefer = (traitId: string, mode: 'require' | 'prefer' | null) => {
+  const toggleAvoidGroupChips = (traitIds: string[]) => {
+    setRules((prev) => toggleAvoidGroup(traitIds, prev));
+  };
+
+  /** Prefer and Must have are mutually exclusive per trait. */
+  const togglePreferOrRequire = (traitId: string, mode: 'prefer' | 'require') => {
     setRules((prev) => {
+      const current = prev.find((rule) => rule.trait_id === traitId)?.mode;
       const next = prev.filter((rule) => rule.trait_id !== traitId);
-      if (mode) next.push({ trait_id: traitId, mode });
+      if (current !== mode) {
+        next.push({ trait_id: traitId, mode });
+      }
       return next;
     });
   };
@@ -144,12 +173,14 @@ export function ShopFiltersDrawer({
               backgroundColor: theme.background,
               paddingTop: insets.top + Spacing.three,
               paddingBottom: insets.bottom + Spacing.three,
-              borderLeftColor: theme.border,
+              borderLeftColor: theme.borderInk,
               transform: [{ translateX }],
             },
           ]}>
           <View style={styles.header}>
-            <ThemedText type="subtitle">Filters</ThemedText>
+            <ThemedText type="smallBold" style={styles.title}>
+              Filters
+            </ThemedText>
             <Pressable
               onPress={() => requestClose()}
               hitSlop={12}
@@ -164,28 +195,42 @@ export function ShopFiltersDrawer({
           </View>
 
           <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-            <ThemedText type="smallBold">Sort</ThemedText>
+            {nearbyStores.length > 0 && onSelectStore ? (
+              <>
+                <ThemedText type="smallBold">Store</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Limit the shelf to one nearby store.
+                </ThemedText>
+                <View style={styles.chipRow}>
+                  <ButterChip
+                    label="All stores"
+                    selected={selectedStoreId == null}
+                    onPress={() => onSelectStore(null)}
+                  />
+                  {nearbyStores.map((store) => (
+                    <ButterChip
+                      key={store.id}
+                      label={store.name}
+                      selected={selectedStoreId === store.id}
+                      onPress={() => onSelectStore(store)}
+                    />
+                  ))}
+                </View>
+              </>
+            ) : null}
+
+            <ThemedText type="smallBold" style={nearbyStores.length > 0 ? styles.sectionGap : undefined}>
+              Sort
+            </ThemedText>
             <View style={styles.chipRow}>
-              {SORTS.map((option) => {
-                const selected = sort === option.id;
-                return (
-                  <Pressable
-                    key={option.id}
-                    onPress={() => setSort(option.id)}
-                    style={[
-                      styles.chip,
-                      {
-                        backgroundColor: selected ? theme.primary : theme.backgroundElement,
-                      },
-                    ]}>
-                    <ThemedText
-                      type="small"
-                      style={selected ? { color: theme.primaryText } : undefined}>
-                      {option.label}
-                    </ThemedText>
-                  </Pressable>
-                );
-              })}
+              {SORTS.map((option) => (
+                <ButterChip
+                  key={option.id}
+                  label={option.label}
+                  selected={sort === option.id}
+                  onPress={() => setSort(option.id)}
+                />
+              ))}
             </View>
 
             <View style={styles.switchRow}>
@@ -197,63 +242,74 @@ export function ShopFiltersDrawer({
               />
             </View>
 
-            <ThemedText type="smallBold">Avoid</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              Allergens and ingredients to hide
-            </ThemedText>
-            {grouped.avoid.slice(0, 8).map((trait) => (
-              <View key={trait.id} style={styles.switchRow}>
-                <ThemedText type="small">{trait.name}</ThemedText>
-                <Switch
-                  value={ruleMap.get(trait.id) === 'avoid'}
-                  onValueChange={(enabled) => setAvoid(trait.id, enabled)}
-                  trackColor={{ true: theme.primary, false: theme.border }}
-                />
-              </View>
-            ))}
-
             <ThemedText type="smallBold" style={styles.sectionGap}>
-              Must have / prefer
+              Avoid
             </ThemedText>
             <ThemedText type="small" themeColor="textSecondary">
-              Dietary needs. Prefer boosts matches; require hides the rest.
+              Hide products that contain these.
             </ThemedText>
-            {grouped.requirePrefer.slice(0, 8).map((trait) => {
-              const mode = ruleMap.get(trait.id);
+            {avoidGroups.map((group) => {
+              const groupIds = group.traits.map((trait) => trait.id);
+              const groupSelected = areAllTraitsAvoided(groupIds, rules);
               return (
-                <View key={trait.id} style={styles.traitBlock}>
-                  <ThemedText type="small">{trait.name}</ThemedText>
+                <View key={group.id} style={styles.avoidGroup}>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {group.label}
+                  </ThemedText>
                   <View style={styles.chipRow}>
-                    {(
-                      [
-                        { id: null, label: 'Off' },
-                        { id: 'prefer' as const, label: 'Prefer' },
-                        { id: 'require' as const, label: 'Require' },
-                      ] as const
-                    ).map((option) => {
-                      const selected = (mode ?? null) === option.id;
-                      return (
-                        <Pressable
-                          key={String(option.id)}
-                          onPress={() => setRequirePrefer(trait.id, option.id)}
-                          style={[
-                            styles.chip,
-                            {
-                              backgroundColor: selected ? theme.primary : theme.backgroundElement,
-                            },
-                          ]}>
-                          <ThemedText
-                            type="small"
-                            style={selected ? { color: theme.primaryText } : undefined}>
-                            {option.label}
-                          </ThemedText>
-                        </Pressable>
-                      );
-                    })}
+                    {group.groupChipLabel && group.traits.length > 1 ? (
+                      <ButterChip
+                        label={group.groupChipLabel}
+                        selected={groupSelected}
+                        onPress={() => toggleAvoidGroupChips(groupIds)}
+                      />
+                    ) : null}
+                    {group.traits.map((trait) => (
+                      <ButterChip
+                        key={trait.id}
+                        label={trait.name}
+                        selected={ruleMap.get(trait.id) === 'avoid'}
+                        onPress={() => toggleAvoid(trait.id)}
+                      />
+                    ))}
                   </View>
                 </View>
               );
             })}
+
+            <ThemedText type="smallBold" style={styles.sectionGap}>
+              Prefer
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              Rank matching products higher.
+            </ThemedText>
+            <View style={styles.chipRow}>
+              {grouped.requirePrefer.map((trait) => (
+                <ButterChip
+                  key={`prefer-${trait.id}`}
+                  label={trait.name}
+                  selected={ruleMap.get(trait.id) === 'prefer'}
+                  onPress={() => togglePreferOrRequire(trait.id, 'prefer')}
+                />
+              ))}
+            </View>
+
+            <ThemedText type="smallBold" style={styles.sectionGap}>
+              Must have
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              Only show products that match.
+            </ThemedText>
+            <View style={styles.chipRow}>
+              {grouped.requirePrefer.map((trait) => (
+                <ButterChip
+                  key={`require-${trait.id}`}
+                  label={trait.name}
+                  selected={ruleMap.get(trait.id) === 'require'}
+                  onPress={() => togglePreferOrRequire(trait.id, 'require')}
+                />
+              ))}
+            </View>
           </ScrollView>
 
           <View style={styles.footer}>
@@ -262,22 +318,27 @@ export function ShopFiltersDrawer({
                 setRules([]);
                 setOnSaleOnly(false);
                 setSort('default');
-              }}>
-              <ThemedText type="linkPrimary">Clear all</ThemedText>
+              }}
+              hitSlop={8}>
+              <ThemedText type="smallBold" style={{ textDecorationLine: 'underline' }}>
+                Clear
+              </ThemedText>
             </Pressable>
             <Pressable
               onPress={() => {
                 setRules(onResetToPreferences());
-              }}>
-              <ThemedText type="linkPrimary">Reset prefs</ThemedText>
-            </Pressable>
-            <Pressable
-              onPress={() => requestClose(() => onApply({ rules, sort, onSaleOnly }))}
-              style={[styles.applyBtn, { backgroundColor: theme.primary }]}>
-              <ThemedText type="smallBold" style={{ color: theme.primaryText }}>
-                Apply
+              }}
+              hitSlop={8}>
+              <ThemedText type="smallBold" style={{ textDecorationLine: 'underline' }}>
+                Reset prefs
               </ThemedText>
             </Pressable>
+            <ButterButton
+              label="Apply"
+              variant="ink"
+              onPress={() => requestClose(() => onApply({ rules, sort, onSaleOnly }))}
+              style={styles.applyBtn}
+            />
           </View>
         </Animated.View>
       </View>
@@ -293,11 +354,11 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    backgroundColor: SheetChrome.scrim,
   },
   panel: {
     height: '100%',
-    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderLeftWidth: 2,
     paddingHorizontal: Spacing.three,
     gap: Spacing.two,
   },
@@ -305,6 +366,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+  },
+  title: {
+    fontSize: Type.section,
   },
   scroll: {
     gap: Spacing.two,
@@ -315,11 +379,6 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: Spacing.two,
   },
-  chip: {
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-    borderRadius: Spacing.three,
-  },
   switchRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -327,9 +386,8 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     paddingVertical: Spacing.one,
   },
-  traitBlock: {
-    gap: Spacing.two,
-    paddingVertical: Spacing.one,
+  avoidGroup: {
+    gap: Spacing.one,
   },
   sectionGap: {
     marginTop: Spacing.two,
@@ -342,8 +400,9 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.two,
   },
   applyBtn: {
-    paddingHorizontal: Spacing.three,
+    flexShrink: 0,
+    paddingHorizontal: Spacing.four,
+    minHeight: 44,
     paddingVertical: Spacing.two,
-    borderRadius: Spacing.three,
   },
 });

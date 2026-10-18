@@ -107,6 +107,79 @@ export function groupTraitsForFilterUi(traits: FoodTrait[]): {
   };
 }
 
+export type AvoidTraitGroupId = 'seafood' | 'nuts' | 'dairy-eggs' | 'grains' | 'other';
+
+export type AvoidTraitGroup = {
+  id: AvoidTraitGroupId;
+  label: string;
+  /** When set, show a parent chip that toggles every trait in the group. */
+  groupChipLabel?: string;
+  traits: FoodTrait[];
+};
+
+const AVOID_GROUP_DEFS: {
+  id: AvoidTraitGroupId;
+  label: string;
+  groupChipLabel?: string;
+  codes: string[];
+}[] = [
+  { id: 'seafood', label: 'Seafood', groupChipLabel: 'Seafood', codes: ['fish', 'shellfish'] },
+  { id: 'nuts', label: 'Nuts', groupChipLabel: 'Nuts', codes: ['peanuts', 'tree-nuts'] },
+  { id: 'dairy-eggs', label: 'Dairy & eggs', codes: ['milk', 'eggs'] },
+  { id: 'grains', label: 'Grains', codes: ['wheat', 'gluten'] },
+  { id: 'other', label: 'Other', codes: ['soy', 'sesame', 'red-dye-40'] },
+];
+
+/** Buckets avoid traits into labeled subsections for the shop filter UI. */
+export function groupAvoidTraitsForFilterUi(avoidTraits: FoodTrait[]): AvoidTraitGroup[] {
+  const byCode = new Map(avoidTraits.map((trait) => [trait.code, trait]));
+  const usedIds = new Set<string>();
+  const groups: AvoidTraitGroup[] = [];
+
+  for (const def of AVOID_GROUP_DEFS) {
+    const traits = def.codes
+      .map((code) => byCode.get(code))
+      .filter((trait): trait is FoodTrait => trait != null);
+    for (const trait of traits) usedIds.add(trait.id);
+    if (traits.length > 0) {
+      groups.push({
+        id: def.id,
+        label: def.label,
+        groupChipLabel: def.groupChipLabel,
+        traits,
+      });
+    }
+  }
+
+  const leftovers = avoidTraits.filter((trait) => !usedIds.has(trait.id));
+  if (leftovers.length > 0) {
+    const other = groups.find((group) => group.id === 'other');
+    if (other) {
+      other.traits.push(...leftovers);
+    } else {
+      groups.push({ id: 'other', label: 'Other', traits: leftovers });
+    }
+  }
+
+  return groups;
+}
+
+export function areAllTraitsAvoided(traitIds: string[], rules: SessionFoodRule[]): boolean {
+  if (traitIds.length === 0) return false;
+  const avoided = new Set(
+    rules.filter((rule) => rule.mode === 'avoid').map((rule) => rule.trait_id),
+  );
+  return traitIds.every((id) => avoided.has(id));
+}
+
+/** Toggle avoid for every trait in a group (all on → all off, otherwise all on). */
+export function toggleAvoidGroup(traitIds: string[], rules: SessionFoodRule[]): SessionFoodRule[] {
+  const idSet = new Set(traitIds);
+  const without = rules.filter((rule) => !idSet.has(rule.trait_id));
+  if (areAllTraitsAvoided(traitIds, rules)) return without;
+  return [...without, ...traitIds.map((trait_id) => ({ trait_id, mode: 'avoid' as const }))];
+}
+
 export function rulesFromUserFoodRules(rules: UserFoodRule[]): SessionFoodRule[] {
   return rules.map((rule) => ({ trait_id: rule.trait_id, mode: rule.mode }));
 }
