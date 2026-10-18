@@ -20,11 +20,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   clearLocalData,
+  getAiVoice,
   getEffectiveGroceryCashbackBps,
   isAiTextReplyAudioEnabled,
   publicImageUrl,
   removeMyAvatar,
   setAiTextReplyAudioEnabled,
+  setAiVoice,
+  type AiVoice,
   setGroceryCashbackBps,
   showErrorToast,
   showSuccessToast,
@@ -70,6 +73,7 @@ export function ShopProfileDrawer({
   const [uploading, setUploading] = useState(false);
   const [cashbackBps, setCashbackBps] = useState<number | null>(null);
   const [aiTextAudio, setAiTextAudio] = useState(true);
+  const [aiVoice, setAiVoiceChoice] = useState<AiVoice>('female');
   const [closing, setClosing] = useState(false);
   const [translateX] = useState(() => new Animated.Value(-panelWidth));
   const [backdropOpacity] = useState(() => new Animated.Value(0));
@@ -100,6 +104,7 @@ export function ShopProfileDrawer({
     if (!visible) return;
     void getEffectiveGroceryCashbackBps(isGuest).then(setCashbackBps).catch(() => setCashbackBps(null));
     setAiTextAudio(isAiTextReplyAudioEnabled());
+    setAiVoiceChoice(getAiVoice());
   }, [visible, isGuest]);
 
   const requestClose = (afterClose?: () => void) => {
@@ -419,6 +424,29 @@ export function ShopProfileDrawer({
                 thumbColor={theme.background}
                 accessibilityLabel="AI text reply sounds"
               />
+            </View>
+            <ThemedText type="smallBold">AI voice</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              Female and male read the reply. Cow plays a real moo. The words stay on screen.
+            </ThemedText>
+            <View style={styles.cashbackRow}>
+              {(
+                [
+                  ['female', 'Female'],
+                  ['male', 'Male'],
+                  ['cow', 'Cow'],
+                ] as const
+              ).map(([id, label]) => (
+                <ButterChip
+                  key={id}
+                  label={label}
+                  selected={aiVoice === id}
+                  onPress={() => {
+                    setAiVoiceChoice(id);
+                    setAiVoice(id);
+                  }}
+                />
+              ))}
             </View>
           </View>
 
