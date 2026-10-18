@@ -3,6 +3,9 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
+import { promotionOffer } from "./pipeline/envelope.js";
+import { ingestPromotion } from "./pipeline/ingest.js";
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 dotenv.config({ path: path.join(root, "src/backend/.env") });
 dotenv.config({ path: path.join(root, ".env.local") });
@@ -156,34 +159,20 @@ async function importDiscounts() {
   const policies = JSON.parse(fs.readFileSync(file, "utf8"));
   let saved = 0;
   for (const policy of policies) {
-    const chain = await chainId(policy.chain);
-    const existing = await rest(
-      `promotions?chain_id=eq.${chain}&requires_group=eq.${encodeURIComponent(policy.requiresGroup)}&select=id&limit=1`,
+    await ingestPromotion(
+      promotionOffer({
+        chainName: policy.chain,
+        discountType: "percent_off",
+        discountValue: policy.percent,
+        requiresGroup: policy.requiresGroup,
+        weekdays: policy.weekdays ?? null,
+        monthDays: policy.monthDays ?? null,
+        monthOrdinals: policy.monthOrdinals ?? null,
+        startsAt: policy.startsAt,
+        endsAt: policy.endsAt,
+        externalRef: `wa-discounts:${policy.chain}:${policy.requiresGroup}`,
+      }),
     );
-    const row = {
-      chain_id: chain,
-      discount_type: "percent_off",
-      discount_value: policy.percent,
-      requires_group: policy.requiresGroup,
-      weekdays: policy.weekdays ?? null,
-      month_days: policy.monthDays ?? null,
-      month_ordinals: policy.monthOrdinals ?? null,
-      starts_at: policy.startsAt,
-      ends_at: policy.endsAt,
-    };
-    if (existing?.[0]?.id) {
-      await rest(`promotions?id=eq.${existing[0].id}`, {
-        method: "PATCH",
-        headers: { Prefer: "return=minimal" },
-        body: JSON.stringify(row),
-      });
-    } else {
-      await rest("promotions", {
-        method: "POST",
-        headers: { Prefer: "return=minimal" },
-        body: JSON.stringify(row),
-      });
-    }
     saved += 1;
   }
   return saved;

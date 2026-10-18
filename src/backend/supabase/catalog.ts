@@ -12,13 +12,15 @@ import type {
 } from '../types';
 import { supabase } from './client';
 import { fail } from '../errors';
+import { isPriorLocalCalendarDay, todayLocalDateKey } from './localTime';
 import { unwrap, unwrapOne } from './query';
 
 const CLIENT_INGEST_COOLDOWN_MS = 10 * 60 * 1000;
 const ingestCooldown = new Map<string, number>();
 
+/** Cooldown includes local calendar day so a new day always re-ingests. */
 function ingestCooldownKey(term: string, zip: string): string {
-  return `${zip}:${term.trim().toLowerCase()}`;
+  return `${zip}:${term.trim().toLowerCase()}:${todayLocalDateKey()}`;
 }
 
 function ingestOnCooldown(term: string, zip: string): boolean {
@@ -46,16 +48,34 @@ export async function searchCategories(query: string): Promise<ProductCategory[]
   );
 }
 
-/** Top-level shopping categories (parent_id is null), ordered by name. */
+/**
+ * Shop aisle chips: top-level categories plus Produce children (Fruits, Vegetables).
+ * Ordered with Produce family first, then the rest alphabetically.
+ */
 export async function listCategories(input?: { limit?: number }): Promise<ProductCategory[]> {
-  return unwrap(
+  const limit = input?.limit ?? 50;
+  const top = unwrap(
     await supabase
       .from('product_categories')
       .select('*')
       .is('parent_id', null)
       .order('name')
-      .limit(input?.limit ?? 50),
+      .limit(limit),
   );
+  const produce = top.find((row) => row.name.toLowerCase() === 'produce');
+  let children: ProductCategory[] = [];
+  if (produce) {
+    children = unwrap(
+      await supabase
+        .from('product_categories')
+        .select('*')
+        .eq('parent_id', produce.id)
+        .order('name'),
+    );
+  }
+  const rest = top.filter((row) => row.name.toLowerCase() !== 'produce');
+  const ordered = produce ? [produce, ...children, ...rest] : [...top];
+  return ordered.slice(0, limit);
 }
 
 /**
@@ -147,7 +167,7 @@ export async function listProductsGroupedByCategory(input?: {
   return batches.filter((section) => section.products.length > 0);
 }
 
-/** Active catalog products for browse. Optional category filter. */
+/** Active catalog products for browse. Optional category filter (Produce includes children). */
 export async function listActiveProducts(input?: {
   limit?: number;
   categoryId?: string | null;
@@ -156,17 +176,25 @@ export async function listActiveProducts(input?: {
   const limit = input?.limit ?? 60;
 
   if (input?.categoryId) {
+    const children = unwrap(
+      await supabase
+        .from('product_categories')
+        .select('id')
+        .eq('parent_id', input.categoryId),
+    );
+    const ids = [input.categoryId, ...children.map((row) => row.id)];
     const rows = unwrap(
       await supabase
         .from('products')
         .select('*')
         .eq('is_active', true)
-        .eq('category_id', input.categoryId)
+        .in('category_id', ids)
         .order('name')
         .limit(Math.max(limit * 4, 80)),
     );
     return diversifyProducts(rows, limit);
   }
+
 
   // Home browse: pull from each food category (skip Other) so pasta/dairy cannot fill the grid.
   const categories = filterBrowseCategories(
@@ -346,25 +374,39 @@ export async function findOrIngestProductByUpc(
   return findProductByUpc(code);
 }
 
+type PricesProxyBody = {
+  safewayError?: string | null;
+  fredMeyerError?: string | null;
+  traderJoesError?: string | null;
+  qfcError?: string | null;
+};
+
+function proxyHadRetailerError(body: PricesProxyBody | null): boolean {
+  if (!body) return true;
+  return Boolean(body.safewayError || body.fredMeyerError || body.traderJoesError || body.qfcError);
+}
+
 /**
- * When the local catalog is thin for a search term, fetch retailer prices
- * (which persist into Supabase) and re-query products. Honors a 10-minute
- * client cooldown per term+zip. Never call this on bare Shop open.
+ * Hits the multi-store price proxy for a search term, then re-reads products.
+ * Skips when on client cooldown. Does not mark cooldown if any retailer errored,
+ * so partial (e.g. QFC-only) failures can retry. Never call on bare Shop open.
  */
 export async function ensureCatalogForTerm(term: string, zip: string): Promise<Product[]> {
   const query = term.trim();
   if (query.length < 2) return searchProducts(query);
 
   let products = await searchProducts(query);
-  if (products.length >= 3) return products;
   if (ingestOnCooldown(query, zip)) return products;
 
   try {
     const params = new URLSearchParams({ term: query, zip });
-    await fetch(`${BACKEND_URL}/api/prices?${params}`);
-    markIngest(query, zip);
+    const res = await fetch(`${BACKEND_URL}/api/prices?${params}`);
+    const body = (await res.json().catch(() => null)) as PricesProxyBody | null;
+    if (!proxyHadRetailerError(body)) {
+      markIngest(query, zip);
+    }
   } catch {
-    // Keep whatever is already in the catalog.
+    // Keep whatever is already in the catalog; allow retry next search.
   }
   products = await searchProducts(query);
   return products;
@@ -377,6 +419,8 @@ export type ProductStoreOffer = {
   chainName: string | null;
   priceCents: number;
   isAvailable: boolean;
+  /** ISO timestamptz from current_prices.created_at */
+  observedAt: string;
 };
 
 /**
@@ -408,17 +452,22 @@ export async function listProductStoreOffers(productId: string): Promise<Product
   const prices = unwrap(
     await supabase
       .from('current_prices')
-      .select('store_product_id, price_cents')
+      .select('store_product_id, price_cents, created_at')
       .in(
         'store_product_id',
         listings.map((row) => row.id),
       ),
   );
-  const priceByListing = new Map(prices.map((row) => [row.store_product_id, row.price_cents]));
+  const priceByListing = new Map(
+    prices.map((row) => [
+      row.store_product_id,
+      { priceCents: row.price_cents, observedAt: row.created_at as string },
+    ]),
+  );
 
   const offers = listings.flatMap((listing) => {
-    const priceCents = priceByListing.get(listing.id);
-    if (priceCents == null) return [];
+    const price = priceByListing.get(listing.id);
+    if (price == null) return [];
     const store = storeById.get(listing.store_id);
     return [
       {
@@ -426,13 +475,50 @@ export async function listProductStoreOffers(productId: string): Promise<Product
         storeId: listing.store_id,
         storeName: store?.name ?? 'Store',
         chainName: store?.chain_id ? (chainById.get(store.chain_id) ?? null) : null,
-        priceCents,
+        priceCents: price.priceCents,
         isAvailable: listing.is_available,
+        observedAt: price.observedAt,
       },
     ];
   });
 
   return offers.sort((a, b) => a.priceCents - b.priceCents);
+}
+
+function offersNeedDayRefresh(offers: ProductStoreOffer[]): boolean {
+  if (offers.length === 0) return true;
+  return offers.some((offer) => offer.observedAt && isPriorLocalCalendarDay(offer.observedAt));
+}
+
+/**
+ * Refreshes multi-store shelf prices for one product, then returns updated offers.
+ * Uses UPC as the search term when present so chains can match the same SKU.
+ * Bypasses the short cooldown when any offer is from a prior local calendar day.
+ */
+export async function refreshProductStoreOffers(
+  product: Pick<Product, 'id' | 'name' | 'upc'>,
+  zip: string,
+): Promise<ProductStoreOffer[]> {
+  if (!product?.id) return [];
+  const term = String(product.upc ?? '').trim() || product.name.trim();
+  const existing = await listProductStoreOffers(product.id);
+  const dayStale = offersNeedDayRefresh(existing);
+  const shouldFetch =
+    term.length >= 2 && (dayStale || !ingestOnCooldown(term, zip));
+
+  if (shouldFetch) {
+    try {
+      const params = new URLSearchParams({ term, zip });
+      const res = await fetch(`${BACKEND_URL}/api/prices?${params}`);
+      const body = (await res.json().catch(() => null)) as PricesProxyBody | null;
+      if (!proxyHadRetailerError(body)) {
+        markIngest(term, zip);
+      }
+    } catch {
+      // Return whatever is already persisted for this product.
+    }
+  }
+  return listProductStoreOffers(product.id);
 }
 
 /**
@@ -520,7 +606,7 @@ export async function listCurrentPromotions(): Promise<Promotion[]> {
   );
 }
 
-/** Trader Joe's stores and campus stores, which are the only places a user can report a shelf price. */
+/** Every store a signed-in user may attach a shelf-price report to. */
 export async function listReportableStores(): Promise<ReportableStore[]> {
   return unwrap(await supabase.rpc('list_reportable_stores'));
 }
@@ -528,7 +614,8 @@ export async function listReportableStores(): Promise<ReportableStore[]> {
 /**
  * Saves a Trader Joe's or campus store for later price reports.
  * kind is `trader_joes` or `campus`. A campus store requires collegeName.
- * The same name and ZIP return the existing store.
+ * The same name and ZIP return the existing store. Scraped QFC, Safeway,
+ * Fred Meyer, and Trader Joe's stores already exist from the price proxy.
  */
 export async function registerReportableStore(input: {
   name: string;
@@ -565,7 +652,8 @@ export type ReportedOffer = {
 };
 
 /**
- * Saved shelf prices at Trader Joe's and campus stores whose product name matches.
+ * Latest user_report shelf prices whose product name matches, at any store.
+ * Ignores api/scrape observations so manual reports stay the trusted source.
  * Returns an empty list when nobody is signed in.
  */
 export async function listReportedOffers(term: string): Promise<ReportedOffer[]> {
@@ -588,14 +676,21 @@ export async function listReportedOffers(term: string): Promise<ReportedOffer[]>
   if (relevant.length === 0) return [];
   const prices = unwrap(
     await supabase
-      .from('current_prices')
-      .select('store_product_id, price_cents')
+      .from('prices')
+      .select('store_product_id, price_cents, created_at')
+      .eq('source', 'user_report')
       .in(
         'store_product_id',
         relevant.map((listing) => listing.id),
-      ),
+      )
+      .order('created_at', { ascending: false }),
   );
-  const priceByListing = new Map(prices.map((price) => [price.store_product_id, price.price_cents]));
+  const priceByListing = new Map<string, number>();
+  for (const price of prices) {
+    if (!priceByListing.has(price.store_product_id)) {
+      priceByListing.set(price.store_product_id, price.price_cents);
+    }
+  }
   const productById = new Map(products.map((product) => [product.id, product]));
   return relevant.flatMap((listing) => {
     const priceCents = priceByListing.get(listing.id);
@@ -614,8 +709,9 @@ export async function listReportedOffers(term: string): Promise<ReportedOffer[]>
 }
 
 /**
- * Appends a student-reported shelf price in cents at a Trader Joe's or campus store.
+ * Appends a student-reported shelf price in cents at any store.
  * Creates the product and the store listing when they do not exist yet.
+ * Manual reports override automated api/scrape prices for that listing.
  */
 export async function reportManualPrice(input: {
   storeId: string;
@@ -638,8 +734,8 @@ export async function reportManualPrice(input: {
 /**
  * Appends a student-reported shelf price in cents. Prices are never edited.
  * submitted_by must be the signed-in user, which this function sets.
- * The store listing must already exist. For Trader Joe's and campus stores,
- * reportManualPrice creates that listing.
+ * The store listing must already exist. reportManualPrice creates that listing
+ * for any store when needed.
  */
 export async function reportPrice(input: {
   storeProductId: string;

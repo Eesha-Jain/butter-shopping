@@ -77,6 +77,7 @@ export {
   listReportableStores,
   nearbyShops,
   productWarnings,
+  refreshProductStoreOffers,
   registerReportableStore,
   reportManualPrice,
   reportPrice,
@@ -91,7 +92,20 @@ export {
   rulesFromUserFoodRules,
 } from './foodFilters';
 export type { SessionFoodRule, ShopSort } from './foodFilters';
-export { fetchNearbyShops, getUserCoords, resolveShopZip } from './locationService';
+export {
+  formatLocalDateTime,
+  getDeviceTimeZone,
+  isPriorLocalCalendarDay,
+  toLocalDateKey,
+  todayLocalDateKey,
+} from './localTime';
+export {
+  fetchNearbyShops,
+  getUserCoords,
+  resolveSearchCoords,
+  resolveShopZip,
+} from './locationService';
+export type { SearchCoords } from './locationService';
 export {
   getWeeklyBudgetCents,
   planLowestTrip,

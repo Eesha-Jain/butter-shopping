@@ -221,6 +221,8 @@ export type Product = {
   brand: string | null;
   upc: string | null;
   category_id: string | null;
+  /** off | keyword | manual — how category_id was assigned */
+  category_source: 'off' | 'keyword' | 'manual' | null;
   size_base_amount: number | null;
   size_base_unit: 'g' | 'ml' | 'ct' | null;
   /** Overrides category typical_shelf_life_days when set. */
@@ -269,6 +271,8 @@ export type Price = {
   source: 'api' | 'scrape' | 'user_report';
   submitted_by: string | null;
   created_at: string;
+  regular_price_cents: number | null;
+  external_ref: string | null;
 };
 
 export type DiscountGroup = {
@@ -293,6 +297,7 @@ export type Promotion = {
   ends_at: string;
   created_at: string;
   updated_at: string;
+  external_ref: string | null;
 };
 
 export type FoodTrait = {
@@ -543,6 +548,19 @@ export type CurrentPrice = {
   source: Price['source'];
   created_at: string;
   is_stale: boolean;
+};
+
+/** Completeness + trust flags per store listing (product_price_health view). */
+export type ProductPriceHealth = {
+  store_product_id: string;
+  store_id: string;
+  product_id: string;
+  has_upc: boolean;
+  has_size: boolean;
+  has_trusted_price: boolean;
+  price_source: Price['source'] | null;
+  is_stale: boolean;
+  completeness_score: number;
 };
 
 export type CurrentUnitPrice = {

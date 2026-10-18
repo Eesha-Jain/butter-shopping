@@ -12,9 +12,12 @@ import { useSession } from '@/auth/session';
 import {
   computeNetPrice,
   fetchVisaMerchantOffers,
+  formatLocalDateTime,
   getEffectiveGroceryCashbackBps,
   listProductStoreOffers,
   publicImageUrl,
+  refreshProductStoreOffers,
+  resolveShopZip,
   setGroceryCashbackBps,
   type Product,
   type ProductStoreOffer,
@@ -59,14 +62,18 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
   const [visaOffers, setVisaOffers] = useState<VisaMerchantOffer[]>([]);
   const [cashbackBps, setCashbackBps] = useState<number | null>(null);
   const [showCashbackPrompt, setShowCashbackPrompt] = useState(false);
+  const [checkingStores, setCheckingStores] = useState(false);
 
   useEffect(() => {
     if (!product?.id) {
       setOffers([]);
+      setCheckingStores(false);
       return;
     }
     let cancelled = false;
     setOffersLoading(true);
+    setCheckingStores(false);
+
     void Promise.all([
       listProductStoreOffers(product.id),
       fetchVisaMerchantOffers(),
@@ -88,10 +95,25 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
       .finally(() => {
         if (!cancelled) setOffersLoading(false);
       });
+
+    void (async () => {
+      setCheckingStores(true);
+      try {
+        const zip = await resolveShopZip();
+        if (cancelled) return;
+        const rows = await refreshProductStoreOffers(product, zip);
+        if (!cancelled) setOffers(rows);
+      } catch {
+        // Keep cached offers already shown.
+      } finally {
+        if (!cancelled) setCheckingStores(false);
+      }
+    })();
+
     return () => {
       cancelled = true;
     };
-  }, [product?.id, isGuest]);
+  }, [product, isGuest]);
 
   const ranked = useMemo(() => {
     return [...offers]
@@ -198,7 +220,12 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
                   </View>
                 </View>
               ) : null}
-              {offersLoading ? (
+              {checkingStores ? (
+                <ThemedText type="small" themeColor="textSecondary">
+                  Checking nearby stores…
+                </ThemedText>
+              ) : null}
+              {offersLoading && offers.length === 0 ? (
                 <ActivityIndicator color={theme.primary} />
               ) : ranked.length === 0 ? (
                 <ThemedText type="small" themeColor="textSecondary">
@@ -239,6 +266,11 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
                         <ThemedText type="smallBold">
                           {formatCents(showNet ? net.netCents : net.shelfCents)}
                         </ThemedText>
+                        {offer.observedAt ? (
+                          <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                            Updated {formatLocalDateTime(offer.observedAt)}
+                          </ThemedText>
+                        ) : null}
                       </View>
                     </View>
                   );
