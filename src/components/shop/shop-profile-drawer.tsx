@@ -7,7 +7,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
-  // DevSettings,
+  DevSettings,
   Easing,
   Modal,
   Platform,
@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { AuthMode } from '@/auth/auth-mode';
 import {
+  clearLocalData,
   getAiVoice,
   getEffectiveGroceryCashbackBps,
   isAiTextReplyAudioEnabled,
@@ -236,37 +237,37 @@ export function ShopProfileDrawer({
     ]);
   };
 
-  // /** TEMP: clears guest prefs / cart / onboarding flag, signs out, reloads. */
-  // const handleResetLocalData = () => {
-  //   Alert.alert(
-  //     'Reset local data',
-  //     'Clear guest cart, favorites, onboarding, and sign out? The app will reload.',
-  //     [
-  //       { text: 'Cancel', style: 'cancel' },
-  //       {
-  //         text: 'Reset',
-  //         style: 'destructive',
-  //         onPress: () => {
-  //           requestClose(() => {
-  //             void (async () => {
-  //               try {
-  //                 clearLocalData();
-  //                 await onSignOut();
-  //               } catch {
-  //                 // Still reload so a partial clear is usable.
-  //               }
-  //               if (Platform.OS === 'web' && typeof window !== 'undefined') {
-  //                 window.location.reload();
-  //                 return;
-  //               }
-  //               DevSettings.reload();
-  //             })();
-  //           });
-  //         },
-  //       },
-  //     ],
-  //   );
-  // };
+  /** TEMP: clears guest prefs / cart / onboarding flag, signs out, reloads. */
+  const handleResetLocalData = () => {
+    Alert.alert(
+      'Reset local data',
+      'Clear guest cart, favorites, onboarding, and sign out? The app will reload.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: () => {
+            requestClose(() => {
+              void (async () => {
+                try {
+                  clearLocalData();
+                  await onSignOut();
+                } catch {
+                  // Still reload so a partial clear is usable.
+                }
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.location.reload();
+                  return;
+                }
+                DevSettings.reload();
+              })();
+            });
+          },
+        },
+      ],
+    );
+  };
 
   return (
     <Modal
