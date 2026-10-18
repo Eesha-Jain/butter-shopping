@@ -4,10 +4,7 @@
  */
 export { AppError } from '../errors';
 export type {
-  FoodRuleMode, FulfillmentMethod,
-  GroupKind, TraitKind,
-  TraitRelation,
-  TripStatus
+  FoodRuleMode, FulfillmentMethod, GroupKind, TraitKind, TraitRelation, TripStatus
 } from '../types';
 export {
   getSession,
@@ -18,7 +15,96 @@ export {
   signOut,
   signUp
 } from './auth';
+export {
+  ensureCatalogForTerm,
+  findOrIngestProductByUpc,
+  findProductByUpc,
+  formatPromotionBadge,
+  getCheapestPriceCentsByProductIds,
+  getCurrentPrice,
+  getProductPromotionMap, getProductsByIds, getProductTraitsForIds, getStore,
+  listActiveProducts,
+  listCampusPopularProducts,
+  listCategories, listCurrentPromotions, listProductsGroupedByCategory,
+  listProductStoreOffers, listReportableStores, listReportedOffers, nearbyShops,
+  productWarnings,
+  refreshProductStoreOffers,
+  registerReportableStore,
+  reportManualPrice,
+  reportPrice,
+  searchCategories,
+  searchProducts
+} from './catalog';
+export type { CategoryProductSection, ProductStoreOffer } from './catalog';
 export { nextPreferredGroceryDate } from './dates';
+export { listMyFavoriteProductIds, setProductFavorite } from './favorites';
+export {
+  applyFoodFilters,
+  groupTraitsForFilterUi,
+  indexTraitsByProduct,
+  rulesFromUserFoodRules
+} from './foodFilters';
+export type { SessionFoodRule, ShopSort } from './foodFilters';
+export {
+  createGroup,
+  joinGroup,
+  leaveGroup,
+  listGroupBalances,
+  listGroupMembers,
+  listMyGroups,
+  updateGroup
+} from './groups';
+export {
+  addListItem,
+  addRecipeToList,
+  buildStandardList,
+  createList,
+  getActiveListProductQtyMap,
+  getDefaultGroceryList,
+  getMyDefaultList,
+  listGroupLists,
+  listListItems,
+  listMyListTargets,
+  listResolvedItems,
+  removeListItem,
+  setListItemDone,
+  updateListItem
+} from './lists';
+export type { ActiveListTarget } from './lists';
+export {
+  formatLocalDateTime,
+  getDeviceTimeZone,
+  isPriorLocalCalendarDay, todayLocalDateKey, toLocalDateKey
+} from './localTime';
+export {
+  fetchNearbyShops,
+  getUserCoords,
+  resolveSearchCoords,
+  resolveShopZip
+} from './locationService';
+export type { SearchCoords } from './locationService';
+export { evenShareCents, payerRemainderCents } from './money';
+export { registerPushToken, removePushToken, sendOrderConfirmationPush } from './notifications';
+export {
+  cancelOrder,
+  confirmOrder,
+  createTripFromList,
+  finalizeOrder,
+  getTrip,
+  listOrderItems,
+  listOrderShares,
+  markSharePaid,
+  previewEvenSplit,
+  requestCheckoutLink
+} from './orders';
+export {
+  getWeeklyBudgetCents,
+  planLowestTrip,
+  priceOptions,
+  recommendShoppingPlan,
+  suggestDiscountDate,
+  suggestGroceryDate
+} from './planning';
 export {
   getMyProfile,
   listFoodTraits,
@@ -35,104 +121,6 @@ export {
   updateMyProfile,
   uploadMyAvatar
 } from './profiles';
-export { evenShareCents, payerRemainderCents } from './money';
-export { registerPushToken, removePushToken, sendOrderConfirmationPush } from './notifications';
-export {
-  createGroup,
-  joinGroup,
-  leaveGroup,
-  listGroupBalances,
-  listGroupMembers,
-  listMyGroups,
-  updateGroup,
-} from './groups';
-export {
-  addListItem,
-  addRecipeToList,
-  buildStandardList,
-  createList,
-  getActiveListProductQtyMap,
-  getDefaultGroceryList,
-  getMyDefaultList,
-  listGroupLists,
-  listListItems,
-  listMyListTargets,
-  listResolvedItems,
-  removeListItem,
-  setListItemDone,
-  updateListItem,
-} from './lists';
-export type { ActiveListTarget } from './lists';
-export {
-  ensureCatalogForTerm,
-  findOrIngestProductByUpc,
-  findProductByUpc,
-  formatPromotionBadge,
-  getCheapestPriceCentsByProductIds,
-  getCurrentPrice,
-  getProductPromotionMap,
-  getProductTraitsForIds,
-  getProductsByIds,
-  getStore,
-  listActiveProducts,
-  listCampusPopularProducts,
-  listCategories,
-  listProductsGroupedByCategory,
-  listProductStoreOffers,
-  listCurrentPromotions,
-  listReportedOffers,
-  listReportableStores,
-  nearbyShops,
-  productWarnings,
-  refreshProductStoreOffers,
-  registerReportableStore,
-  reportManualPrice,
-  reportPrice,
-  searchCategories,
-  searchProducts,
-} from './catalog';
-export type { CategoryProductSection, ProductStoreOffer } from './catalog';
-export {
-  applyFoodFilters,
-  groupTraitsForFilterUi,
-  indexTraitsByProduct,
-  rulesFromUserFoodRules,
-} from './foodFilters';
-export type { SessionFoodRule, ShopSort } from './foodFilters';
-export {
-  formatLocalDateTime,
-  getDeviceTimeZone,
-  isPriorLocalCalendarDay,
-  toLocalDateKey,
-  todayLocalDateKey,
-} from './localTime';
-export {
-  fetchNearbyShops,
-  getUserCoords,
-  resolveSearchCoords,
-  resolveShopZip,
-} from './locationService';
-export type { SearchCoords } from './locationService';
-export {
-  getWeeklyBudgetCents,
-  planLowestTrip,
-  priceOptions,
-  recommendShoppingPlan,
-  suggestDiscountDate,
-  suggestGroceryDate,
-} from './planning';
-export {
-  cancelOrder,
-  confirmOrder,
-  createTripFromList,
-  finalizeOrder,
-  getTrip,
-  listOrderItems,
-  listOrderShares,
-  markSharePaid,
-  previewEvenSplit,
-  requestCheckoutLink,
-} from './orders';
 export {
   addDueHabitItems,
   listExpiringPurchases,
@@ -152,14 +140,5 @@ export {
 export { analyzeRipeness } from './ripeness';
 export type { RipenessResult } from './ripeness';
 export { getProductSafety, traitsChangedSince } from './safety';
-export { listMyFavoriteProductIds, setProductFavorite } from './favorites';
 export * from './voice';
-export { listMyFavoriteProductIds, setProductFavorite } from './favorites';
-export type {
-  FulfillmentMethod,
-  GroupKind,
-  FoodRuleMode,
-  TraitKind,
-  TraitRelation,
-  TripStatus,
-} from '../types';
+
