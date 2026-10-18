@@ -160,14 +160,35 @@ function shopDayReasonLabel(reason: ShopDayReason, stores: ShopDayStoreHint[]): 
   return 'Next open shopping day.';
 }
 
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
 /**
- * History-aware grocery day: blends shelf day-of-week patterns near a ZIP,
- * basket promotions, and preferred_days. Pass shopOn to recommendShoppingPlan.
+ * History-aware grocery day. Uses the cheapest day of the past week when that
+ * history exists, then the longer weekday pattern. Pass shopOn to recommendShoppingPlan.
  */
+
 export async function suggestBestShopDate(input?: {
   postalCode?: string;
   from?: string;
+  listId?: string;
 }): Promise<BestShopDay> {
+  const week = await supabase.rpc('best_week_price_day', {
+    p_list_id: input?.listId ?? null,
+    p_near_postal_code: input?.postalCode ?? '98195',
+  });
+  const weekDay = week.data;
+  if (!week.error && weekDay?.shop_on) {
+    const dow = typeof weekDay.dow === 'number' ? weekDay.dow : null;
+    const weekday = dow != null && WEEKDAY_NAMES[dow] ? WEEKDAY_NAMES[dow] : 'that day';
+    return {
+      shopOn: weekDay.shop_on,
+      reason: 'shelf_pattern',
+      score: typeof weekDay.total_cents === 'number' ? weekDay.total_cents : 0,
+      stores: [],
+      reasonLabel: `Prices from the past week were lowest on ${weekday}.`,
+    };
+  }
+
   const result = await supabase.rpc('recommend_shop_day', {
     p_near_postal_code: input?.postalCode ?? '98195',
     p_from: input?.from ?? null,

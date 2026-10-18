@@ -21,6 +21,7 @@ export {
   findOrIngestProductByUpc,
   findProductByUpc,
   formatPromotionBadge,
+  promotionSavingsHint,
   getCheapestPriceCentsByProductIds,
   getStorePriceCentsByProductIds,
   getCurrentPrice,
@@ -34,21 +35,37 @@ export {
   registerReportableStore,
   reportManualPrice,
   reportPrice,
+  reportStoreProductAvailability,
   searchCategories,
-  searchProducts
+  searchProducts,
+  uploadPriceEvidence,
 } from './catalog';
 export type { CategoryProductSection, ProductStoreOffer } from './catalog';
-export { fetchOpenPricesByUpc } from './open-prices';
-export type { OpenPriceRow } from './open-prices';
+export {
+  contributeReportedPriceToOpenPrices,
+  fetchOpenPricesByUpc,
+  fetchOpenPricesByUpcs,
+  getOpenPricesCentsByUpcs,
+  openPricesGeoKey,
+} from './open-prices';
+export type { OpenPriceRow, OpenPricesGeo } from './open-prices';
 export { nextPreferredGroceryDate } from './dates';
 export { listMyFavoriteProductIds, setProductFavorite } from './favorites';
 export {
   applyFoodFilters,
+  areAllTraitsAvoided,
+  groupAvoidTraitsForFilterUi,
   groupTraitsForFilterUi,
   indexTraitsByProduct,
-  rulesFromUserFoodRules
+  rulesFromUserFoodRules,
+  toggleAvoidGroup,
 } from './foodFilters';
-export type { SessionFoodRule, ShopSort } from './foodFilters';
+export type {
+  AvoidTraitGroup,
+  AvoidTraitGroupId,
+  SessionFoodRule,
+  ShopSort,
+} from './foodFilters';
 export {
   createGroup,
   getGroup,
@@ -97,13 +114,17 @@ export {
   confirmOrder,
   createTripFromList,
   finalizeOrder,
+  findOpenTrip,
   getTrip,
+  listGroupOrders,
   listOrderItems,
   listOrderShares,
   markSharePaid,
+  placeStoreOrderFromList,
   previewEvenSplit,
-  requestCheckoutLink
+  requestCheckoutLink,
 } from './orders';
+export type { GroupOrderRow } from './orders';
 export {
   getWeeklyBudgetCents,
   planLowestTrip,

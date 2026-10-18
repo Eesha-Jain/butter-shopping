@@ -14,10 +14,10 @@ type Props = {
   style?: StyleProp<ViewStyle>;
 };
 
-/** Ink-border pill; selected = black fill + yellow text (onboarding chip, quieter). */
+/** Soft nav chip — selected = gold wash + ink label (ink reserved for primary CTAs). */
 export function ButterChip({ label, selected = false, onPress, icon, style }: Props) {
   const theme = useTheme();
-  const labelColor = selected ? theme.primary : theme.text;
+  const labelColor = selected ? theme.text : theme.textSecondary;
 
   return (
     <Pressable
@@ -29,8 +29,8 @@ export function ButterChip({ label, selected = false, onPress, icon, style }: Pr
         styles.chip,
         icon ? styles.chipWithIcon : null,
         {
-          backgroundColor: selected ? theme.secondary : theme.background,
-          borderColor: theme.borderInk,
+          backgroundColor: selected ? theme.backgroundSelected : theme.background,
+          borderColor: selected ? theme.border : theme.border,
         },
         style,
       ]}
@@ -49,7 +49,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
     borderRadius: Radius.chip,
-    borderWidth: 2,
+    borderWidth: 1,
   },
   chipWithIcon: {
     flexDirection: 'row',

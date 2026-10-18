@@ -8,7 +8,7 @@ type Props = TextInputProps & {
   /** Optional trailing control (e.g. filter button) rendered outside this field. */
 };
 
-/** Cream search field with ink border — pairs with filter ButterButton. */
+/** Cream search field with soft border — pairs with ink filter CTA. */
 export function ButterSearchField({ style, ...rest }: Props) {
   const theme = useTheme();
 
@@ -18,7 +18,7 @@ export function ButterSearchField({ style, ...rest }: Props) {
         styles.field,
         {
           backgroundColor: theme.background,
-          borderColor: theme.borderInk,
+          borderColor: theme.border,
         },
       ]}>
       <SymbolView
@@ -41,7 +41,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
-    borderWidth: 2,
+    borderWidth: 1,
     borderRadius: Radius.input,
     paddingHorizontal: Spacing.three,
     minHeight: 48,

@@ -16,7 +16,7 @@ export default function ScheduleScreen() {
           Schedule
         </ThemedText>
         <ThemedText type="small" themeColor="textSecondary" style={styles.body}>
-          Weekly shopping plans live on the Days tab. This screen is a placeholder for a future
+          Weekly shopping plans live on the Plan tab. This screen is a placeholder for a future
           calendar view.
         </ThemedText>
       </View>

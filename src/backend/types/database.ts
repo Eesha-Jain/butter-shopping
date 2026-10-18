@@ -61,6 +61,7 @@ export type Database = {
       sponsorships: Table<Sponsorship>;
       push_tokens: Table<PushToken>;
       product_favorites: Table<ProductFavorite>;
+      open_prices_cache: Table<OpenPricesCache>;
     };
     Views: {
       current_prices: View<CurrentPrice>;
@@ -140,6 +141,18 @@ export type Database = {
         };
         Returns: string | null;
       };
+      best_week_price_day: {
+        Args: {
+          p_list_id?: string | null;
+          p_near_postal_code?: string | null;
+        };
+        Returns: {
+          past_on: string;
+          dow: number;
+          shop_on: string;
+          total_cents: number;
+        } | null;
+      };
       recommend_shop_day: {
         Args: {
           p_near_postal_code?: string | null;
@@ -180,12 +193,20 @@ export type Database = {
           p_price_cents: number;
           p_brand?: string | null;
           p_upc?: string | null;
+          p_evidence_path?: string | null;
         };
         Returns: string;
       };
       ensure_college: {
         Args: { p_name: string };
         Returns: string;
+      };
+      report_store_product_availability: {
+        Args: {
+          p_store_product_id: string;
+          p_is_available: boolean;
+        };
+        Returns: undefined;
       };
     };
     Enums: Record<string, never>;
@@ -266,6 +287,20 @@ export type ProductFavorite = {
   created_at: string;
 };
 
+/** Daily Open Prices (Open Food Facts) lookup cache by barcode + coarse geo. */
+export type OpenPricesCache = {
+  upc: string;
+  geo_key: string;
+  price_day: string;
+  price_cents: number | null;
+  currency: string | null;
+  store_name: string | null;
+  city: string | null;
+  country: string | null;
+  observed_date: string | null;
+  fetched_at: string;
+};
+
 export type StoreProduct = {
   id: string;
   store_id: string;
@@ -298,6 +333,8 @@ export type Price = {
   created_at: string;
   regular_price_cents: number | null;
   external_ref: string | null;
+  /** Storage path in the price-evidence bucket for a shelf photo. */
+  evidence_path: string | null;
 };
 
 export type DiscountGroup = {

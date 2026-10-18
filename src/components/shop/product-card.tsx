@@ -1,249 +1,271 @@
 import * as Haptics from 'expo-haptics';
-import { Image } from 'expo-image';
-import { SymbolView } from 'expo-symbols';
 import { Pressable, StyleSheet, View } from 'react-native';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  type SharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 
 import type { Product } from '@/backend';
-import { publicImageUrl } from '@/backend';
+import { ProductPhoto } from '@/components/shop/product-photo';
 import { ThemedText } from '@/components/themed-text';
-import { Fonts, Radius, Spacing } from '@/constants/theme';
+import { ButterBlock } from '@/components/ui/butter-block';
+import { Fonts, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 type Props = {
   product: Product;
   saleBadge?: string | null;
+  /** Struck-through compare-at price when a promo implies one. */
+  compareAtCents?: number | null;
+  /** e.g. "Save $1" under the price. */
+  savingsLabel?: string | null;
+  /** Quiet note when net price includes cash back (no promo). */
+  priceNote?: string | null;
   quantityOnList?: number;
   sponsored?: boolean;
+  /** Narrow carousel width (staples / trending). */
   compact?: boolean;
-  favorited?: boolean;
+  index?: number;
   priceCents?: number | null;
   onPress: () => void;
+  onLongPress?: () => void;
   onAdd: () => void;
   onIncrement: () => void;
   onDecrement: () => void;
-  onToggleFavorite?: () => void;
 };
 
 function formatPrice(cents: number): string {
   return `$${(cents / 100).toFixed(cents % 100 === 0 ? 0 : 2)}`;
 }
 
+function setPressScale(sv: SharedValue<number>, to: number, duration: number) {
+  'worklet';
+  sv.value = withTiming(to, { duration });
+}
+
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+/**
+ * Butter-block product pod: shiny block + square photo + name/price/add.
+ * Soft press scale; long-press opens peek; haptics only on add/qty.
+ */
 export function ProductCard({
   product,
   saleBadge,
+  compareAtCents,
+  savingsLabel,
+  priceNote,
   quantityOnList,
   sponsored,
   compact,
-  favorited,
   priceCents,
   onPress,
+  onLongPress,
   onAdd,
   onIncrement,
   onDecrement,
-  onToggleFavorite,
 }: Props) {
   const theme = useTheme();
-  const imageUrl = publicImageUrl('public-assets', product.image_path);
   const onList = quantityOnList != null && quantityOnList > 0;
+  const press = useSharedValue(1);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: press.value }],
+  }));
+
+  const blockColor = onList ? theme.backgroundSelected : theme.accentSoft;
+  const blockSize = compact ? 140 : 160;
+  const photoSize = Math.round(blockSize * 0.72);
+  const showCompare =
+    compareAtCents != null && priceCents != null && compareAtCents > priceCents;
+
+  const priceBlock = (
+    <View style={styles.priceStack}>
+      {showCompare ? (
+        <ThemedText type="small" themeColor="textSecondary" style={styles.compareAt}>
+          {formatPrice(compareAtCents!)}
+        </ThemedText>
+      ) : null}
+      {priceCents != null ? (
+        <ThemedText type="smallBold" style={styles.price}>
+          {formatPrice(priceCents)}
+        </ThemedText>
+      ) : null}
+      {savingsLabel ? (
+        <ThemedText type="smallBold" style={[styles.savings, { color: theme.primaryDark }]}>
+          {savingsLabel}
+        </ThemedText>
+      ) : priceNote ? (
+        <ThemedText type="small" themeColor="textSecondary" style={styles.priceNote}>
+          {priceNote}
+        </ThemedText>
+      ) : null}
+    </View>
+  );
 
   return (
-    <Pressable
+    <AnimatedPressable
       onPress={onPress}
-      style={[
-        styles.card,
-        compact && styles.cardCompact,
-        {
-          backgroundColor: theme.background,
-          borderColor: onList ? theme.secondary : theme.borderInk,
-          borderWidth: onList ? 2.5 : 2,
-        },
-      ]}>
-      <View
-        style={[
-          styles.imageWrap,
-          compact && styles.imageWrapCompact,
-          { backgroundColor: theme.backgroundElement, borderColor: theme.border },
-        ]}>
+      onLongPress={onLongPress}
+      delayLongPress={400}
+      onPressIn={() => setPressScale(press, 0.97, 90)}
+      onPressOut={() => setPressScale(press, 1, 140)}
+      style={[styles.card, compact && styles.cardCompact, animatedStyle]}
+      accessibilityRole="button"
+      accessibilityLabel={product.name}>
+      <View style={styles.blockStage}>
+        <ButterBlock size={blockSize} color={blockColor}>
+          <ProductPhoto
+            imagePath={product.image_path}
+            placeholderLetter={product.name}
+            size={photoSize}
+          />
+        </ButterBlock>
         {saleBadge ? (
-          <View style={[styles.badge, { backgroundColor: theme.primary, borderColor: theme.borderInk }]}>
-            <ThemedText type="smallBold" style={{ color: theme.primaryText, fontSize: 11 }}>
+          <View style={[styles.saleMark, { backgroundColor: theme.primary }]}>
+            <ThemedText type="smallBold" style={{ color: theme.primaryText, fontSize: 12 }}>
               {saleBadge}
             </ThemedText>
           </View>
         ) : null}
-        {onToggleFavorite ? (
-          <Pressable
-            onPress={onToggleFavorite}
-            hitSlop={8}
-            style={[styles.heartBtn, { backgroundColor: theme.background, borderColor: theme.borderInk }]}>
-            <SymbolView
-              name={favorited ? 'heart.fill' : 'heart'}
-              size={14}
-              tintColor={favorited ? theme.error : theme.textSecondary}
-            />
-          </Pressable>
-        ) : null}
-        {imageUrl ? (
-          <Image source={{ uri: imageUrl }} style={styles.image} contentFit="contain" />
-        ) : (
-          <View style={styles.imagePlaceholder}>
-            <ThemedText type="smallBold" themeColor="textSecondary">
-              {product.name.slice(0, 1).toUpperCase()}
-            </ThemedText>
-          </View>
-        )}
       </View>
 
       <View style={styles.body}>
         <ThemedText type="smallBold" numberOfLines={2} style={styles.name}>
           {product.name}
         </ThemedText>
-        <View style={styles.metaRow}>
-          {product.brand ? (
-            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.brand}>
-              {product.brand}
-            </ThemedText>
-          ) : null}
-          {priceCents != null ? (
-            <ThemedText type="smallBold" style={styles.price}>
-              {product.brand ? ' · ' : ''}
-              {formatPrice(priceCents)}
-            </ThemedText>
-          ) : null}
-        </View>
         {sponsored ? (
           <ThemedText type="small" themeColor="textSecondary">
             Sponsored
           </ThemedText>
         ) : null}
-      </View>
 
-      <View style={styles.actions}>
         {onList ? (
-          <View
-            style={[
-              styles.stepper,
-              {
-                backgroundColor: theme.backgroundSelected,
-                borderColor: theme.borderInk,
-              },
-            ]}>
-            <Pressable
-              onPress={() => {
-                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                onDecrement();
-              }}
-              hitSlop={8}
-              style={styles.stepBtn}>
-              <ThemedText type="smallBold">−</ThemedText>
-            </Pressable>
-            <ThemedText type="smallBold">{quantityOnList}</ThemedText>
-            <Pressable
-              onPress={() => {
-                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                onIncrement();
-              }}
-              hitSlop={8}
-              style={styles.stepBtn}>
-              <ThemedText type="smallBold">+</ThemedText>
-            </Pressable>
+          <View style={styles.onListBlock}>
+            {priceCents != null || savingsLabel || priceNote ? priceBlock : null}
+            <View
+              style={[
+                styles.stepper,
+                {
+                  backgroundColor: theme.backgroundSelected,
+                  borderColor: theme.border,
+                },
+              ]}>
+              <Pressable
+                onPress={() => {
+                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  onDecrement();
+                }}
+                hitSlop={8}
+                style={styles.stepBtn}>
+                <ThemedText type="smallBold">−</ThemedText>
+              </Pressable>
+              <ThemedText type="smallBold">{quantityOnList}</ThemedText>
+              <Pressable
+                onPress={() => {
+                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  onIncrement();
+                }}
+                hitSlop={8}
+                style={styles.stepBtn}>
+                <ThemedText type="smallBold">+</ThemedText>
+              </Pressable>
+            </View>
           </View>
         ) : (
-          <Pressable
-            onPress={() => {
-              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              onAdd();
-            }}
-            style={[styles.addBtn, { backgroundColor: theme.secondary }]}
-            hitSlop={8}
-            accessibilityRole="button"
-            accessibilityLabel="Add to list">
-            <ThemedText type="smallBold" style={{ color: theme.primary, fontFamily: Fonts.sansBold }}>
-              +
-            </ThemedText>
-          </Pressable>
+          <View style={styles.priceRow}>
+            {priceCents != null || savingsLabel || priceNote ? (
+              priceBlock
+            ) : (
+              <View style={styles.priceSpacer} />
+            )}
+            <Pressable
+              onPress={() => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                onAdd();
+              }}
+              style={styles.addBtn}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Add to list">
+              <ThemedText
+                type="smallBold"
+                style={{ color: theme.text, fontFamily: Fonts.sansBold, fontSize: 22 }}>
+                +
+              </ThemedText>
+            </Pressable>
+          </View>
         )}
       </View>
-    </Pressable>
+    </AnimatedPressable>
   );
 }
 
 const styles = StyleSheet.create({
   card: {
     flex: 1,
-    borderRadius: Radius.card,
-    padding: Spacing.two,
     gap: Spacing.two,
-    minHeight: 180,
+    paddingVertical: Spacing.one,
+    minHeight: 200,
   },
   cardCompact: {
-    width: 148,
+    width: 156,
     flex: 0,
-    minHeight: 168,
+    minHeight: 188,
   },
-  imageWrap: {
-    height: 96,
-    borderRadius: Radius.button,
-    overflow: 'hidden',
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: Spacing.one,
-  },
-  imageWrapCompact: {
-    height: 80,
-  },
-  image: {
-    width: '100%',
-    height: '100%',
-  },
-  imagePlaceholder: {
-    flex: 1,
+  blockStage: {
     alignItems: 'center',
     justifyContent: 'center',
   },
-  badge: {
+  saleMark: {
     position: 'absolute',
     top: Spacing.one,
-    left: Spacing.one,
-    zIndex: 1,
-    paddingHorizontal: Spacing.two,
-    paddingVertical: Spacing.half,
+    left: Spacing.two,
+    zIndex: 2,
+    paddingHorizontal: Spacing.two + 2,
+    paddingVertical: Spacing.one,
     borderRadius: Spacing.one,
-    borderWidth: 1.5,
-  },
-  heartBtn: {
-    position: 'absolute',
-    top: Spacing.one,
-    right: Spacing.one,
-    zIndex: 1,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
   },
   body: {
-    gap: 2,
+    gap: Spacing.one,
     flex: 1,
+    paddingHorizontal: Spacing.one,
+    justifyContent: 'space-between',
   },
   name: {
     lineHeight: 18,
   },
-  metaRow: {
+  priceRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: Spacing.two,
+    minHeight: 32,
   },
-  brand: {
+  priceStack: {
     flexShrink: 1,
+    gap: 1,
   },
   price: {
     fontSize: 15,
   },
-  actions: {
-    alignItems: 'flex-end',
+  compareAt: {
+    fontSize: 12,
+    textDecorationLine: 'line-through',
+  },
+  savings: {
+    fontSize: 12,
+  },
+  priceNote: {
+    fontSize: 11,
+  },
+  priceSpacer: {
+    flex: 1,
+  },
+  onListBlock: {
+    gap: Spacing.one,
   },
   addBtn: {
     width: 36,
@@ -255,15 +277,15 @@ const styles = StyleSheet.create({
   stepper: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     borderRadius: 18,
-    borderWidth: 2,
+    borderWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: Spacing.one,
-    gap: Spacing.two,
     minHeight: 36,
   },
   stepBtn: {
-    width: 28,
-    height: 28,
+    width: 32,
+    height: 32,
     alignItems: 'center',
     justifyContent: 'center',
   },

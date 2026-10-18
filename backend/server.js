@@ -23,7 +23,11 @@ import {
 } from "./qfc.js";
 import { findSafewayStores, searchSafewayProducts } from "./safeway.js";
 import { findTraderJoesStores, searchTraderJoesProducts } from "./traderjoes.js";
-import { fetchOpenPricesByUpc } from "./open-prices.js";
+import {
+  contributeOpenPrice,
+  fetchOpenPricesByUpc,
+  fetchOpenPricesByUpcs,
+} from "./open-prices.js";
 import { listVisaOffers } from "./visa-offers.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -171,6 +175,10 @@ app.get("/api/health", (_req, res) => {
         process.env.VISA_KEY_PATH,
     ),
     openPrices: true,
+    openPricesContribute: Boolean(
+      process.env.OPEN_PRICES_TOKEN ||
+        (process.env.OPEN_PRICES_USERNAME && process.env.OPEN_PRICES_PASSWORD),
+    ),
   });
 });
 
@@ -191,15 +199,55 @@ app.get("/api/visa/offers", async (req, res) => {
 
 /**
  * Crowd-sourced prices by barcode (Open Prices / Open Food Facts).
- * Query: upc (required)
+ * Query: upc | upcs (comma-separated), optional lat, lng, radius_km
  */
 app.get("/api/open-prices", async (req, res) => {
   try {
-    const upc = String(req.query.upc ?? "").trim();
-    const prices = await fetchOpenPricesByUpc(upc);
-    res.json({ upc, prices, source: "open_prices" });
+    const upcList = String(req.query.upcs ?? req.query.upc ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const nearLat = req.query.lat != null ? Number(req.query.lat) : undefined;
+    const nearLng = req.query.lng != null ? Number(req.query.lng) : undefined;
+    const radiusKm = req.query.radius_km != null ? Number(req.query.radius_km) : undefined;
+    const opts = {
+      nearLat: Number.isFinite(nearLat) ? nearLat : undefined,
+      nearLng: Number.isFinite(nearLng) ? nearLng : undefined,
+      radiusKm: Number.isFinite(radiusKm) ? radiusKm : undefined,
+    };
+
+    if (upcList.length === 1) {
+      const upc = upcList[0];
+      const prices = await fetchOpenPricesByUpc(upc, opts);
+      return res.json({ upc, prices, source: "open_prices" });
+    }
+
+    const byUpc = await fetchOpenPricesByUpcs(upcList, opts);
+    const pricesByUpc = Object.fromEntries([...byUpc.entries()]);
+    res.json({ pricesByUpc, source: "open_prices" });
   } catch (error) {
     res.status(400).json({ error: error.message ?? "Open Prices lookup failed", prices: [] });
+  }
+});
+
+/**
+ * Best-effort contribute of a user-reported shelf price to Open Prices.
+ * Requires OPEN_PRICES_TOKEN or OPEN_PRICES_USERNAME + OPEN_PRICES_PASSWORD.
+ */
+app.post("/api/open-prices/contribute", async (req, res) => {
+  try {
+    const body = req.body ?? {};
+    const result = await contributeOpenPrice({
+      upc: body.upc,
+      priceCents: Number(body.priceCents),
+      date: body.date,
+      nearLat: body.lat != null ? Number(body.lat) : undefined,
+      nearLng: body.lng != null ? Number(body.lng) : undefined,
+      storeName: body.storeName,
+    });
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error.message ?? "Contribute failed" });
   }
 });
 

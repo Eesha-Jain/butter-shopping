@@ -14,7 +14,13 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { FoodTrait, SessionFoodRule, ShopSort } from '@/backend';
-import { groupTraitsForFilterUi } from '@/backend';
+import {
+  areAllTraitsAvoided,
+  groupAvoidTraitsForFilterUi,
+  groupTraitsForFilterUi,
+  toggleAvoidGroup,
+} from '@/backend';
+import type { NearbyStore } from '@/backend/types';
 import { ThemedText } from '@/components/themed-text';
 import { ButterButton } from '@/components/ui/butter-button';
 import { ButterChip } from '@/components/ui/butter-chip';
@@ -30,6 +36,9 @@ type Props = {
   draftRules: SessionFoodRule[];
   draftSort: ShopSort;
   draftOnSaleOnly: boolean;
+  nearbyStores?: NearbyStore[];
+  selectedStoreId?: string | null;
+  onSelectStore?: (store: NearbyStore | null) => void;
   onClose: () => void;
   onApply: (next: {
     rules: SessionFoodRule[];
@@ -40,7 +49,7 @@ type Props = {
 };
 
 const SORTS: { id: ShopSort; label: string }[] = [
-  { id: 'default', label: 'Default' },
+  { id: 'default', label: 'Recommended' },
   { id: 'cheapest', label: 'Cheapest' },
   { id: 'name', label: 'Name' },
 ];
@@ -51,6 +60,9 @@ export function ShopFiltersDrawer({
   draftRules,
   draftSort,
   draftOnSaleOnly,
+  nearbyStores = [],
+  selectedStoreId = null,
+  onSelectStore,
   onClose,
   onApply,
   onResetToPreferences,
@@ -110,20 +122,35 @@ export function ShopFiltersDrawer({
   };
 
   const grouped = useMemo(() => groupTraitsForFilterUi(traits), [traits]);
+  const avoidGroups = useMemo(
+    () => groupAvoidTraitsForFilterUi(grouped.avoid),
+    [grouped.avoid],
+  );
   const ruleMap = useMemo(() => new Map(rules.map((rule) => [rule.trait_id, rule.mode])), [rules]);
 
-  const setAvoid = (traitId: string, enabled: boolean) => {
+  const toggleAvoid = (traitId: string) => {
     setRules((prev) => {
+      const isAvoided = prev.some((rule) => rule.trait_id === traitId && rule.mode === 'avoid');
       const next = prev.filter((rule) => rule.trait_id !== traitId);
-      if (enabled) next.push({ trait_id: traitId, mode: 'avoid' });
+      if (!isAvoided) {
+        next.push({ trait_id: traitId, mode: 'avoid' });
+      }
       return next;
     });
   };
 
-  const setRequirePrefer = (traitId: string, mode: 'require' | 'prefer' | null) => {
+  const toggleAvoidGroupChips = (traitIds: string[]) => {
+    setRules((prev) => toggleAvoidGroup(traitIds, prev));
+  };
+
+  /** Prefer and Must have are mutually exclusive per trait. */
+  const togglePreferOrRequire = (traitId: string, mode: 'prefer' | 'require') => {
     setRules((prev) => {
+      const current = prev.find((rule) => rule.trait_id === traitId)?.mode;
       const next = prev.filter((rule) => rule.trait_id !== traitId);
-      if (mode) next.push({ trait_id: traitId, mode });
+      if (current !== mode) {
+        next.push({ trait_id: traitId, mode });
+      }
       return next;
     });
   };
@@ -168,7 +195,33 @@ export function ShopFiltersDrawer({
           </View>
 
           <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-            <ThemedText type="smallBold">Sort</ThemedText>
+            {nearbyStores.length > 0 && onSelectStore ? (
+              <>
+                <ThemedText type="smallBold">Store</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Limit the shelf to one nearby store.
+                </ThemedText>
+                <View style={styles.chipRow}>
+                  <ButterChip
+                    label="All stores"
+                    selected={selectedStoreId == null}
+                    onPress={() => onSelectStore(null)}
+                  />
+                  {nearbyStores.map((store) => (
+                    <ButterChip
+                      key={store.id}
+                      label={store.name}
+                      selected={selectedStoreId === store.id}
+                      onPress={() => onSelectStore(store)}
+                    />
+                  ))}
+                </View>
+              </>
+            ) : null}
+
+            <ThemedText type="smallBold" style={nearbyStores.length > 0 ? styles.sectionGap : undefined}>
+              Sort
+            </ThemedText>
             <View style={styles.chipRow}>
               {SORTS.map((option) => (
                 <ButterChip
@@ -189,51 +242,74 @@ export function ShopFiltersDrawer({
               />
             </View>
 
-            <ThemedText type="smallBold">Avoid</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              Allergens and ingredients to hide
-            </ThemedText>
-            {grouped.avoid.map((trait) => (
-              <View key={trait.id} style={styles.switchRow}>
-                <ThemedText type="small">{trait.name}</ThemedText>
-                <Switch
-                  value={ruleMap.get(trait.id) === 'avoid'}
-                  onValueChange={(enabled) => setAvoid(trait.id, enabled)}
-                  trackColor={{ true: theme.primary, false: theme.border }}
-                />
-              </View>
-            ))}
-
             <ThemedText type="smallBold" style={styles.sectionGap}>
-              Must have / prefer
+              Avoid
             </ThemedText>
             <ThemedText type="small" themeColor="textSecondary">
-              Dietary needs. Prefer boosts matches; require hides the rest.
+              Hide products that contain these.
             </ThemedText>
-            {grouped.requirePrefer.map((trait) => {
-              const mode = ruleMap.get(trait.id);
+            {avoidGroups.map((group) => {
+              const groupIds = group.traits.map((trait) => trait.id);
+              const groupSelected = areAllTraitsAvoided(groupIds, rules);
               return (
-                <View key={trait.id} style={styles.traitBlock}>
-                  <ThemedText type="small">{trait.name}</ThemedText>
+                <View key={group.id} style={styles.avoidGroup}>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {group.label}
+                  </ThemedText>
                   <View style={styles.chipRow}>
-                    {(
-                      [
-                        { id: null, label: 'Off' },
-                        { id: 'prefer' as const, label: 'Prefer' },
-                        { id: 'require' as const, label: 'Require' },
-                      ] as const
-                    ).map((option) => (
+                    {group.groupChipLabel && group.traits.length > 1 ? (
                       <ButterChip
-                        key={String(option.id)}
-                        label={option.label}
-                        selected={(mode ?? null) === option.id}
-                        onPress={() => setRequirePrefer(trait.id, option.id)}
+                        label={group.groupChipLabel}
+                        selected={groupSelected}
+                        onPress={() => toggleAvoidGroupChips(groupIds)}
+                      />
+                    ) : null}
+                    {group.traits.map((trait) => (
+                      <ButterChip
+                        key={trait.id}
+                        label={trait.name}
+                        selected={ruleMap.get(trait.id) === 'avoid'}
+                        onPress={() => toggleAvoid(trait.id)}
                       />
                     ))}
                   </View>
                 </View>
               );
             })}
+
+            <ThemedText type="smallBold" style={styles.sectionGap}>
+              Prefer
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              Rank matching products higher.
+            </ThemedText>
+            <View style={styles.chipRow}>
+              {grouped.requirePrefer.map((trait) => (
+                <ButterChip
+                  key={`prefer-${trait.id}`}
+                  label={trait.name}
+                  selected={ruleMap.get(trait.id) === 'prefer'}
+                  onPress={() => togglePreferOrRequire(trait.id, 'prefer')}
+                />
+              ))}
+            </View>
+
+            <ThemedText type="smallBold" style={styles.sectionGap}>
+              Must have
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              Only show products that match.
+            </ThemedText>
+            <View style={styles.chipRow}>
+              {grouped.requirePrefer.map((trait) => (
+                <ButterChip
+                  key={`require-${trait.id}`}
+                  label={trait.name}
+                  selected={ruleMap.get(trait.id) === 'require'}
+                  onPress={() => togglePreferOrRequire(trait.id, 'require')}
+                />
+              ))}
+            </View>
           </ScrollView>
 
           <View style={styles.footer}>
@@ -310,9 +386,8 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     paddingVertical: Spacing.one,
   },
-  traitBlock: {
-    gap: Spacing.two,
-    paddingVertical: Spacing.one,
+  avoidGroup: {
+    gap: Spacing.one,
   },
   sectionGap: {
     marginTop: Spacing.two,

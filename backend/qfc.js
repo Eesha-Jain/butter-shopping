@@ -2,6 +2,8 @@ const KROGER_BASE = "https://api.kroger.com/v1";
 
 const CHAIN_ALIASES = {
   QFC: "QFC",
+  // Kroger location API returns chain code "FRED"; "FRM" is a legacy alias.
+  FRED: "Fred Meyer",
   FRM: "Fred Meyer",
   "FRED MEYER": "Fred Meyer",
   FREDMEYER: "Fred Meyer",
@@ -95,8 +97,9 @@ export async function findKrogerStores(zip, chain = "QFC") {
       `&filter.zipCode.near=${zip}&filter.radiusInMiles=25&filter.limit=20`,
   );
   const display = normalizeKrogerChain(chain, chain);
+  // Match by Butter display name so aliases (FRED/FRM) are not dropped.
   return (json.data ?? [])
-    .filter((store) => String(store.chain ?? chain).toUpperCase() === chain.toUpperCase())
+    .filter((store) => normalizeKrogerChain(store.chain, chain) === display)
     .map((store) => mapLocation(store, display));
 }
 
@@ -105,7 +108,7 @@ export async function findQfcStores(zip) {
 }
 
 export async function findFredMeyerStores(zip) {
-  return findKrogerStores(zip, "FRM");
+  return findKrogerStores(zip, "FRED");
 }
 
 export async function krogerLocationsRaw(zip, chain) {

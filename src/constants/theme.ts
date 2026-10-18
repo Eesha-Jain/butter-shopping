@@ -8,14 +8,15 @@ import '@/global.css';
 import { Platform } from 'react-native';
 
 /**
- * Quiet Butter language (main app):
- * - Canvas = cream background
- * - Surfaces = backgroundElement (cards, chips idle)
- * - Ink = text / secondary / borderInk (borders, primary CTAs)
- * - Gold = primary accent (selected chip text, badges, handle)
+ * Quiet Butter language (main app) — one cream canvas everywhere (Shop + sheets):
+ * - Canvas = background `#FFFBF0` (never nest pale-yellow info panels on top)
+ * - Quiet well = backgroundElement — photo pads / soft chips idle only
+ * - Selected / on-list = backgroundSelected — small accents only
+ * - Butter block = accentSoft — shiny ButterBlock fill behind square product photos
+ * - Gold = primary — handle, sale mark, CTA label on ink — never large fill panels
+ * - Ink = text / secondary / borderInk — primary CTAs and selected interactive edges
  *
  * CTA / stepper lock: ink fill + gold label (match onboarding Continue).
- * On-list steppers may use backgroundSelected + ink border instead of solid ink bar.
  */
 export const Colors = {
   light: {
@@ -30,7 +31,8 @@ export const Colors = {
     primaryDark: '#998100',
     primaryText: '#000000',
     secondary: '#000000',
-    accentSoft: '#f0e68c',
+    /** Butter-block base / shine — clearer gold than khaki, softer than primary. */
+    accentSoft: '#FFE566',
     /** Soft divider border. */
     border: '#E6DFC8',
     /** Strong ink border for interactive surfaces (chips, cards, inputs). */
@@ -49,7 +51,7 @@ export const Colors = {
     primaryDark: '#ffd700',
     primaryText: '#000000',
     secondary: '#F5F5F5',
-    accentSoft: '#f0e68c',
+    accentSoft: '#FFE566',
     border: '#3A3A3E',
     borderInk: '#ffd700',
     borderError: '#E5484D',

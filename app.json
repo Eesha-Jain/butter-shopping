@@ -72,8 +72,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Butter uses your photos so you can set a profile picture.",
-          "cameraPermission": "Butter uses your camera so you can take a profile picture.",
+          "photosPermission": "Butter uses your photos for your profile picture and shelf price reports.",
+          "cameraPermission": "Butter uses your camera for your profile picture and shelf price photos.",
           "microphonePermission": false
         }
       ],
