@@ -79,6 +79,7 @@ export {
   listActiveProducts,
   listCampusPopularProducts,
   listCategories,
+  listProductStoreOffers,
   listCurrentPromotions,
   listExpiringPurchases,
   listFoodTraits,
@@ -147,4 +148,10 @@ export {
   uploadMyAvatar,
 } from './supabase';
 
-export type { ActiveListTarget, RipenessResult, SessionFoodRule, ShopSort } from './supabase';
+export type {
+  ActiveListTarget,
+  ProductStoreOffer,
+  RipenessResult,
+  SessionFoodRule,
+  ShopSort,
+} from './supabase';

@@ -1,15 +1,19 @@
 import {
   BottomSheetBackdrop,
   BottomSheetModal,
-  BottomSheetView,
+  BottomSheetScrollView,
   type BottomSheetBackdropProps,
 } from '@gorhom/bottom-sheet';
 import { Image } from 'expo-image';
-import { forwardRef, useCallback, useMemo } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { forwardRef, useCallback, useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 
-import type { Product } from '@/backend';
-import { publicImageUrl } from '@/backend';
+import {
+  listProductStoreOffers,
+  publicImageUrl,
+  type Product,
+  type ProductStoreOffer,
+} from '@/backend';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
@@ -23,14 +27,42 @@ type Props = {
   onDecrement: () => void;
 };
 
+function formatCents(cents: number): string {
+  return `$${(cents / 100).toFixed(cents % 100 === 0 ? 0 : 2)}`;
+}
+
 export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function ProductDetailSheet(
   { product, saleBadge, quantityOnList, onAdd, onIncrement, onDecrement },
   ref,
 ) {
   const theme = useTheme();
-  const snapPoints = useMemo(() => ['42%'], []);
+  const snapPoints = useMemo(() => ['55%', '78%'], []);
   const imageUrl = product ? publicImageUrl('public-assets', product.image_path) : null;
   const onList = quantityOnList != null && quantityOnList > 0;
+  const [offers, setOffers] = useState<ProductStoreOffer[]>([]);
+  const [offersLoading, setOffersLoading] = useState(false);
+
+  useEffect(() => {
+    if (!product?.id) {
+      setOffers([]);
+      return;
+    }
+    let cancelled = false;
+    setOffersLoading(true);
+    void listProductStoreOffers(product.id)
+      .then((rows) => {
+        if (!cancelled) setOffers(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setOffers([]);
+      })
+      .finally(() => {
+        if (!cancelled) setOffersLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [product?.id]);
 
   const renderBackdrop = useCallback(
     (props: BottomSheetBackdropProps) => (
@@ -38,6 +70,8 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
     ),
     [],
   );
+
+  const cheapestId = offers[0]?.storeProductId;
 
   return (
     <BottomSheetModal
@@ -47,7 +81,7 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
       backdropComponent={renderBackdrop}
       backgroundStyle={{ backgroundColor: theme.background }}
       handleIndicatorStyle={{ backgroundColor: theme.border }}>
-      <BottomSheetView style={styles.content}>
+      <BottomSheetScrollView contentContainerStyle={styles.content}>
         {product ? (
           <>
             <View style={styles.row}>
@@ -71,6 +105,45 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
                   </ThemedText>
                 ) : null}
               </View>
+            </View>
+
+            <View style={styles.compareBlock}>
+              <ThemedText type="smallBold">Prices nearby</ThemedText>
+              {offersLoading ? (
+                <ActivityIndicator color={theme.primary} />
+              ) : offers.length === 0 ? (
+                <ThemedText type="small" themeColor="textSecondary">
+                  No store prices yet for this product.
+                </ThemedText>
+              ) : (
+                offers.map((offer) => {
+                  const cheapest = offer.storeProductId === cheapestId;
+                  return (
+                    <View
+                      key={offer.storeProductId}
+                      style={[
+                        styles.offerRow,
+                        {
+                          backgroundColor: cheapest
+                            ? theme.backgroundSelected
+                            : theme.backgroundElement,
+                        },
+                      ]}>
+                      <View style={styles.offerMeta}>
+                        <ThemedText type="smallBold" numberOfLines={1}>
+                          {offer.chainName ?? offer.storeName}
+                        </ThemedText>
+                        <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                          {offer.storeName}
+                          {!offer.isAvailable ? ' · may be unavailable' : ''}
+                          {cheapest ? ' · best' : ''}
+                        </ThemedText>
+                      </View>
+                      <ThemedText type="smallBold">{formatCents(offer.priceCents)}</ThemedText>
+                    </View>
+                  );
+                })
+              )}
             </View>
 
             {onList ? (
@@ -100,7 +173,7 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
             )}
           </>
         ) : null}
-      </BottomSheetView>
+      </BottomSheetScrollView>
     </BottomSheetModal>
   );
 });
@@ -138,6 +211,22 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: Spacing.one,
     justifyContent: 'center',
+  },
+  compareBlock: {
+    gap: Spacing.two,
+  },
+  offerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Spacing.two,
+  },
+  offerMeta: {
+    flex: 1,
+    gap: 2,
   },
   addBtn: {
     alignItems: 'center',

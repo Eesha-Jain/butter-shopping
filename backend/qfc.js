@@ -104,6 +104,19 @@ export async function krogerProductsRaw(term, locationId) {
   );
 }
 
+function pickKrogerImageUrl(product) {
+  const images = Array.isArray(product?.images) ? product.images : [];
+  const preferred =
+    images.find((image) => image?.default) ??
+    images.find((image) => String(image?.perspective ?? "").toLowerCase() === "front") ??
+    images[0];
+  const sizes = Array.isArray(preferred?.sizes) ? preferred.sizes : [];
+  const medium = sizes.find((size) => size?.size === "medium" && size?.url);
+  const large = sizes.find((size) => size?.size === "large" && size?.url);
+  const any = sizes.find((size) => size?.url);
+  return medium?.url ?? large?.url ?? any?.url ?? null;
+}
+
 export function mapQfcProduct(product) {
   const item = product.items?.[0];
   const regular = dollarsToCents(item?.price?.regular);
@@ -118,6 +131,7 @@ export function mapQfcProduct(product) {
     priceCents: promo ?? regular,
     regularPriceCents: regular,
     promoPriceCents: promo,
+    imageUrl: pickKrogerImageUrl(product),
     store: "QFC",
     source: "api",
   };

@@ -51,18 +51,24 @@ export async function assignProductCategories() {
   );
   const byCategory = {};
   let updated = 0;
-  for (const product of products ?? []) {
-    const categoryName = categoryForProductName(product.name);
-    const categoryId = byName.get(String(categoryName).toLowerCase());
-    if (!categoryId) continue;
-    await rest(`products?id=eq.${product.id}`, {
-      method: 'PATCH',
-      headers: { Prefer: 'return=minimal' },
-      body: JSON.stringify({ category_id: categoryId }),
-    });
-    byCategory[categoryName] = (byCategory[categoryName] ?? 0) + 1;
-    updated += 1;
-  }
+  const queue = [...(products ?? [])];
+  const workers = Array.from({ length: 8 }, async () => {
+    while (queue.length > 0) {
+      const product = queue.shift();
+      if (!product) return;
+      const categoryName = categoryForProductName(product.name);
+      const categoryId = byName.get(String(categoryName).toLowerCase());
+      if (!categoryId) continue;
+      await rest(`products?id=eq.${product.id}`, {
+        method: 'PATCH',
+        headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ category_id: categoryId }),
+      });
+      byCategory[categoryName] = (byCategory[categoryName] ?? 0) + 1;
+      updated += 1;
+    }
+  });
+  await Promise.all(workers);
   return { updated, byCategory };
 }
 
@@ -92,15 +98,52 @@ async function chainId(name) {
   return rows?.[0]?.id ?? null;
 }
 
+/** Full product row when a UPC or name+brand match exists. */
 async function findProduct(observation) {
   if (observation.upc) {
-    const rows = await rest(`products?upc=eq.${encodeURIComponent(observation.upc)}&select=id&limit=1`);
-    if (rows?.[0]?.id) return rows[0].id;
+    const rows = await rest(
+      `products?upc=eq.${encodeURIComponent(observation.upc)}&select=*&limit=1`,
+    );
+    if (rows?.[0]) return rows[0];
   }
   const name = encodeURIComponent(observation.productName);
-  const rows = await rest(`products?name=eq.${name}&select=id,brand&limit=20`);
-  const brand = String(observation.brand ?? "");
-  return (rows ?? []).find((row) => String(row.brand ?? "") === brand)?.id ?? null;
+  const rows = await rest(`products?name=eq.${name}&select=*&limit=20`);
+  const brand = String(observation.brand ?? '');
+  return (rows ?? []).find((row) => String(row.brand ?? '') === brand) ?? null;
+}
+
+function absoluteImageUrl(value) {
+  if (typeof value !== 'string') return null;
+  const url = value.trim();
+  return /^https?:\/\//i.test(url) ? url : null;
+}
+
+/**
+ * Patch an existing catalog product with better retailer fields.
+ * Fills blanks; replaces image_path when a new absolute URL is available.
+ */
+async function updateExistingProduct(existing, observation, imageUrl) {
+  const patch = {};
+  if (imageUrl && existing.image_path !== imageUrl) {
+    patch.image_path = imageUrl;
+  }
+  if (!existing.brand && observation.brand) {
+    patch.brand = observation.brand;
+  }
+  if (!existing.upc && observation.upc) {
+    patch.upc = observation.upc;
+  }
+  const nextName = String(observation.productName ?? '').trim();
+  if (nextName && (!existing.name || existing.name.length < nextName.length)) {
+    patch.name = nextName;
+  }
+  if (Object.keys(patch).length === 0) return existing.id;
+  await rest(`products?id=eq.${existing.id}`, {
+    method: 'PATCH',
+    headers: { Prefer: 'return=minimal' },
+    body: JSON.stringify(patch),
+  });
+  return existing.id;
 }
 
 export function canPersist() {
@@ -108,7 +151,8 @@ export function canPersist() {
 }
 
 /**
- * Appends an api or scrape price. Skips the insert when the latest cents match.
+ * Upserts store + product listing, refreshes product fields when the SKU
+ * already exists, and appends a price observation when cents changed.
  * Returns false when the service-role key is not configured.
  */
 export async function saveObservedPrice(observation) {
@@ -118,9 +162,9 @@ export async function saveObservedPrice(observation) {
   const chain = await chainId(observation.chainName);
   if (!chain) throw new Error(`Chain ${observation.chainName} is not in the database yet.`);
 
-  const stores = await rest("stores?on_conflict=source,source_ref", {
-    method: "POST",
-    headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+  const stores = await rest('stores?on_conflict=source,source_ref', {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
     body: JSON.stringify({
       name: observation.storeName,
       chain_id: chain,
@@ -135,26 +179,33 @@ export async function saveObservedPrice(observation) {
     }),
   });
   const storeId = stores?.[0]?.id;
-  if (!storeId) throw new Error("Store save did not return a row.");
+  if (!storeId) throw new Error('Store save did not return a row.');
 
-  let productId = await findProduct(observation);
+  const imageUrl = absoluteImageUrl(observation.imageUrl);
+  const existing = await findProduct(observation);
+  let productId = existing?.id ?? null;
+
   if (!productId) {
-    const created = await rest("products", {
-      method: "POST",
-      headers: { Prefer: "return=representation" },
+    const created = await rest('products', {
+      method: 'POST',
+      headers: { Prefer: 'return=representation' },
       body: JSON.stringify({
         name: observation.productName,
         brand: observation.brand,
         upc: observation.upc,
+        ...(imageUrl ? { image_path: imageUrl } : {}),
       }),
     });
     productId = created?.[0]?.id;
+  } else {
+    productId = await updateExistingProduct(existing, observation, imageUrl);
   }
-  if (!productId) throw new Error("Product save did not return a row.");
+  if (!productId) throw new Error('Product save did not return a row.');
 
-  const listings = await rest("store_products?on_conflict=store_id,product_id", {
-    method: "POST",
-    headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+  // Upsert listing so sku/url/availability refresh on every sighting.
+  const listings = await rest('store_products?on_conflict=store_id,product_id', {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
     body: JSON.stringify({
       store_id: storeId,
       product_id: productId,
@@ -164,16 +215,17 @@ export async function saveObservedPrice(observation) {
     }),
   });
   const storeProductId = listings?.[0]?.id;
-  if (!storeProductId) throw new Error("Listing save did not return a row.");
+  if (!storeProductId) throw new Error('Listing save did not return a row.');
 
+  // Prices are append-only: write a new observation when cents changed.
   const latest = await rest(
     `prices?store_product_id=eq.${storeProductId}&select=price_cents&order=created_at.desc&limit=1`,
   );
   if (latest?.[0]?.price_cents === observation.priceCents) return true;
 
-  await rest("prices", {
-    method: "POST",
-    headers: { Prefer: "return=minimal" },
+  await rest('prices', {
+    method: 'POST',
+    headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({
       store_product_id: storeProductId,
       price_cents: observation.priceCents,

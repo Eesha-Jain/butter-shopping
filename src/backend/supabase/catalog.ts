@@ -226,6 +226,71 @@ export async function ensureCatalogForTerm(term: string, zip: string): Promise<P
   return products;
 }
 
+export type ProductStoreOffer = {
+  storeProductId: string;
+  storeId: string;
+  storeName: string;
+  chainName: string | null;
+  priceCents: number;
+  isAvailable: boolean;
+};
+
+/**
+ * Shelf offers for one catalog product across stores (for PDP comparisons).
+ * Cheapest first. Empty when no listings/prices exist yet.
+ */
+export async function listProductStoreOffers(productId: string): Promise<ProductStoreOffer[]> {
+  if (!productId) return [];
+  const listings = unwrap(
+    await supabase
+      .from('store_products')
+      .select('id, store_id, is_available')
+      .eq('product_id', productId),
+  );
+  if (listings.length === 0) return [];
+
+  const storeIds = [...new Set(listings.map((row) => row.store_id))];
+  const stores = unwrap(
+    await supabase.from('stores').select('id, name, chain_id').in('id', storeIds),
+  );
+  const chainIds = [...new Set(stores.map((row) => row.chain_id).filter(Boolean))] as string[];
+  const chains =
+    chainIds.length === 0
+      ? []
+      : unwrap(await supabase.from('chains').select('id, name').in('id', chainIds));
+  const storeById = new Map(stores.map((row) => [row.id, row]));
+  const chainById = new Map(chains.map((row) => [row.id, row.name]));
+
+  const prices = unwrap(
+    await supabase
+      .from('current_prices')
+      .select('store_product_id, price_cents')
+      .in(
+        'store_product_id',
+        listings.map((row) => row.id),
+      ),
+  );
+  const priceByListing = new Map(prices.map((row) => [row.store_product_id, row.price_cents]));
+
+  const offers = listings.flatMap((listing) => {
+    const priceCents = priceByListing.get(listing.id);
+    if (priceCents == null) return [];
+    const store = storeById.get(listing.store_id);
+    return [
+      {
+        storeProductId: listing.id,
+        storeId: listing.store_id,
+        storeName: store?.name ?? 'Store',
+        chainName: store?.chain_id ? (chainById.get(store.chain_id) ?? null) : null,
+        priceCents,
+        isAvailable: listing.is_available,
+      },
+    ];
+  });
+
+  return offers.sort((a, b) => a.priceCents - b.priceCents);
+}
+
 /**
  * Recently priced products for the “Popular on campus” carousel when the
  * shopper has no personal staples yet.

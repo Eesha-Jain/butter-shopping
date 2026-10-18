@@ -150,7 +150,8 @@ export default function GroceryListScreen() {
               <ThemedText type="smallBold">{isBuilding ? 'Building…' : 'Build standard list'}</ThemedText>
             </Pressable>
             <Link href="/staples" asChild>
-              <Pressable style={[styles.button, { borderColor: theme.border }]}>
+              <Pressable
+                style={StyleSheet.flatten([styles.button, { borderColor: theme.border }])}>
                 <ThemedText type="smallBold">Staples</ThemedText>
               </Pressable>
             </Link>

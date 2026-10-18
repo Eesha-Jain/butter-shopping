@@ -70,6 +70,7 @@ export {
   listActiveProducts,
   listCampusPopularProducts,
   listCategories,
+  listProductStoreOffers,
   listCurrentPromotions,
   listReportedOffers,
   listReportableStores,
@@ -81,6 +82,7 @@ export {
   searchCategories,
   searchProducts,
 } from './catalog';
+export type { ProductStoreOffer } from './catalog';
 export {
   applyFoodFilters,
   groupTraitsForFilterUi,

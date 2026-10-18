@@ -101,6 +101,7 @@ async function remember(product, store, priceSource, storeSource) {
     upc: product.upc,
     priceCents: product.priceCents,
     productUrl: product.productUrl ?? null,
+    imageUrl: product.imageUrl ?? null,
   });
 }
 
