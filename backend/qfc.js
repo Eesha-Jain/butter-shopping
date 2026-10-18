@@ -1,5 +1,12 @@
 const KROGER_BASE = "https://api.kroger.com/v1";
 
+const CHAIN_ALIASES = {
+  QFC: "QFC",
+  FRM: "Fred Meyer",
+  "FRED MEYER": "Fred Meyer",
+  FREDMEYER: "Fred Meyer",
+};
+
 let cachedToken = null;
 let tokenExpiresAt = 0;
 
@@ -8,6 +15,12 @@ function dollarsToCents(value) {
   const amount = Number(value);
   if (!Number.isFinite(amount) || amount < 0) return null;
   return Math.round(amount * 100);
+}
+
+/** Maps a Kroger API chain code or name to the Butter chains.name value. */
+export function normalizeKrogerChain(chain, fallback = "QFC") {
+  const key = String(chain ?? fallback).trim().toUpperCase();
+  return CHAIN_ALIASES[key] ?? fallback;
 }
 
 async function getKrogerToken() {
@@ -49,13 +62,14 @@ export function assertTerm(term) {
   return value;
 }
 
-function mapLocation(store) {
+function mapLocation(store, fallbackChain) {
   const address = store.address ?? {};
   const geo = store.geolocation ?? {};
+  const chain = normalizeKrogerChain(store.chain, fallbackChain);
   return {
     locationId: store.locationId,
-    name: store.name ?? "QFC",
-    chain: store.chain ?? "QFC",
+    name: store.name ?? chain,
+    chain,
     address: address.addressLine1 ?? null,
     city: address.city ?? null,
     region: address.state ?? null,
@@ -80,13 +94,18 @@ export async function findKrogerStores(zip, chain = "QFC") {
     `/locations?filter.chain=${encodeURIComponent(chain)}` +
       `&filter.zipCode.near=${zip}&filter.radiusInMiles=25&filter.limit=20`,
   );
+  const display = normalizeKrogerChain(chain, chain);
   return (json.data ?? [])
     .filter((store) => String(store.chain ?? chain).toUpperCase() === chain.toUpperCase())
-    .map(mapLocation);
+    .map((store) => mapLocation(store, display));
 }
 
 export async function findQfcStores(zip) {
   return findKrogerStores(zip, "QFC");
+}
+
+export async function findFredMeyerStores(zip) {
+  return findKrogerStores(zip, "FRM");
 }
 
 export async function krogerLocationsRaw(zip, chain) {
@@ -104,11 +123,12 @@ export async function krogerProductsRaw(term, locationId) {
   );
 }
 
-export function mapQfcProduct(product) {
+export function mapKrogerProduct(product, chainName) {
   const item = product.items?.[0];
   const regular = dollarsToCents(item?.price?.regular);
   const promoRaw = dollarsToCents(item?.price?.promo);
   const promo = promoRaw && promoRaw > 0 ? promoRaw : null;
+  const store = normalizeKrogerChain(chainName, chainName);
   return {
     productId: product.productId ?? null,
     upc: product.upc ?? null,
@@ -118,12 +138,25 @@ export function mapQfcProduct(product) {
     priceCents: promo ?? regular,
     regularPriceCents: regular,
     promoPriceCents: promo,
-    store: "QFC",
+    store,
     source: "api",
   };
 }
 
-export async function searchQfcProducts(term, locationId) {
+/** @deprecated Use mapKrogerProduct(product, "QFC") */
+export function mapQfcProduct(product) {
+  return mapKrogerProduct(product, "QFC");
+}
+
+export async function searchKrogerProducts(term, locationId, chainName = "QFC") {
   const json = await krogerProductsRaw(term, locationId);
-  return (json.data ?? []).map(mapQfcProduct);
+  return (json.data ?? []).map((product) => mapKrogerProduct(product, chainName));
+}
+
+export async function searchQfcProducts(term, locationId) {
+  return searchKrogerProducts(term, locationId, "QFC");
+}
+
+export async function searchFredMeyerProducts(term, locationId) {
+  return searchKrogerProducts(term, locationId, "Fred Meyer");
 }

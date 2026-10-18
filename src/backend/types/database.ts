@@ -262,6 +262,8 @@ export type Price = {
   source: 'api' | 'scrape' | 'user_report';
   submitted_by: string | null;
   created_at: string;
+  regular_price_cents: number | null;
+  external_ref: string | null;
 };
 
 export type DiscountGroup = {
@@ -286,6 +288,7 @@ export type Promotion = {
   ends_at: string;
   created_at: string;
   updated_at: string;
+  external_ref: string | null;
 };
 
 export type FoodTrait = {
@@ -532,6 +535,19 @@ export type CurrentPrice = {
   source: Price['source'];
   created_at: string;
   is_stale: boolean;
+};
+
+/** Completeness + trust flags per store listing (product_price_health view). */
+export type ProductPriceHealth = {
+  store_product_id: string;
+  store_id: string;
+  product_id: string;
+  has_upc: boolean;
+  has_size: boolean;
+  has_trusted_price: boolean;
+  price_source: Price['source'] | null;
+  is_stale: boolean;
+  completeness_score: number;
 };
 
 export type CurrentUnitPrice = {

@@ -42,11 +42,37 @@ similar foods can be compared by price per gram, milliliter, or count. Vegan,
 peanuts, halal, and other filters are food traits, not categories.
 
 A product is the packaged item, shared by every store. A store product is that
-item at one address. Prices are added over time and are never edited. The latest
-price is the current shelf price. Categories may set `typical_shelf_life_days`;
-a product may override with `shelf_life_days`. Planning ranks offers by
-waste-adjusted `effective_cents_per_base` (price divided by how much the group
-can finish before spoil), using habits for daily usage when present, otherwise
+item at one address. Prices are added over time and are never edited.
+
+### Offer pipeline (Collect → Normalize → Validate → Match)
+
+All automated shelf prices and discount policies go through the Node pipeline in
+[`../../../backend/pipeline`](../../../backend/pipeline): collectors emit a
+shared envelope, then `ingestShelf` / `ingestPromotion` validate, match
+store/product, and write `prices` or `promotions`. Manual reports use
+`report_manual_price` (same `prices` table, `source = user_report`).
+
+Planning Match uses `price_options`, which reads `trusted_current_prices`
+(latest `user_report` beats newer `api` / `scrape`) and joins applicable
+`promotions` for estimated savings. Live search uses
+`searchShelfPrices` / `mergeOffers` with the same trust rule.
+
+### Stability priority (product + price)
+
+Highest first:
+
+1. **Identity** — match by UPC, else name+brand; never merge conflicting UPCs.
+2. **Trusted price** — `user_report` beats newer `api` / `scrape`.
+3. **Freshness** — prefer prices under 24 hours (`is_stale`). Fresh manual
+   reports block automated appends; stale automated prices may refresh.
+4. **Completeness** — fill missing `upc`, brand, and size only when null
+   (`product_price_health` scores listings: price 40, fresh 25, upc 20, size 15).
+5. **Promotions** — calendar discounts apply on top of trusted shelf cents.
+
+Categories may set `typical_shelf_life_days`; a product may override with
+`shelf_life_days`. Planning ranks offers by waste-adjusted
+`effective_cents_per_base` (price divided by how much the group can finish
+before spoil), using habits for daily usage when present, otherwise
 `amount_base / 7`. Budget checks still use real `line_cents`. When a purchase
 is recorded without an explicit expiration, `expires_on` defaults from that
 shelf life.
@@ -112,9 +138,9 @@ images live in `public-assets`. The database stores the file path only.
 | Place the confirmed order | `finalizeOrder` | Nothing. Purchases and shares are written. |
 | Open Instacart | `requestCheckoutLink` | A URL saved on the order. |
 | Record a store receipt | `recordPurchase` | The purchase id. Pass `expiresOn` if known; otherwise shelf life fills it. |
-| Add a Trader Joe's or campus store | `registerReportableStore` | The store id. Campus stores need `collegeName`. |
-| Report a shelf price there | `reportManualPrice` | The price id. Pass cents. QFC and Safeway prices are not reported this way. |
-| List stores that accept reports | `listReportableStores` | Trader Joe's and campus stores. |
+| Add a Trader Joe's or campus store | `registerReportableStore` | The store id. Campus stores need `collegeName`. Scraped chain stores already exist from the price proxy. |
+| Report a shelf price at any store | `reportManualPrice` | The price id. Pass cents. Manual reports override api/scrape prices for that listing. |
+| List stores that accept reports | `listReportableStores` | Every store. |
 | Remember that eggs last two weeks | `saveHabit` | The group habit. |
 | Add due foods to the list | `addDueHabitItems` | How many new list rows were created. |
 | Show the trending tab | `listTrending` | Organic and sponsored rows. Label the sponsored ones. |
