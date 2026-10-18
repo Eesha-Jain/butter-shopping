@@ -10,6 +10,8 @@ const KEYS = {
   guestFavorites: 'butter.guestFavorites',
   onboardingCompleted: 'butter.onboardingCompleted',
   groceryCashbackBps: 'butter.groceryCashbackBps',
+  /** '1' / unset = play spoken replies for typed AI input; '0' = silent text replies. */
+  aiTextReplyAudio: 'butter.aiTextReplyAudio',
 } as const;
 
 export type StorageKey = keyof typeof KEYS;

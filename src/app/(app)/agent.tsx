@@ -21,7 +21,15 @@ import {
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Speech from 'expo-speech';
 
-import { voiceOrder, voiceOrderFromText, type VoiceOrderResult } from '@/backend/supabase/voice';
+import {
+  addListItem,
+  getMyDefaultList,
+  isAiTextReplyAudioEnabled,
+  voiceOrder,
+  voiceOrderFromText,
+  type VoiceOrderResult,
+  type VoiceOrderSuggestion,
+} from '@/backend';
 import { useRequireAccount } from '@/auth/require-account';
 import { useSession } from '@/auth/session';
 import { Fonts, Radius, Spacing } from '@/constants/theme';
@@ -102,6 +110,8 @@ function VoiceAgent() {
   const [permissionAsked, setPermissionAsked] = useState(false);
   const [typedText, setTypedText] = useState('');
   const [lastResult, setLastResult] = useState<VoiceOrderResult | { error: string } | null>(null);
+  const [suggestions, setSuggestions] = useState<VoiceOrderSuggestion[]>([]);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [debugOpen, setDebugOpen] = useState(false);
 
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
@@ -208,16 +218,23 @@ function VoiceAgent() {
     if (!ok) return;
     setReply(null);
     setTranscript(null);
+    setSuggestions([]);
     await recorder.prepareToRecordAsync();
     recorder.record();
     setPhase('listening');
   }, [ensurePermission, recorder]);
 
   const applyResult = useCallback(
-    async (result: VoiceOrderResult) => {
+    async (result: VoiceOrderResult, options?: { playAudio?: boolean }) => {
       setTranscript(result.transcript);
       setReply(result.reply);
       setLastResult(result);
+      // Hard-cap at 3 so a bloated/older server response can't flood the UI.
+      const next = (result.suggestions ?? []).slice(0, 3);
+      setSuggestions(next);
+
+      const playAudio = options?.playAudio !== false;
+      if (!playAudio) return;
 
       if (result.replyAudioBase64) {
         const path = `${FileSystem.cacheDirectory}voice-reply-${Date.now()}.mp3`;
@@ -233,6 +250,57 @@ function VoiceAgent() {
     [replyPlayer],
   );
 
+  const suggestionKey = (s: VoiceOrderSuggestion, index: number) =>
+    `s-${index}-${s.productId ?? s.categoryId ?? s.customName ?? s.label}`;
+
+  const confirmSuggestion = useCallback(async (suggestion: VoiceOrderSuggestion, index: number) => {
+    const key = suggestionKey(suggestion, index);
+    if (confirmingId) return;
+    setConfirmingId(key);
+    try {
+      const { list } = await getMyDefaultList();
+      await addListItem({
+        listId: list.id,
+        productId: suggestion.productId,
+        categoryId: suggestion.categoryId,
+        customName: suggestion.customName,
+        quantity: suggestion.quantity,
+      });
+      const message = `Added ${suggestion.quantity} ${suggestion.label}.`;
+      setReply(message);
+      setSuggestions((current) =>
+        current.filter((row) =>
+          (row.productId ?? row.categoryId ?? row.customName ?? row.label) !==
+          (suggestion.productId ?? suggestion.categoryId ?? suggestion.customName ?? suggestion.label),
+        ),
+      );
+      if (isAiTextReplyAudioEnabled()) {
+        Speech.speak(message, { rate: 1.05, pitch: 1.05 });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not add that item.';
+      setReply(message);
+    } finally {
+      setConfirmingId(null);
+    }
+  }, [confirmingId]);
+
+  const skipSuggestion = useCallback((suggestion: VoiceOrderSuggestion) => {
+    const id =
+      suggestion.productId ?? suggestion.categoryId ?? suggestion.customName ?? suggestion.label;
+    setSuggestions((current) => {
+      const next = current.filter(
+        (row) => (row.productId ?? row.categoryId ?? row.customName ?? row.label) !== id,
+      );
+      if (next.length === 0) {
+        queueMicrotask(() => {
+          setReply((prev) => (prev?.includes('Closest') ? 'Okay, skipped.' : prev));
+        });
+      }
+      return next;
+    });
+  }, []);
+
   const stopAndSend = useCallback(async () => {
     setPhase('processing');
     await recorder.stop();
@@ -246,11 +314,13 @@ function VoiceAgent() {
 
     try {
       const result = await voiceOrder(uri);
-      await applyResult(result);
+      // Push-to-talk always plays the spoken confirmation.
+      await applyResult(result, { playAudio: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Something went wrong.';
       setReply(message);
       setLastResult({ error: message });
+      setSuggestions([]);
     } finally {
       setPhase('idle');
     }
@@ -268,14 +338,16 @@ function VoiceAgent() {
     setPhase('processing');
     setReply(null);
     setTranscript(null);
+    setSuggestions([]);
     try {
       const result = await voiceOrderFromText(text);
-      await applyResult(result);
+      await applyResult(result, { playAudio: isAiTextReplyAudioEnabled() });
       setTypedText('');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Something went wrong.';
       setReply(message);
       setLastResult({ error: message });
+      setSuggestions([]);
     } finally {
       setPhase('idle');
     }
@@ -337,6 +409,41 @@ function VoiceAgent() {
       {transcript && <Text style={[styles.transcript, { color: c.text }]}>“{transcript}”</Text>}
       {reply && <Text style={[styles.reply, { color: c.text }]}>{reply}</Text>}
 
+      {suggestions.length > 0 ? (
+        <View style={styles.suggestions}>
+          {suggestions.slice(0, 3).map((suggestion, index) => {
+            const key = suggestionKey(suggestion, index);
+            const busy = confirmingId === key;
+            return (
+              <View
+                key={key}
+                style={[styles.suggestionCard, { borderColor: c.border, backgroundColor: c.inputBg }]}>
+                <Text style={[styles.suggestionLabel, { color: c.text }]}>
+                  {suggestion.quantity} × {suggestion.label}
+                </Text>
+                <View style={styles.suggestionActions}>
+                  <Pressable
+                    onPress={() => void confirmSuggestion(suggestion, index)}
+                    disabled={Boolean(confirmingId)}
+                    style={({ pressed }) => [
+                      styles.confirmButton,
+                      (Boolean(confirmingId) || pressed) && styles.sendButtonDisabled,
+                    ]}>
+                    <Text style={styles.sendButtonLabel}>{busy ? 'Adding…' : 'Confirm'}</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => skipSuggestion(suggestion)}
+                    disabled={Boolean(confirmingId)}
+                    style={styles.skipButton}>
+                    <Text style={[styles.skipLabel, { color: c.hint }]}>Skip</Text>
+                  </Pressable>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
+
       <View style={styles.typedRow}>
         <TextInput
           style={[styles.typedInput, { backgroundColor: c.inputBg, borderColor: c.border, color: c.text }]}
@@ -388,7 +495,7 @@ const styles = StyleSheet.create({
   buttonWrap: { width: RING_SIZE, height: RING_SIZE, alignItems: 'center', justifyContent: 'center', marginTop: 24 },
   ring: { position: 'absolute', width: RING_SIZE, height: RING_SIZE, borderRadius: RING_SIZE / 2, borderWidth: 2, borderColor: '#c0392b' },
   talkButton: { width: RING_SIZE, height: RING_SIZE, alignItems: 'center', justifyContent: 'center' },
-  blobBase: { ...StyleSheet.absoluteFillObject, borderRadius: RING_SIZE / 2, backgroundColor: '#fff8e7', overflow: 'hidden' },
+  blobBase: { ...StyleSheet.absoluteFill, borderRadius: RING_SIZE / 2, backgroundColor: '#fff8e7', overflow: 'hidden' },
   blobBaseActive: { backgroundColor: '#ffe0d6' },
   blobSpot: { position: 'absolute', width: RING_SIZE * 0.6, height: RING_SIZE * 0.6, borderRadius: RING_SIZE * 0.3, backgroundColor: '#1a1a1a' },
   blobSpotA: { top: RING_SIZE * 0.1, left: RING_SIZE * 0.08 },
@@ -398,6 +505,23 @@ const styles = StyleSheet.create({
   talkButtonLabel: { color: '#fff', fontWeight: '700', textAlign: 'center', paddingHorizontal: 12 },
   transcript: { marginTop: 24, fontStyle: 'italic', textAlign: 'center' },
   reply: { marginTop: 8, textAlign: 'center', fontWeight: '500' },
+  suggestions: { width: '100%', gap: 10, marginTop: 8 },
+  suggestionCard: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    gap: 10,
+  },
+  suggestionLabel: { fontWeight: '600', fontSize: 15 },
+  suggestionActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  confirmButton: {
+    backgroundColor: '#c0392b',
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  skipButton: { paddingVertical: 8, paddingHorizontal: 4 },
+  skipLabel: { fontWeight: '600', fontSize: 14 },
   typedRow: { flexDirection: 'row', width: '100%', gap: 8, marginTop: 24 },
   typedInput: { flex: 1, borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10 },
   sendButton: { backgroundColor: '#c0392b', borderRadius: 12, paddingHorizontal: 18, justifyContent: 'center' },

@@ -12,13 +12,13 @@ import { Link } from 'expo-router';
 import {
   buildStandardList,
   getDefaultGroceryList,
-  listListItems,
+  listResolvedItems,
   listVisibleRecipes,
   removeListItem,
   setListItemDone,
   showSuccessToast,
-  type ListItem,
   type Recipe,
+  type ResolvedListItem,
 } from '@/backend';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -27,7 +27,7 @@ import { useTheme } from '@/hooks/use-theme';
 
 export default function GroceryListScreen() {
   const theme = useTheme();
-  const [items, setItems] = useState<ListItem[] | null>(null);
+  const [items, setItems] = useState<ResolvedListItem[] | null>(null);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [selectedRecipeIds, setSelectedRecipeIds] = useState<string[]>([]);
   const [listId, setListId] = useState<string | null>(null);
@@ -47,7 +47,7 @@ export default function GroceryListScreen() {
       const { list } = await getDefaultGroceryList();
       setListId(list.id);
       const [rows, visibleRecipes] = await Promise.all([
-        listListItems(list.id),
+        listResolvedItems(list.id),
         listVisibleRecipes(),
       ]);
       setItems(rows);
@@ -197,6 +197,11 @@ export default function GroceryListScreen() {
             <ThemedText style={item.done_at ? styles.doneText : undefined}>
               {labelForItem(item)}
             </ThemedText>
+            {item.custom_name ? (
+              <ThemedText type="small" themeColor="textSecondary">
+                Request
+              </ThemedText>
+            ) : null}
             <ThemedText type="small" themeColor="textSecondary">
               qty {item.quantity}
             </ThemedText>
@@ -218,17 +223,8 @@ export default function GroceryListScreen() {
   );
 }
 
-function labelForItem(item: ListItem) {
-  if (item.custom_name) {
-    return item.custom_name;
-  }
-  if (item.category_id) {
-    return 'Category item';
-  }
-  if (item.product_id) {
-    return 'Product item';
-  }
-  return 'Item';
+function labelForItem(item: ResolvedListItem) {
+  return item.display_name ?? item.custom_name ?? 'Item';
 }
 
 const styles = StyleSheet.create({

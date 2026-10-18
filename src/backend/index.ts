@@ -13,10 +13,12 @@ export {
   getLocalGroceryCashbackBps,
   hasCompletedOnboardingLocally,
   hasSignedInBefore,
+  isAiTextReplyAudioEnabled,
   isGuest,
   markHasSignedIn,
   markIsGuest,
   markOnboardingCompletedLocally,
+  setAiTextReplyAudioEnabled,
   setLocalGroceryCashbackBps,
 } from './preferences';
 export {
@@ -179,6 +181,8 @@ export {
   updateListItem,
   updateMyProfile,
   uploadMyAvatar,
+  voiceOrder,
+  voiceOrderFromText,
 } from './supabase';
 
 export type {
@@ -189,4 +193,6 @@ export type {
   SearchCoords,
   SessionFoodRule,
   ShopSort,
+  VoiceOrderResult,
+  VoiceOrderSuggestion,
 } from './supabase';
