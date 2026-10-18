@@ -1,4 +1,5 @@
 import { json, requireUser, sendExpoPush, userClient } from '../_shared/supabase.ts';
+import { cowMoo } from './cow-moos.ts';
 
 /**
  * Push-to-talk ordering.
@@ -22,7 +23,7 @@ import { json, requireUser, sendExpoPush, userClient } from '../_shared/supabase
  *   3. Resolves each item: strong product/category match → auto-add;
  *      fuzzy nearest that the shopper has favorited or bought before → auto-add
  *      that one and announce it; other fuzzy nearest → suggestions to confirm;
- *      no catalog hit → polite "couldn't find a match" reply (nothing added).
+ *      no catalog hit → ask what they want, and add nothing.
  *   4. Inserts auto-resolved lines into the caller's default list.
  *   5. Sends an Expo push notification confirming what was added, and also
  *      returns the same summary in the response so the app can show/speak
@@ -38,7 +39,7 @@ import { json, requireUser, sendExpoPush, userClient } from '../_shared/supabase
  *   - XAI_API_KEY         (Grok chat endpoint only — scope the key to "chat",
  *                           NOT "voice" — model "grok-4.20-0309-non-reasoning")
  * Optional secret:
- *   - ELEVENLABS_VOICE_ID (defaults to the public "Rachel" voice if unset)
+ *   - ELEVENLABS_VOICE_ID_FEMALE / ELEVENLABS_VOICE_ID_MALE (optional overrides)
  */
 
 const XAI_MODEL = 'grok-4.20-0309-non-reasoning';
@@ -162,16 +163,16 @@ function formatMoney(cents: number): string {
 }
 
 function formatAddedLine(item: AddedItem): string {
-  const qty = item.quantity > 1 ? `${item.quantity} × ` : '';
-  let line = `I've added ${qty}'${item.name}' to your grocery list.`;
+  const qty = item.quantity > 1 ? `${item.quantity} ` : '';
+  let line = `Added ${qty}${item.name}.`;
   const where: string[] = [];
   if (item.priceCents != null) where.push(formatMoney(item.priceCents));
-  if (item.storeName) where.push(`at ${item.storeName}`);
-  if (where.length) line += ` ${where.join(' ')}.`;
-  if (item.packNote) line += ` ${item.packNote}`;
-  if (item.historyNote) line += ` ${item.historyNote}`;
+  if (item.storeName) where.push(item.storeName);
+  if (where.length) line += ` ${where.join(' at ')}.`;
   return line;
 }
+
+const CONFIRM_PROMPT = 'Press confirm, clarify, or press and say yes.';
 
 /** Mic checks and chatter. These are not products, even when a real food sits beside them. */
 const NOISE_WORDS = new Set([
@@ -203,6 +204,93 @@ function keepGroceryItems(items: ParsedItem[]): ParsedItem[] {
   return items.filter((item) => item.name.trim() && !isNoiseName(item.name));
 }
 
+type ReplyVoice = 'female' | 'male' | 'cow';
+
+/**
+ * Designed ElevenLabs voices (not the stock premade set, and not device TTS).
+ * Override with ELEVENLABS_VOICE_ID_FEMALE / _MALE / _COW if you redesign them.
+ */
+const VOICE_IDS: Record<ReplyVoice, string> = {
+  female: 'MxMcKMeLbomBTbYEka4P',
+  male: 'x0o1AwHx3z7Vw9mMDXBe',
+  cow: 'gOOoZeoPyggZRp5x0Wky',
+};
+
+function voiceIdFor(voice: ReplyVoice): string {
+  const envName = voice === 'male'
+    ? 'ELEVENLABS_VOICE_ID_MALE'
+    : voice === 'cow'
+      ? 'ELEVENLABS_VOICE_ID_COW'
+      : 'ELEVENLABS_VOICE_ID_FEMALE';
+  return Deno.env.get(envName)?.trim() || VOICE_IDS[voice];
+}
+
+async function synthesizeSpeech(
+  elevenKey: string,
+  voice: ReplyVoice,
+  text: string,
+): Promise<string | null> {
+  if (voice === 'cow') return cowMoo(text);
+  const spoken = text;
+  if (!spoken.trim()) return null;
+  const ttsRes = await fetch(
+    `https://api.elevenlabs.io/v1/text-to-speech/${voiceIdFor(voice)}?output_format=mp3_44100_64`,
+    {
+      method: 'POST',
+      headers: {
+        'xi-api-key': elevenKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        text: spoken.slice(0, 800),
+        model_id: 'eleven_multilingual_v2',
+        voice_settings: {
+          stability: voice === 'cow' ? 0.25 : 0.32,
+          similarity_boost: 0.88,
+          style: voice === 'cow' ? 0.7 : 0.42,
+          use_speaker_boost: true,
+        },
+      }),
+    },
+  );
+  if (!ttsRes.ok) {
+    console.error('[voice-order] TTS failed:', ttsRes.status, await ttsRes.text().catch(() => ''));
+    return null;
+  }
+  const bytes = new Uint8Array(await ttsRes.arrayBuffer());
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+function replyVoice(raw: string | null | undefined): ReplyVoice {
+  const value = (raw ?? '').trim().toLowerCase();
+  if (value === 'male' || value === 'cow' || value === 'female') return value;
+  return 'female';
+}
+
+/** "yes" or "say yes to confirm" is an answer to the card on screen, not a new grocery item. */
+function isBareConfirmation(text: string): boolean {
+  const words = text
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+  if (words.length === 0 || words.length > 8) return false;
+  const yes = new Set([
+    'yes', 'yeah', 'yep', 'yup', 'ok', 'okay', 'confirm', 'confirmed', 'approve', 'approved',
+    'sure', 'correct', 'add', 'do', 'go', 'ahead', 'sounds', 'good', 'right',
+  ]);
+  const frame = new Set([
+    'say', 'says', 'saying', 'to', 'the', 'a', 'an', 'it', 'them', 'please', 'just', 'i',
+    'want', 'would', 'like', 'so', 'you', 'can', 'and', 'or', 'um', 'uh', 'this', 'that',
+    'those', 'these', 'if', 'we', 'butter',
+  ]);
+  const no = new Set(['no', 'nope', 'nah', 'reject', 'skip', 'cancel', 'dont']);
+  if (words.some((word) => no.has(word))) return false;
+  return words.some((word) => yes.has(word)) && words.every((word) => yes.has(word) || frame.has(word));
+}
+
 /** A one-time note can pick one dish or two foods. It is not saved. */
 function clarificationSide(note: string): 'one' | 'two' | null {
   const words = note.toLowerCase().replace(/[^a-z\s]/g, ' ').split(/\s+/).filter(Boolean);
@@ -214,6 +302,108 @@ function clarificationSide(note: string): 'one' | 'two' | null {
   if (two && !one) return 'two';
   if (one && !two) return 'one';
   return null;
+}
+
+const CLARIFICATION_FILLERS = new Set([
+  'please',
+  'thanks',
+  'thank',
+  'you',
+  'i',
+  'im',
+  "i'm",
+  'meant',
+  'mean',
+  'instead',
+  'actually',
+  'rather',
+  'the',
+  'a',
+  'an',
+  'just',
+  'only',
+  'it',
+  'its',
+  "it's",
+  'make',
+  'want',
+  'need',
+  'looking',
+  'for',
+  'something',
+  'like',
+  'more',
+  'of',
+  'that',
+  'this',
+  'some',
+  'kind',
+  'sort',
+  'was',
+  'were',
+  'to',
+  'my',
+  'me',
+  'can',
+  'get',
+  'add',
+  'buy',
+]);
+
+/** Words in a clarification that describe food, plus a count if one was spoken first. */
+function clarificationDetail(note: string): { words: string[]; quantity: number | null } {
+  const raw = note
+    .toLowerCase()
+    .replace(/[^a-z0-9'\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean);
+  let quantity: number | null = null;
+  const words: string[] = [];
+  for (const word of raw) {
+    const qty = spokenQuantity(word);
+    if (qty != null && quantity == null && words.length === 0) {
+      quantity = qty;
+      continue;
+    }
+    if (CLARIFICATION_FILLERS.has(word) || NOISE_WORDS.has(word)) continue;
+    words.push(word);
+  }
+  return { words, quantity };
+}
+
+/**
+ * A clarification rewrites the item already asked for.
+ * "organic" on milk becomes "organic milk". "I meant yogurt" replaces milk.
+ * The new words are never a second line.
+ */
+function mergeClarification(base: ParsedItem[], note: string): ParsedItem[] {
+  const { words, quantity } = clarificationDetail(note);
+  if (words.length === 0) {
+    if (quantity == null || base.length !== 1) return base;
+    return [{ ...base[0]!, quantity }];
+  }
+  const replacement = /\b(instead|meant|mean|actually|rather)\b/i.test(note);
+  const noteTokens = words.map(normalizeToken);
+
+  const rewrite = (item: ParsedItem): ParsedItem => {
+    const originalTokens = tokensOf(item.name);
+    const coversOriginal = originalTokens.length > 0 && originalTokens.every((tok) => noteTokens.includes(tok));
+    const name = coversOriginal || replacement
+      ? words.join(' ')
+      : `${words.filter((word) => !originalTokens.includes(normalizeToken(word))).join(' ')} ${item.name}`
+          .replace(/\s+/g, ' ')
+          .trim();
+    return { name: name || item.name, quantity: quantity ?? item.quantity };
+  };
+
+  if (base.length === 0) return [{ name: words.join(' '), quantity: quantity ?? 1 }];
+  if (base.length === 1) return [rewrite(base[0]!)];
+
+  const mentioned = base.findIndex((item) => tokensOf(item.name).some((tok) => noteTokens.includes(tok)));
+  const index = mentioned >= 0 ? mentioned : 0;
+  return base.map((item, itemIndex) => (itemIndex === index ? rewrite(item) : item));
 }
 
 const NUMBER_WORDS: Record<string, number> = {
@@ -262,6 +452,138 @@ function tokensOf(value: string): string[] {
  * hits (e.g. "eggs" inside "Large Grade A Eggs") are fuzzy nearest matches so
  * the client can confirm before adding.
  */
+/**
+ * A different food that happens to contain the spoken word.
+ * "milk chocolate" is not milk, "mashed potatoes" are not potatoes, "egg nog" is not eggs.
+ */
+const UNASKED_FOOD = new Set([
+  'chocolate',
+  'cheese',
+  'yogurt',
+  'ricotta',
+  'nog',
+  'mist',
+  'sardine',
+  'caramel',
+  'bunny',
+  'advent',
+  'goat',
+  'sheep',
+  'fig',
+  'marshmallow',
+  'quince',
+  'candy',
+  'mousse',
+  'chip',
+  'crisp',
+  'mashed',
+  'fry',
+  'fries',
+  'hash',
+  'bun',
+  'cookie',
+  'taco',
+  'burrito',
+  'lefse',
+  'flatbread',
+  'roasted',
+  'curry',
+  'ketchup',
+  'lattice',
+  'whipped',
+  'eggplant',
+  'liqueur',
+  'wine',
+  'truffle',
+  'pasta',
+  'burger',
+  'eggwich',
+  'sandwich',
+  'muffin',
+  'brioche',
+  'waffle',
+  'cone',
+  'honey',
+  'almond',
+  'oat',
+  'soy',
+  'coconut',
+  'jammy',
+  'cooked',
+  'boiled',
+  'bite',
+  'spread',
+  'stuffie',
+  'treat',
+  'kit',
+  'stick',
+  'crispy',
+  'loaded',
+  'bbq',
+  'shredded',
+  'sweet',
+  'calendar',
+  'heart',
+  'nugget',
+  'pretzel',
+]);
+
+function isDemoProduct(product: CatalogProduct): boolean {
+  return /\bdemo\b/i.test(`${product.brand ?? ''} ${product.name}`);
+}
+
+function wantedTokens(term: string): { numbers: string[]; words: string[] } {
+  const tokens = tokensOf(term);
+  return {
+    numbers: tokens.filter((token) => /^\d+$/.test(token)),
+    words: tokens.filter((token) => !/^\d+$/.test(token)),
+  };
+}
+
+/** "2% milk" stays milk with the percent in the name. The percent is not a count of 2. */
+function restorePercentNames(items: ParsedItem[], source: string): ParsedItem[] {
+  const heard = [...source.toLowerCase().matchAll(/\b(\d{1,2})\s*%\s*([a-z]+)/g)];
+  if (heard.length === 0) return items;
+  const out: ParsedItem[] = [];
+  for (const item of items) {
+    const bare = item.name.trim().toLowerCase();
+    if (/^\d+%$/.test(bare)) continue;
+    const already = bare.match(/^(\d{1,2})%\s+([a-z].*)$/);
+    if (already) {
+      const rest = source.toLowerCase().replace(new RegExp(`\\b${already[1]}\\s*%`, 'g'), ' ');
+      const otherCount = spokenQuantity(rest.trim().split(/\s+/)[0] ?? '');
+      out.push({
+        name: `${already[1]}% ${already[2]}`.replace(/\s+/g, ' ').trim(),
+        quantity: otherCount != null && otherCount !== Number(already[1]) ? item.quantity : 1,
+      });
+      continue;
+    }
+    const hit = heard.find((match) => normalizeToken(match[2] ?? '') === normalizeToken(item.name));
+    if (hit) {
+      out.push({ name: `${hit[1]}% ${hit[2]}`, quantity: 1 });
+      continue;
+    }
+    out.push(item);
+  }
+  return out;
+}
+
+function nameHasNumber(name: string, num: string, asPercent: boolean): boolean {
+  if (asPercent) return new RegExp(`(?:^|[^0-9])${num}\\s*%`, 'i').test(name);
+  return tokensOf(name).includes(num);
+}
+
+function fitsRequest(product: CatalogProduct, term: string): boolean {
+  if (isDemoProduct(product)) return false;
+  const cand = tokensOf(`${product.brand ?? ''} ${product.name}`);
+  const { numbers, words } = wantedTokens(term);
+  if (words.length === 0 || words.some((word) => !cand.includes(word))) return false;
+  const asPercent = term.includes('%');
+  if (numbers.some((num) => !nameHasNumber(product.name, num, asPercent))) return false;
+  const asked = new Set([...numbers, ...words]);
+  return !cand.some((token) => UNASKED_FOOD.has(token) && !asked.has(token));
+}
+
 function isStrongMatch(candidateName: string, term: string): boolean {
   const cand = normalizePhrase(candidateName);
   const t = normalizePhrase(term);
@@ -425,6 +747,11 @@ function explodeItems(items: ParsedItem[]): ParsedItem[] {
     let i = 0;
     while (i < words.length) {
       const word = words[i]!;
+      if (/^\d+%$/.test(word) && words[i + 1]) {
+        out.push({ name: `${word} ${words[i + 1]}`, quantity: item.quantity });
+        i += 2;
+        continue;
+      }
       const qty = spokenQuantity(word);
       if (qty != null) {
         i += 1;
@@ -586,11 +913,26 @@ Deno.serve(async (req) => {
     let transcript: string;
     let clarifyNote = '';
     let usedClarification = false;
+    let voice = replyVoice(req.headers.get('x-butter-voice'));
 
     if (contentType.includes('application/json')) {
-      const body = await req.json().catch(() => ({}) as { transcript?: string; clarify?: string });
+      const body = await req.json().catch(() => ({}) as {
+        transcript?: string;
+        clarify?: string;
+        voice?: string;
+        speakOnly?: boolean;
+        text?: string;
+      });
+      if (body.speakOnly) {
+        const spokenVoice = replyVoice(body.voice);
+        const line = String(body.text ?? '').trim().slice(0, 800);
+        if (!line) return json({ replyAudioBase64: null, reply: '' });
+        const audio = await synthesizeSpeech(elevenKey, spokenVoice, line);
+        return json({ reply: line, replyAudioBase64: audio });
+      }
       transcript = (body.transcript ?? '').trim();
       clarifyNote = (body.clarify ?? '').trim();
+      if (body.voice) voice = replyVoice(body.voice);
       console.log('[voice-order] typed transcript:', transcript);
     } else {
       const form = await req.formData().catch(() => null);
@@ -665,6 +1007,20 @@ Deno.serve(async (req) => {
     const grokUser = clarifyNote
       ? `${shownTranscript}\nOne-time clarification, use it only for this request and then forget it: ${clarifyNote}`
       : shownTranscript;
+    if (isBareConfirmation(shownTranscript) && !clarifyNote) {
+      return json({
+        transcript: shownTranscript,
+        reply: '',
+        englishReply: '',
+        language: 'en',
+        phrases: ENGLISH_PHRASES,
+        added: [],
+        suggestions: [],
+        splits: [],
+        confused: false,
+        replyAudioBase64: null,
+      });
+    }
     if (!shownTranscript) {
       return json({
         transcript: '',
@@ -710,10 +1066,13 @@ Deno.serve(async (req) => {
                   'Keep item names short, generic, and in English. ' +
                   'Ignore mic-check words such as "testing", "hello", and "check". ' +
                   'A number is a quantity only when it is a small count directly before a food. "123" is not a quantity. ' +
+                  'A fat percent is part of the name, with quantity 1. "2% milk" and "3% milk" are milk, not 2 or 3 of another food. ' +
                   '"testing testing 123 potato" is one item: potato. ' +
                   'If the only words are not foods, call add_items with an empty items array.' +
                   (clarifyNote
-                    ? ' A one-time clarification is included. Use it only to resolve this request, then forget it. Do not treat it as a saved preference.'
+                    ? ' A clarification follows the original request. Rewrite that request. Do not add the clarification as its own item. ' +
+                      'A word such as "organic" or "russet" narrows the food already named. ' +
+                      '"I meant yogurt" replaces that food. Forget the clarification after this request.'
                     : ''),
               },
               { role: 'user', content: grokUser },
@@ -750,13 +1109,24 @@ Deno.serve(async (req) => {
       items = parseTranscriptLocally(localSource);
     }
 
-    items = keepGroceryItems(items);
+    if (clarifyNote && clarificationSide(clarifyNote) == null) {
+      const base = keepGroceryItems(explodeItems(parseTranscriptLocally(shownTranscript)));
+      const noteTokens = new Set(clarificationDetail(clarifyNote).words.map(normalizeToken));
+      const parsed = keepGroceryItems(items).filter((item) => {
+        const tokens = tokensOf(item.name);
+        const onlyClarification = tokens.length > 0 && tokens.every((token) => noteTokens.has(token));
+        return !onlyClarification;
+      });
+      const origin = base.length > 0 && (parsed.length === 0 || base.length <= parsed.length) ? base : parsed;
+      items = mergeClarification(origin, clarifyNote);
+    }
+    items = restorePercentNames(keepGroceryItems(items), shownTranscript);
     const clarifySide = clarificationSide(clarifyNote);
     if (clarifySide === 'two') {
       items = items.flatMap((item) => {
         const words = item.name.split(/\s+/).filter(Boolean);
         const pairKey = words.length === 2 ? `${normalizeToken(words[0]!)} ${normalizeToken(words[1]!)}` : '';
-        if (!pairKey || COMPOUND_FOODS.has(pairKey)) return [item];
+        if (!pairKey || COMPOUND_FOODS.has(pairKey) || words.some((word) => /^\d+%$/.test(word))) return [item];
         return words.map((name) => ({ name, quantity: item.quantity }));
       });
     }
@@ -765,7 +1135,7 @@ Deno.serve(async (req) => {
       const empty = await localizeAssistantText(
         xaiKey,
         language,
-        "I didn't hear a grocery item. Name a food, like eggs or potatoes.",
+        "Name a food, like eggs or potatoes.",
       );
       return json({
         transcript: shownTranscript,
@@ -805,15 +1175,17 @@ Deno.serve(async (req) => {
     const splits: SplitChoice[] = [];
 
     async function catalogRows(term: string): Promise<CatalogProduct[]> {
-      const safe = term.replace(/[%_]/g, '').trim();
-      if (!safe) return [];
-      const products = await supabase
+      const { numbers, words } = wantedTokens(term);
+      const noun = words[words.length - 1];
+      if (!noun || noun.length < 2) return [];
+      let query = supabase
         .from('products')
         .select('id, name, brand, size_base_amount, size_base_unit')
         .eq('is_active', true)
-        .or(`name.ilike.%${safe}%,brand.ilike.%${safe}%`)
-        .limit(8);
-      return (products.data ?? []) as CatalogProduct[];
+        .ilike('name', `%${noun}%`);
+      for (const num of numbers) query = query.ilike('name', `%${num}%`);
+      const products = await query.limit(80);
+      return ((products.data ?? []) as CatalogProduct[]).filter((row) => fitsRequest(row, term));
     }
 
     const preferredStores = await supabase.from('user_stores').select('store_id').eq('user_id', user.id);
@@ -1007,12 +1379,20 @@ Deno.serve(async (req) => {
     }
 
     for (const item of items) {
-      const term = item.name.replace(/[%_]/g, '').trim();
-      if (!term) continue;
+      const term = item.name.trim();
+      if (!tokensOf(term).some((token) => !/^\d+$/.test(token))) continue;
 
       const words = term.toLowerCase().split(/\s+/).filter(Boolean);
       const pairKey = words.length === 2 ? `${normalizeToken(words[0]!)} ${normalizeToken(words[1]!)}` : '';
-      if (clarifySide !== 'one' && words.length === 2 && pairKey && !COMPOUND_FOODS.has(pairKey)) {
+      const percentPhrase = words.some((word) => /^\d+%$/.test(word) || /^\d+$/.test(word));
+      if (
+        !percentPhrase &&
+        !usedClarification &&
+        clarifySide !== 'one' &&
+        words.length === 2 &&
+        pairKey &&
+        !COMPOUND_FOODS.has(pairKey)
+      ) {
         const head = normalizeToken(words[1]!);
         const [phraseRows, leftRows, rightRows] = await Promise.all([
           catalogRows(term),
@@ -1030,31 +1410,40 @@ Deno.serve(async (req) => {
         }
       }
 
-      const products = await supabase
-        .from('products')
-        .select('id, name, brand, size_base_amount, size_base_unit')
-        .eq('is_active', true)
-        .or(`name.ilike.%${term}%,brand.ilike.%${term}%`)
-        .limit(8);
+      const productRows = await catalogRows(term);
 
-      const productRows = (products.data ?? []) as CatalogProduct[];
-      const strongProducts = productRows.filter((row) => isStrongMatch(row.name, term));
-      const fuzzyProducts = productRows.filter((row) => !isStrongMatch(row.name, term));
-
-      if (strongProducts.length > 0) {
-        const choice = await chooseProduct(strongProducts);
-        if (choice && (await addChosenProduct(item.quantity, choice))) continue;
+      if (productRows.length > 0) {
+        const ranked = [...productRows].sort(
+          (a, b) => closenessScore(a.name, term) - closenessScore(b.name, term),
+        );
+        const best = closenessScore(ranked[0]!.name, term);
+        const top = ranked.filter((row) => closenessScore(row.name, term) <= best + 12);
+        const choice = await chooseProduct(top);
+        if (choice) {
+          const label = catalogTitle(choice.product);
+          fuzzyTermByLabel.set(label, term);
+          fuzzyCandidates.push({
+            name: item.name,
+            quantity: item.quantity,
+            productId: choice.product.id,
+            label,
+          });
+          continue;
+        }
         unmatched.push({ name: item.name, quantity: item.quantity });
         continue;
       }
 
-      const categories = await supabase
-        .from('product_categories')
-        .select('id, name')
-        .ilike('name', `%${term}%`)
-        .limit(5);
+      const noun = wantedTokens(term).words.at(-1) ?? '';
+      const categories = noun
+        ? await supabase
+            .from('product_categories')
+            .select('id, name')
+            .ilike('name', `%${noun}%`)
+            .limit(5)
+        : { data: [] as { id: string; name: string }[] };
       const categoryRows = categories.data ?? [];
-      const strongCategories = categoryRows.filter((row) => isStrongMatch(row.name, term));
+      const strongCategories = categoryRows.filter((row) => isStrongMatch(row.name, noun));
 
       if (strongCategories.length > 0) {
         const inCategory = await supabase
@@ -1062,32 +1451,20 @@ Deno.serve(async (req) => {
           .select('id, name, brand, size_base_amount, size_base_unit')
           .eq('is_active', true)
           .eq('category_id', strongCategories[0]!.id)
-          .limit(12);
-        const choice = await chooseProduct((inCategory.data ?? []) as CatalogProduct[]);
-        if (choice && (await addChosenProduct(item.quantity, choice))) continue;
-      }
-
-      const remembered = fuzzyProducts.filter(
-        (row) => favoriteIds.has(row.id) || lastPurchasedAt.has(row.id),
-      );
-      if (remembered.length > 0) {
-        const choice = await chooseProduct(remembered);
-        if (choice && (await addChosenProduct(item.quantity, choice))) continue;
-      }
-
-      const nearest: Suggestion[] = fuzzyProducts.map((row) => ({
-        name: item.name,
-        quantity: item.quantity,
-        productId: row.id,
-        label: catalogTitle(row),
-      }));
-
-      if (nearest.length > 0) {
-        for (const suggestion of nearest) {
-          fuzzyTermByLabel.set(suggestion.label, term);
-          fuzzyCandidates.push(suggestion);
+          .limit(80);
+        const fitting = ((inCategory.data ?? []) as CatalogProduct[]).filter((row) => fitsRequest(row, term));
+        const choice = await chooseProduct(fitting);
+        if (choice) {
+          const label = catalogTitle(choice.product);
+          fuzzyTermByLabel.set(label, term);
+          fuzzyCandidates.push({
+            name: item.name,
+            quantity: item.quantity,
+            productId: choice.product.id,
+            label,
+          });
+          continue;
         }
-        continue;
       }
 
       // No catalog hit → do not add; ask the user to describe it more clearly
@@ -1108,8 +1485,8 @@ Deno.serve(async (req) => {
           .map((split) => {
             const parts = split.two.map((item) => item.label).join(' and ');
             return parts
-              ? `${split.phrase} could be one item, or ${parts}. Say one or both.`
-              : `${split.phrase} could be one item or two. Say one or both.`;
+              ? `${split.phrase}: one dish, or ${parts}? Say one or both.`
+              : `${split.phrase}: one item or two? Say one or both.`;
           })
           .join(' '),
       );
@@ -1122,30 +1499,27 @@ Deno.serve(async (req) => {
         already
           .map(
             (item) =>
-              `'${item.name}' is already on your list. Add ${item.addQuantity} more to that line?`,
+              `${item.name} is already there. Add ${item.addQuantity} more?`,
           )
           .join(' '),
       );
     }
     if (suggestions.length === 1) {
       const asked = suggestions[0]!;
-      replyParts.push(
-        `Closest is '${asked.label}'. Say yes to add it, or change the quantity.`,
-      );
+      replyParts.push(`Do you want '${asked.label}'? ${CONFIRM_PROMPT}`);
     } else if (suggestions.length > 1) {
-      const asked = suggestions.map((item) => `${item.quantity} ${item.label}`).join(', ');
-      replyParts.push(`Confirm each one: ${asked}. Say yes to add them all.`);
+      const asked = suggestions.map((item) => item.label).join(', ');
+      replyParts.push(`Do you want ${asked}? ${CONFIRM_PROMPT}`);
     }
     if (unmatched.length) {
-      const asked = unmatched.map((u) => `${u.quantity} ${u.name}`).join(', ');
-      replyParts.push(
-        `Sorry, I was unable to find a close match for ${asked}. ` +
-          `If you'd describe what you're looking for more clearly, I can try to find it.`,
-      );
+      const asked = unmatched
+        .map((item) => (item.quantity > 1 ? `${item.quantity} ${item.name}` : item.name))
+        .join(', ');
+      replyParts.push(unmatched.length === 1 ? `I don't see ${asked}. Clarify?` : `I don't see ${asked}. Clarify each?`);
     }
     const englishReply = replyParts.length
       ? replyParts.join(' ')
-      : "I heard you, but couldn't add anything to your list.";
+      : "Nothing to add.";
     const localized = await localizeAssistantText(xaiKey, language, englishReply);
     const reply = stripAudioTags(localized.reply) || "I didn't catch that. You can change the quantity on the card.";
 
@@ -1158,39 +1532,21 @@ Deno.serve(async (req) => {
       if (invalid.length > 0) await supabase.from('push_tokens').delete().in('token', invalid);
     }
 
-    // --- 5. Speak the confirmation back with ElevenLabs TTS -----------------
+    // --- 5. Speak with the designed ElevenLabs voice. Cow audio is only moos. ---
     let replyAudioBase64: string | null = null;
     try {
-      const voiceId = Deno.env.get('ELEVENLABS_VOICE_ID') ?? '21m00Tcm4TlvDq8ikWAM';
-      const ttsRes = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_64`,
-        {
-          method: 'POST',
-          headers: {
-            'xi-api-key': elevenKey,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            text: reply,
-            model_id: 'eleven_turbo_v2_5',
-            voice_settings: { stability: 0.5, similarity_boost: 0.75 },
-          }),
-        },
-      );
-      if (ttsRes.ok) {
-        const bytes = new Uint8Array(await ttsRes.arrayBuffer());
-        let binary = '';
-        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-        replyAudioBase64 = btoa(binary);
-      }
-    } catch {
+      replyAudioBase64 = await synthesizeSpeech(elevenKey, voice, reply);
+    } catch (err) {
+      console.error('[voice-order] TTS threw:', err);
       replyAudioBase64 = null;
     }
 
     const confused =
       splits.length > 0 ||
       unmatched.length > 0 ||
-      (added.length === 0 && suggestions.length === 0 && already.length === 0);
+      suggestions.length > 0 ||
+      added.length > 0 ||
+      already.length > 0;
     console.log('[voice-order] final reply:', reply, 'language:', language);
     return json({
       transcript: shownTranscript,

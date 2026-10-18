@@ -1,6 +1,7 @@
 import { File, UploadType } from 'expo-file-system';
 
 import { fail } from '../errors';
+import { getAiVoice } from '../preferences';
 import { supabase } from './client';
 
 export type VoiceOrderSuggestion = {
@@ -150,6 +151,7 @@ export async function voiceOrder(fileUri: string, context?: string): Promise<Voi
       mimeType: 'audio/m4a',
       headers: {
         Authorization: `Bearer ${token}`,
+        'x-butter-voice': getAiVoice(),
         ...(context?.trim()
           ? { 'x-butter-context': encodeURIComponent(context.trim().slice(0, 500)) }
           : {}),
@@ -175,6 +177,24 @@ export async function voiceOrder(fileUri: string, context?: string): Promise<Voi
  * entirely. Useful as a fallback input and for testing the Grok-parsing /
  * Supabase-write / push steps without recording audio.
  */
+/** ElevenLabs audio for a short line. Cow audio is mooing; the caller still shows `text`. */
+export async function speakAssistant(text: string): Promise<string | null> {
+  const line = text.trim().slice(0, 800);
+  if (!line) return null;
+  const token = await getAuthToken();
+  const url = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/voice-order`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ speakOnly: true, text: line, voice: getAiVoice() }),
+  });
+  const payload = (await response.json().catch(() => null)) as { replyAudioBase64?: string | null } | null;
+  return payload?.replyAudioBase64 ?? null;
+}
+
 export async function voiceOrderFromText(transcript: string, clarify?: string): Promise<VoiceOrderResult> {
   const trimmed = transcript.trim();
   const note = clarify?.trim().slice(0, 240) ?? '';
@@ -189,7 +209,8 @@ export async function voiceOrderFromText(transcript: string, clarify?: string): 
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      transcript: note ? `${trimmed}\n${note}` : trimmed,
+      transcript: trimmed,
+      voice: getAiVoice(),
       ...(note ? { clarify: note } : {}),
     }),
   });
