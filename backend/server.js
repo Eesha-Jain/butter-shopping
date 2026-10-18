@@ -296,13 +296,32 @@ app.get("/api/trader-joes/products", async (req, res) => {
   }
 });
 
+function pickUpcMatch(products, upc) {
+  return (
+    products.find((row) => String(row.upc ?? "") === upc) ??
+    products.find((row) => String(row.upc ?? "").endsWith(upc)) ??
+    products.find((row) => upc.endsWith(String(row.upc ?? ""))) ??
+    products[0] ??
+    null
+  );
+}
+
+function hasRetailerError(body) {
+  return Boolean(body.qfcError || body.safewayError || body.fredMeyerError || body.traderJoesError);
+}
+
 async function lookupPrices(query, zip, locationId) {
   const offers = [];
   let qfcError = null;
   let fredMeyerError = null;
   let safewayError = null;
   let traderJoesError = null;
-  let wrote = false;
+  const persistedByChain = {
+    qfc: false,
+    safeway: false,
+    fredMeyer: false,
+    traderJoes: false,
+  };
 
   if (zip) {
     try {
@@ -311,7 +330,7 @@ async function lookupPrices(query, zip, locationId) {
       if (!safewayStore) throw new Error("No Safeway store was found for that ZIP code.");
       const products = await searchSafewayProducts(query, safewayStore.storeId);
       if (await rememberAll(products, { ...safewayStore, chain: "Safeway" }, "scrape", "safeway")) {
-        wrote = true;
+        persistedByChain.safeway = true;
       }
       for (const product of products) offers.push(asOffer(product, "Safeway"));
     } catch (error) {
@@ -324,7 +343,7 @@ async function lookupPrices(query, zip, locationId) {
       if (!store) throw new Error("No Fred Meyer store was found for that ZIP code.");
       const products = await searchFredMeyerProducts(query, store.locationId);
       if (await rememberAll(products, { ...store, chain: "Fred Meyer" }, "api", "kroger")) {
-        wrote = true;
+        persistedByChain.fredMeyer = true;
       }
       for (const product of products) offers.push(asOffer(product, "Fred Meyer"));
     } catch (error) {
@@ -337,7 +356,7 @@ async function lookupPrices(query, zip, locationId) {
       if (!store) throw new Error("No Trader Joe's store was found for that ZIP code.");
       const products = await searchTraderJoesProducts(query, store.storeId);
       if (await rememberAll(products, { ...store, chain: "Trader Joe's" }, "scrape", "trader_joes")) {
-        wrote = true;
+        persistedByChain.traderJoes = true;
       }
       for (const product of products) offers.push(asOffer(product, "Trader Joe's"));
     } catch (error) {
@@ -358,15 +377,20 @@ async function lookupPrices(query, zip, locationId) {
       qfcLocationId = store?.locationId;
     }
     if (!qfcLocationId) throw new Error("No QFC store was found for that ZIP code.");
+    if (!store && zip) {
+      const stores = await findQfcStores(zip);
+      store = stores.find((row) => row.locationId === qfcLocationId) ?? stores[0] ?? null;
+    }
     const products = await searchQfcProducts(query, qfcLocationId);
     if (store && (await rememberAll(products, { ...store, chain: "QFC" }, "api", "kroger"))) {
-      wrote = true;
+      persistedByChain.qfc = true;
     }
     for (const product of products) offers.push(asOffer(product, "QFC"));
   } catch (error) {
     qfcError = error.message;
   }
 
+  const wrote = Object.values(persistedByChain).some(Boolean);
   return {
     offers,
     lowest: lowestOffer(offers),
@@ -376,6 +400,7 @@ async function lookupPrices(query, zip, locationId) {
     traderJoesError,
     canPersist: canPersist(),
     persisted: wrote,
+    persistedByChain,
     cooledDown: false,
   };
 }
@@ -393,6 +418,7 @@ app.get("/api/prices", async (req, res) => {
       safewayError: error.message,
       traderJoesError: error.message,
       persisted: canPersist(),
+      persistedByChain: { qfc: false, safeway: false, fredMeyer: false, traderJoes: false },
       cooledDown: false,
     });
     return;
@@ -406,7 +432,10 @@ app.get("/api/prices", async (req, res) => {
   }
 
   const body = await lookupPrices(query, zip || null, req.query.locationId);
-  writeIngestCache(zip, query, body);
+  // Do not freeze a partial/failed multi-store result for the full cooldown.
+  if (!hasRetailerError(body)) {
+    writeIngestCache(zip, query, body);
+  }
   const status =
     body.offers.length > 0 ||
     (!body.qfcError && !body.safewayError && !body.fredMeyerError && !body.traderJoesError)
@@ -416,7 +445,7 @@ app.get("/api/prices", async (req, res) => {
 });
 
 /**
- * Ingest by barcode: search QFC with the UPC as the term, persist, optional OFF enrich.
+ * Ingest by barcode across QFC, Fred Meyer, and Safeway.
  * Query: upc (required), zip (default 98195)
  */
 app.get("/api/products/by-upc", async (req, res) => {
@@ -429,38 +458,76 @@ app.get("/api/products/by-upc", async (req, res) => {
     const zip = String(req.query.zip ?? "98195");
     assertZip(zip);
 
+    const persistedByChain = { qfc: false, fredMeyer: false, safeway: false };
+    let foundAny = false;
+
+    try {
+      const stores = await findQfcStores(zip);
+      const store = stores[0] ?? null;
+      if (store?.locationId) {
+        const products = await searchQfcProducts(upc, store.locationId);
+        const match = pickUpcMatch(products, upc);
+        if (match) {
+          foundAny = true;
+          if (await remember(match, { ...store, chain: "QFC" }, "api", "kroger")) {
+            persistedByChain.qfc = true;
+          }
+        }
+      }
+    } catch {
+      // Try other chains.
+    }
+
+    try {
+      const stores = await findFredMeyerStores(zip);
+      const store = stores[0] ?? null;
+      if (store?.locationId) {
+        const products = await searchFredMeyerProducts(upc, store.locationId);
+        const match = pickUpcMatch(products, upc);
+        if (match) {
+          foundAny = true;
+          if (await remember(match, { ...store, chain: "Fred Meyer" }, "api", "kroger")) {
+            persistedByChain.fredMeyer = true;
+          }
+        }
+      }
+    } catch {
+      // Try other chains.
+    }
+
+    try {
+      const stores = await findSafewayStores(zip);
+      const store = stores[0] ?? null;
+      if (store?.storeId) {
+        const products = await searchSafewayProducts(upc, store.storeId);
+        const match = pickUpcMatch(products, upc);
+        if (match) {
+          foundAny = true;
+          if (await remember(match, { ...store, chain: "Safeway" }, "scrape", "safeway")) {
+            persistedByChain.safeway = true;
+          }
+        }
+      }
+    } catch {
+      // Fall through to local lookup.
+    }
+
     let existing = await fetchProductByUpc(upc);
-    if (existing) {
-      res.json({ product: existing, persisted: false, enriched: false });
-      return;
-    }
-
-    const stores = await findQfcStores(zip);
-    const store = stores[0] ?? null;
-    if (!store?.locationId) {
-      res.status(404).json({ error: "No QFC store found for that ZIP.", product: null });
-      return;
-    }
-
-    const products = await searchQfcProducts(upc, store.locationId);
-    const match =
-      products.find((row) => String(row.upc ?? "") === upc) ??
-      products.find((row) => String(row.upc ?? "").endsWith(upc)) ??
-      products[0] ??
-      null;
-
-    if (!match) {
+    if (!existing && !foundAny) {
       res.status(404).json({ error: "No product found for that barcode.", product: null });
       return;
     }
 
-    await remember(match, { ...store, chain: "QFC" }, "api", "kroger");
-    existing = await fetchProductByUpc(match.upc ?? upc);
     let enriched = false;
     if (existing?.upc) {
       enriched = await enrichProductComposition(existing.upc);
     }
-    res.json({ product: existing, persisted: Boolean(existing), enriched });
+    res.json({
+      product: existing,
+      persisted: Object.values(persistedByChain).some(Boolean),
+      persistedByChain,
+      enriched,
+    });
   } catch (error) {
     sendError(res, error);
   }

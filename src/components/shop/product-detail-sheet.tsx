@@ -9,8 +9,11 @@ import { forwardRef, useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 
 import {
+  formatLocalDateTime,
   listProductStoreOffers,
   publicImageUrl,
+  refreshProductStoreOffers,
+  resolveShopZip,
   type Product,
   type ProductStoreOffer,
 } from '@/backend';
@@ -41,14 +44,18 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
   const onList = quantityOnList != null && quantityOnList > 0;
   const [offers, setOffers] = useState<ProductStoreOffer[]>([]);
   const [offersLoading, setOffersLoading] = useState(false);
+  const [checkingStores, setCheckingStores] = useState(false);
 
   useEffect(() => {
     if (!product?.id) {
       setOffers([]);
+      setCheckingStores(false);
       return;
     }
     let cancelled = false;
     setOffersLoading(true);
+    setCheckingStores(false);
+
     void listProductStoreOffers(product.id)
       .then((rows) => {
         if (!cancelled) setOffers(rows);
@@ -59,10 +66,25 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
       .finally(() => {
         if (!cancelled) setOffersLoading(false);
       });
+
+    void (async () => {
+      setCheckingStores(true);
+      try {
+        const zip = await resolveShopZip();
+        if (cancelled) return;
+        const rows = await refreshProductStoreOffers(product, zip);
+        if (!cancelled) setOffers(rows);
+      } catch {
+        // Keep cached offers already shown.
+      } finally {
+        if (!cancelled) setCheckingStores(false);
+      }
+    })();
+
     return () => {
       cancelled = true;
     };
-  }, [product?.id]);
+  }, [product?.id, product?.name, product?.upc]);
 
   const renderBackdrop = useCallback(
     (props: BottomSheetBackdropProps) => (
@@ -109,7 +131,12 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
 
             <View style={styles.compareBlock}>
               <ThemedText type="smallBold">Prices nearby</ThemedText>
-              {offersLoading ? (
+              {checkingStores ? (
+                <ThemedText type="small" themeColor="textSecondary">
+                  Checking nearby stores…
+                </ThemedText>
+              ) : null}
+              {offersLoading && offers.length === 0 ? (
                 <ActivityIndicator color={theme.primary} />
               ) : offers.length === 0 ? (
                 <ThemedText type="small" themeColor="textSecondary">
@@ -138,6 +165,11 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
                           {!offer.isAvailable ? ' · may be unavailable' : ''}
                           {cheapest ? ' · best' : ''}
                         </ThemedText>
+                        {offer.observedAt ? (
+                          <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                            Updated {formatLocalDateTime(offer.observedAt)}
+                          </ThemedText>
+                        ) : null}
                       </View>
                       <ThemedText type="smallBold">{formatCents(offer.priceCents)}</ThemedText>
                     </View>

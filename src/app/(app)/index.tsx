@@ -256,8 +256,8 @@ export default function ShopScreen() {
           : await listActiveProducts({ categoryId: selectedCategoryId, limit: 60 });
         if (cancelled) return;
 
-        // Demand-driven ingest: only when the user searched and the catalog is thin.
-        if (debouncedSearch.length >= 2 && rawProducts.length < 3) {
+        // Demand-driven ingest on search (cooldown lives in ensureCatalogForTerm).
+        if (debouncedSearch.length >= 2) {
           setCheckingStores(true);
           try {
             const zip = await resolveShopZip();

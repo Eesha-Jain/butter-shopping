@@ -142,7 +142,9 @@ images live in `public-assets`. The database stores the file path only.
 | Report a shelf price at any store | `reportManualPrice` | The price id. Pass cents. Manual reports override api/scrape prices for that listing. |
 | List stores that accept reports | `listReportableStores` | Every store. |
 | Resolve ZIP for price ingest | `resolveShopZip` | Saved postal code, GPS reverse geocode, or campus `98195`. |
-| Fill catalog for a search miss | `ensureCatalogForTerm` | Hits the price proxy, then re-reads Supabase products. |
+| Fill / refresh catalog on search | `ensureCatalogForTerm` | Hits the multi-store price proxy (cooldown; skips cooldown on retailer errors), then re-reads products. |
+| Refresh PDP store prices | `refreshProductStoreOffers` | Proxies by UPC or name; bypasses cooldown when any offer is from a prior local calendar day. |
+| Format price time locally | `formatLocalDateTime` | Device-timezone display for `observedAt` on store offers. |
 | Popular carousel with no history | `listCampusPopularProducts` | Recently priced products for “Popular on campus”. |
 | Barcode with ingest on miss | `findOrIngestProductByUpc` | Local UPC lookup, then QFC ingest via the proxy. |
 | Remember that eggs last two weeks | `saveHabit` | The group habit. |
