@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import { Link } from 'expo-router';
 import { useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
@@ -243,6 +244,14 @@ export function AuthForm({ initialMode = 'signUp' }: AuthFormProps) {
                 {mode === 'signUp' ? 'Already have an account? Log in' : 'Need an account? Sign up'}
               </Text>
             </Pressable>
+
+            <Link href="/nearby" asChild>
+              <Pressable disabled={busy} hitSlop={8} style={styles.linkWrap}>
+                <Text style={[styles.link, { color: theme.textSecondary }]}>
+                  Browse nearby shops without an account
+                </Text>
+              </Pressable>
+            </Link>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

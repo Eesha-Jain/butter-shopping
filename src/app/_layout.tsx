@@ -91,7 +91,7 @@ function RootNavigator() {
         headerShown: false,
         contentStyle: { backgroundColor: 'transparent' },
       }}>
-      <Stack.Protected guard={!!session}>
+      <Stack.Protected guard={true}>
         <Stack.Screen name="(app)" />
       </Stack.Protected>
       <Stack.Protected guard={!session}>

@@ -1,4 +1,5 @@
 import * as Device from 'expo-device';
+import { router } from 'expo-router';
 import { Platform, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -30,7 +31,7 @@ function getDevMenuHint() {
 }
 
 export default function HomeScreen() {
-  const { signOut } = useSession();
+  const { session, signOut } = useSession();
   const theme = useTheme();
 
   return (
@@ -61,13 +62,17 @@ export default function HomeScreen() {
 
         <Pressable
           onPress={() => {
-            void signOut();
+            if (session) {
+              void signOut();
+            } else {
+              router.push('/login');
+            }
           }}
           style={({ pressed }) => [
             styles.signOut,
             { borderColor: theme.border, opacity: pressed ? 0.7 : 1 },
           ]}>
-          <ThemedText type="smallBold">Sign out</ThemedText>
+          <ThemedText type="smallBold">{session ? 'Sign out' : 'Sign in'}</ThemedText>
         </Pressable>
       </SafeAreaView>
     </ThemedView>
