@@ -64,7 +64,8 @@
   },
   "scripts": {
     "start": "expo start --go",
-    "start:dev": "expo start --dev-client",
+    "start:dev": "expo start --dev-client --host lan",
+    "start:dev:tunnel": "expo start --dev-client --tunnel",
     "start:tunnel": "expo start --tunnel --go --clear",
     "build:dev:android": "npx eas-cli@latest build --profile development --platform android",
     "reset-project": "node ./scripts/reset-project.js",

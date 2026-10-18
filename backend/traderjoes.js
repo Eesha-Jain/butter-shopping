@@ -15,6 +15,8 @@ query SearchProducts($pageSize: Int, $currentPage: Int, $storeCode: String, $pub
       retail_price
       availability
       url_key
+      primary_image
+      primary_image_meta { url }
       price_range {
         minimum_price {
           final_price {
@@ -107,6 +109,19 @@ export async function findTraderJoesStores(zip) {
   ];
 }
 
+function traderJoesImageUrl(path) {
+  const raw = String(path ?? "").trim();
+  if (!raw) return null;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (raw.startsWith("/")) return `https://www.traderjoes.com${raw}`;
+  return null;
+}
+
+/** Trader Joe's uses "1" when the store stocks the item and "0" when it does not. */
+function traderJoesInStock(availability) {
+  return String(availability ?? "1").trim() === "1";
+}
+
 function productPriceCents(product) {
   const fromRange = product?.price_range?.minimum_price?.final_price?.value;
   return dollarsToCents(product?.retail_price ?? fromRange);
@@ -124,6 +139,8 @@ export function mapTraderJoesProduct(product) {
     priceCents: productPriceCents(product),
     regularPriceCents: productPriceCents(product),
     promoPriceCents: null,
+    imageUrl: traderJoesImageUrl(product.primary_image ?? product.primary_image_meta?.url),
+    available: traderJoesInStock(product.availability),
     store: "Trader Joe's",
     source: "scrape",
     productUrl: urlKey

@@ -22,7 +22,7 @@ export default function AppTabs() {
         <NativeTabs.Trigger.Label>Shop</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon
           src={require('@/assets/images/tabIcons/home.png')}
-          renderingMode="template"
+          renderingMode="original"
         />
       </NativeTabs.Trigger>
 
@@ -45,7 +45,7 @@ export default function AppTabs() {
         <NativeTabs.Trigger.Label>AI</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon
           src={require('@/assets/images/tabIcons/agent.png')}
-          renderingMode="template"
+          renderingMode="original"
         />
       </NativeTabs.Trigger>
 
@@ -53,7 +53,7 @@ export default function AppTabs() {
         <NativeTabs.Trigger.Label>Cart</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon
           src={require('@/assets/images/tabIcons/cart.png')}
-          renderingMode="template"
+          renderingMode="original"
         />
       </NativeTabs.Trigger>
     </NativeTabs>

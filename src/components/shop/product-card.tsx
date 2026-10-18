@@ -15,6 +15,7 @@ type Props = {
   sponsored?: boolean;
   compact?: boolean;
   favorited?: boolean;
+  priceCents?: number | null;
   onPress: () => void;
   onAdd: () => void;
   onIncrement: () => void;
@@ -29,6 +30,7 @@ export function ProductCard({
   sponsored,
   compact,
   favorited,
+  priceCents,
   onPress,
   onAdd,
   onIncrement,
@@ -83,6 +85,9 @@ export function ProductCard({
           <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
             {product.brand}
           </ThemedText>
+        ) : null}
+        {priceCents != null ? (
+          <ThemedText type="smallBold">${(priceCents / 100).toFixed(2)}</ThemedText>
         ) : null}
         {sponsored ? (
           <ThemedText type="small" themeColor="textSecondary">
