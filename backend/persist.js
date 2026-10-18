@@ -58,18 +58,36 @@ export async function fetchProductByUpc(upc) {
 
 /**
  * Sets category_id on active products that still have none, using the keyword map.
+ * Also reclassifies Pantry rows that should move to Other (non-food keywords).
  * Returns { updated, byCategory }.
  */
 export async function assignProductCategories() {
   if (!canPersist()) throw new Error("Persist is not configured.");
   const categories = await rest("product_categories?select=id,name");
   const byName = new Map((categories ?? []).map((row) => [String(row.name).toLowerCase(), row.id]));
-  const products = await rest(
-    "products?category_id=is.null&is_active=eq.true&select=id,name&limit=1000",
-  );
+  const pantryId = byName.get("pantry") ?? null;
+  const otherId = byName.get("other") ?? null;
+
+  // Null category_id, plus Pantry rows that should move to Other (non-food keywords / unmatched).
+  const [uncategorized, pantryRows] = await Promise.all([
+    rest("products?category_id=is.null&is_active=eq.true&select=id,name,category_id&limit=1000"),
+    pantryId
+      ? rest(
+          `products?category_id=eq.${pantryId}&is_active=eq.true&select=id,name,category_id&limit=1000`,
+        )
+      : Promise.resolve([]),
+  ]);
+
+  const seen = new Set();
+  const queue = [];
+  for (const product of [...(uncategorized ?? []), ...(pantryRows ?? [])]) {
+    if (!product?.id || seen.has(product.id)) continue;
+    seen.add(product.id);
+    queue.push(product);
+  }
+
   const byCategory = {};
   let updated = 0;
-  const queue = [...(products ?? [])];
   const workers = Array.from({ length: 8 }, async () => {
     while (queue.length > 0) {
       const product = queue.shift();
@@ -77,6 +95,9 @@ export async function assignProductCategories() {
       const categoryName = categoryForProductName(product.name);
       const categoryId = byName.get(String(categoryName).toLowerCase());
       if (!categoryId) continue;
+      // Only reclassify Pantry → Other (or null → mapped). Leave correct Pantry food alone.
+      if (product.category_id === pantryId && categoryId !== otherId) continue;
+      if (product.category_id === categoryId) continue;
       await rest(`products?id=eq.${product.id}`, {
         method: "PATCH",
         headers: { Prefer: "return=minimal" },

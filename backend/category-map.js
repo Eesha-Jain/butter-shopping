@@ -4,6 +4,48 @@
  */
 
 export const CATEGORY_KEYWORDS = [
+  {
+    category: "Other",
+    patterns: [
+      "detergent",
+      "dish soap",
+      "soap",
+      "shampoo",
+      "conditioner",
+      "toothpaste",
+      "toothbrush",
+      "paper towel",
+      "toilet paper",
+      "toilet",
+      "trash bag",
+      "garbage bag",
+      "battery",
+      "batteries",
+      "charger",
+      "bandage",
+      "band-aid",
+      "vitamin",
+      "supplement",
+      "candle",
+      "pet litter",
+      "cat litter",
+      "laundry",
+      "fabric softener",
+      "cleaner",
+      "bleach",
+      "deodorant",
+      "lotion",
+      "razor",
+      "mouthwash",
+      "diaper",
+      "napkin",
+      "tissue",
+      "aluminum foil",
+      "plastic wrap",
+      "ziploc",
+      "trash",
+    ],
+  },
   // Bakery overrides fruit tokens in compound names.
   {
     category: "Bakery",
@@ -89,5 +131,5 @@ export function categoryForProductName(name) {
       return row.category;
     }
   }
-  return "Pantry";
+  return "Other";
 }

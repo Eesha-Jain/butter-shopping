@@ -30,6 +30,8 @@ export async function updateMyProfile(
       | 'preferred_days'
       | 'max_stores_per_trip'
       | 'transport_mode'
+      | 'grocery_cashback_bps'
+      | 'onboarding_completed_at'
     >
   >,
 ): Promise<Profile> {

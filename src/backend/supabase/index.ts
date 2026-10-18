@@ -3,8 +3,9 @@
  * table queries directly. See README.md for which function belongs to which task.
  */
 export { AppError } from '../errors';
-export { evenShareCents, payerRemainderCents } from './money';
-export { nextPreferredGroceryDate } from './dates';
+export type {
+  FoodRuleMode, FulfillmentMethod, GroupKind, TraitKind, TraitRelation, TripStatus
+} from '../types';
 export {
   getSession,
   onAuthStateChange,
@@ -12,24 +13,40 @@ export {
   signIn,
   signInWithGoogle,
   signOut,
-  signUp,
+  signUp
 } from './auth';
 export {
-  getMyProfile,
-  listFoodTraits,
-  listMyDiscountEligibilities,
-  listMyFoodRules,
-  listMyLocations,
-  preferStore,
-  publicImageUrl,
-  removeMyAvatar,
-  saveMyLocation,
-  setDiscountEligibility,
-  setMyFoodRules,
-  unpreferStore,
-  updateMyProfile,
-  uploadMyAvatar,
-} from './profiles';
+  ensureCatalogForTerm,
+  findOrIngestProductByUpc,
+  findProductByUpc,
+  formatPromotionBadge,
+  getCheapestPriceCentsByProductIds,
+  getCurrentPrice,
+  getProductPromotionMap, getProductsByIds, getProductTraitsForIds, getStore,
+  listActiveProducts,
+  listCampusPopularProducts,
+  listCategories, listCurrentPromotions, listProductsGroupedByCategory,
+  listProductStoreOffers, listReportableStores, listReportedOffers, nearbyShops,
+  productWarnings,
+  refreshProductStoreOffers,
+  registerReportableStore,
+  reportManualPrice,
+  reportPrice,
+  searchCategories,
+  searchProducts
+} from './catalog';
+export type { CategoryProductSection, ProductStoreOffer } from './catalog';
+export { fetchOpenPricesByUpc } from './open-prices';
+export type { OpenPriceRow } from './open-prices';
+export { nextPreferredGroceryDate } from './dates';
+export { listMyFavoriteProductIds, setProductFavorite } from './favorites';
+export {
+  applyFoodFilters,
+  groupTraitsForFilterUi,
+  indexTraitsByProduct,
+  rulesFromUserFoodRules
+} from './foodFilters';
+export type { SessionFoodRule, ShopSort } from './foodFilters';
 export {
   createGroup,
   joinGroup,
@@ -37,7 +54,7 @@ export {
   listGroupBalances,
   listGroupMembers,
   listMyGroups,
-  updateGroup,
+  updateGroup
 } from './groups';
 export {
   addListItem,
@@ -53,64 +70,23 @@ export {
   listResolvedItems,
   removeListItem,
   setListItemDone,
-  updateListItem,
+  updateListItem
 } from './lists';
 export type { ActiveListTarget } from './lists';
 export {
-  ensureCatalogForTerm,
-  findOrIngestProductByUpc,
-  findProductByUpc,
-  formatPromotionBadge,
-  getCheapestPriceCentsByProductIds,
-  getCurrentPrice,
-  getProductPromotionMap,
-  getProductTraitsForIds,
-  getProductsByIds,
-  getStore,
-  listActiveProducts,
-  listCampusPopularProducts,
-  listCategories,
-  listProductStoreOffers,
-  listCurrentPromotions,
-  listReportedOffers,
-  listReportableStores,
-  nearbyShops,
-  productWarnings,
-  refreshProductStoreOffers,
-  registerReportableStore,
-  reportManualPrice,
-  reportPrice,
-  searchCategories,
-  searchProducts,
-} from './catalog';
-export type { ProductStoreOffer } from './catalog';
-export {
-  applyFoodFilters,
-  groupTraitsForFilterUi,
-  indexTraitsByProduct,
-  rulesFromUserFoodRules,
-} from './foodFilters';
-export type { SessionFoodRule, ShopSort } from './foodFilters';
-export type { BestShopDay, ShopDayReason, ShopDayStoreHint } from './planning';
-export {
   formatLocalDateTime,
   getDeviceTimeZone,
-  isPriorLocalCalendarDay,
-  toLocalDateKey,
-  todayLocalDateKey,
+  isPriorLocalCalendarDay, todayLocalDateKey, toLocalDateKey
 } from './localTime';
-export { fetchNearbyShops, getUserCoords, resolveShopZip } from './locationService';
 export {
-  getWeeklyBudgetCents,
-  planLowestTrip,
-  priceOptions,
-  recommendShoppingPlan,
-  suggestBestShopDate,
-  suggestDiscountDate,
-  suggestGroceryDate,
-} from './planning';
-export { getWeeklyShoppingBoard } from './weeklyShopping';
-export type { WeeklyBoardChip, WeeklyBoardColumn, WeeklyShoppingBoard } from './weeklyShopping';
+  fetchNearbyShops,
+  getUserCoords,
+  resolveSearchCoords,
+  resolveShopZip
+} from './locationService';
+export type { SearchCoords } from './locationService';
+export { evenShareCents, payerRemainderCents } from './money';
+export { registerPushToken, removePushToken, sendOrderConfirmationPush } from './notifications';
 export {
   cancelOrder,
   confirmOrder,
@@ -121,8 +97,36 @@ export {
   listOrderShares,
   markSharePaid,
   previewEvenSplit,
-  requestCheckoutLink,
+  requestCheckoutLink
 } from './orders';
+export {
+  getWeeklyBudgetCents,
+  planLowestTrip,
+  priceOptions,
+  recommendShoppingPlan,
+  suggestBestShopDate,
+  suggestDiscountDate,
+  suggestGroceryDate
+} from './planning';
+export type { BestShopDay, ShopDayReason, ShopDayStoreHint } from './planning';
+export { getWeeklyShoppingBoard } from './weeklyShopping';
+export type { WeeklyBoardChip, WeeklyBoardColumn, WeeklyShoppingBoard } from './weeklyShopping';
+export {
+  getMyProfile,
+  listFoodTraits,
+  listMyDiscountEligibilities,
+  listMyFoodRules,
+  listMyLocations,
+  preferStore,
+  publicImageUrl,
+  removeMyAvatar,
+  saveMyLocation,
+  setDiscountEligibility,
+  setMyFoodRules,
+  unpreferStore,
+  updateMyProfile,
+  uploadMyAvatar
+} from './profiles';
 export {
   addDueHabitItems,
   listExpiringPurchases,
@@ -130,24 +134,17 @@ export {
   listMyStapleProductIds,
   listPurchases,
   recordPurchase,
-  saveHabit,
+  saveHabit
 } from './purchases';
 export {
   addRecipeIngredient,
   createRecipe,
   getRecipeDetail,
   listTrending,
-  listVisibleRecipes,
+  listVisibleRecipes
 } from './recipes';
-export { getProductSafety, traitsChangedSince } from './safety';
-export { registerPushToken, removePushToken, sendOrderConfirmationPush } from './notifications';
 export { analyzeRipeness } from './ripeness';
 export type { RipenessResult } from './ripeness';
-export type {
-  FulfillmentMethod,
-  GroupKind,
-  FoodRuleMode,
-  TraitKind,
-  TraitRelation,
-  TripStatus,
-} from '../types';
+export { getProductSafety, traitsChangedSince } from './safety';
+export * from './voice';
+

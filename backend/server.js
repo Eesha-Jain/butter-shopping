@@ -23,6 +23,8 @@ import {
 } from "./qfc.js";
 import { findSafewayStores, searchSafewayProducts } from "./safeway.js";
 import { findTraderJoesStores, searchTraderJoesProducts } from "./traderjoes.js";
+import { fetchOpenPricesByUpc } from "./open-prices.js";
+import { listVisaOffers } from "./visa-offers.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 dotenv.config({ path: path.join(root, "src/backend/.env") });
@@ -113,14 +115,22 @@ async function remember(product, store, priceSource, storeSource) {
 }
 
 async function rememberAll(products, store, priceSource, storeSource) {
+  const CONCURRENCY = 4;
   let persisted = false;
-  for (const product of products) {
-    try {
-      if (await remember(product, store, priceSource, storeSource)) persisted = true;
-    } catch {
-      // A missed save still returns the price to the caller.
+  let cursor = 0;
+  async function worker() {
+    while (cursor < products.length) {
+      const product = products[cursor++];
+      try {
+        if (await remember(product, store, priceSource, storeSource)) persisted = true;
+      } catch {
+        // A missed save still returns the price to the caller.
+      }
     }
   }
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, products.length) }, () => worker()),
+  );
   return persisted;
 }
 
@@ -152,7 +162,43 @@ app.get("/api/health", (_req, res) => {
     safeway: true,
     traderJoes: true,
     persist: canPersist(),
+    visa: Boolean(
+      process.env.VISA_USER_ID &&
+        process.env.VISA_PASSWORD &&
+        process.env.VISA_CERT_PATH &&
+        process.env.VISA_KEY_PATH,
+    ),
+    openPrices: true,
   });
+});
+
+/**
+ * Visa Merchant Offers (VMORC) for grocery chains.
+ * Query: merchant (optional filter, e.g. Safeway). Falls back to demo offers
+ * when sandbox mTLS credentials are not configured.
+ */
+app.get("/api/visa/offers", async (req, res) => {
+  try {
+    const merchant = req.query.merchant ? String(req.query.merchant) : null;
+    const result = await listVisaOffers(merchant);
+    res.json(result);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+/**
+ * Crowd-sourced prices by barcode (Open Prices / Open Food Facts).
+ * Query: upc (required)
+ */
+app.get("/api/open-prices", async (req, res) => {
+  try {
+    const upc = String(req.query.upc ?? "").trim();
+    const prices = await fetchOpenPricesByUpc(upc);
+    res.json({ upc, prices, source: "open_prices" });
+  } catch (error) {
+    res.status(400).json({ error: error.message ?? "Open Prices lookup failed", prices: [] });
+  }
 });
 
 app.get("/api/kroger/locations", async (req, res) => {
@@ -310,96 +356,140 @@ function hasRetailerError(body) {
   return Boolean(body.qfcError || body.safewayError || body.fredMeyerError || body.traderJoesError);
 }
 
-async function lookupPrices(query, zip, locationId) {
-  const offers = [];
-  let qfcError = null;
-  let fredMeyerError = null;
-  let safewayError = null;
-  let traderJoesError = null;
+/**
+ * Run retailer collectors in parallel. Each chain isolates its own errors.
+ * @returns {Promise<{ key: string, offers: object[], error: string | null, persisted: boolean }>}
+ */
+async function runChainCollector(key, fn) {
+  try {
+    const result = await fn();
+    return { key, offers: result.offers ?? [], error: null, persisted: Boolean(result.persisted) };
+  } catch (error) {
+    return { key, offers: [], error: error.message ?? "Lookup failed", persisted: false };
+  }
+}
+
+/**
+ * @param {string} query
+ * @param {string | null} zip
+ * @param {string | undefined} locationId
+ * @param {Set<string> | null} allowedKeys null = all chains
+ */
+async function lookupPrices(query, zip, locationId, allowedKeys = null) {
+  const want = (key) => !allowedKeys || allowedKeys.has(key);
+  const collectors = [];
+
+  if (want("qfc")) collectors.push(
+    runChainCollector("qfc", async () => {
+      let qfcLocationId = locationId;
+      let store = null;
+      if (!qfcLocationId && zip) {
+        const stores = await findQfcStores(zip);
+        store = stores[0] ?? null;
+        qfcLocationId = store?.locationId;
+      }
+      if (!qfcLocationId) throw new Error("No QFC store was found for that ZIP code.");
+      if (!store && zip) {
+        const stores = await findQfcStores(zip);
+        store = stores.find((row) => row.locationId === qfcLocationId) ?? stores[0] ?? null;
+      }
+      const products = await searchQfcProducts(query, qfcLocationId);
+      const persisted = store
+        ? await rememberAll(products, { ...store, chain: "QFC" }, "api", "kroger")
+        : false;
+      return { offers: products.map((product) => asOffer(product, "QFC")), persisted };
+    }),
+  );
+
+  if (zip) {
+    if (want("fredMeyer"))
+      collectors.push(
+        runChainCollector("fredMeyer", async () => {
+          const stores = await findFredMeyerStores(zip);
+          const store = stores[0];
+          if (!store) throw new Error("No Fred Meyer store was found for that ZIP code.");
+          const products = await searchFredMeyerProducts(query, store.locationId);
+          const persisted = await rememberAll(
+            products,
+            { ...store, chain: "Fred Meyer" },
+            "api",
+            "kroger",
+          );
+          return {
+            offers: products.map((product) => asOffer(product, "Fred Meyer")),
+            persisted,
+          };
+        }),
+      );
+
+    if (want("safeway"))
+      collectors.push(
+        runChainCollector("safeway", async () => {
+          const stores = await findSafewayStores(zip);
+          const safewayStore = stores[0];
+          if (!safewayStore) throw new Error("No Safeway store was found for that ZIP code.");
+          const products = await searchSafewayProducts(query, safewayStore.storeId);
+          const persisted = await rememberAll(
+            products,
+            { ...safewayStore, chain: "Safeway" },
+            "scrape",
+            "safeway",
+          );
+          return {
+            offers: products.map((product) => asOffer(product, "Safeway")),
+            persisted,
+          };
+        }),
+      );
+
+    if (want("traderJoes"))
+      collectors.push(
+        runChainCollector("traderJoes", async () => {
+          const stores = await findTraderJoesStores(zip);
+          const store = stores[0];
+          if (!store) throw new Error("No Trader Joe's store was found for that ZIP code.");
+          const products = await searchTraderJoesProducts(query, store.storeId);
+          const persisted = await rememberAll(
+            products,
+            { ...store, chain: "Trader Joe's" },
+            "scrape",
+            "trader_joes",
+          );
+          return {
+            offers: products.map((product) => asOffer(product, "Trader Joe's")),
+            persisted,
+          };
+        }),
+      );
+  }
+
+  const results = await Promise.all(collectors);
+  const offers = results.flatMap((row) => row.offers);
   const persistedByChain = {
     qfc: false,
     safeway: false,
     fredMeyer: false,
     traderJoes: false,
   };
-
-  if (zip) {
-    try {
-      const stores = await findSafewayStores(zip);
-      const safewayStore = stores[0];
-      if (!safewayStore) throw new Error("No Safeway store was found for that ZIP code.");
-      const products = await searchSafewayProducts(query, safewayStore.storeId);
-      if (await rememberAll(products, { ...safewayStore, chain: "Safeway" }, "scrape", "safeway")) {
-        persistedByChain.safeway = true;
-      }
-      for (const product of products) offers.push(asOffer(product, "Safeway"));
-    } catch (error) {
-      safewayError = error.message;
-    }
-
-    try {
-      const stores = await findFredMeyerStores(zip);
-      const store = stores[0];
-      if (!store) throw new Error("No Fred Meyer store was found for that ZIP code.");
-      const products = await searchFredMeyerProducts(query, store.locationId);
-      if (await rememberAll(products, { ...store, chain: "Fred Meyer" }, "api", "kroger")) {
-        persistedByChain.fredMeyer = true;
-      }
-      for (const product of products) offers.push(asOffer(product, "Fred Meyer"));
-    } catch (error) {
-      fredMeyerError = error.message;
-    }
-
-    try {
-      const stores = await findTraderJoesStores(zip);
-      const store = stores[0];
-      if (!store) throw new Error("No Trader Joe's store was found for that ZIP code.");
-      const products = await searchTraderJoesProducts(query, store.storeId);
-      if (await rememberAll(products, { ...store, chain: "Trader Joe's" }, "scrape", "trader_joes")) {
-        persistedByChain.traderJoes = true;
-      }
-      for (const product of products) offers.push(asOffer(product, "Trader Joe's"));
-    } catch (error) {
-      traderJoesError = error.message;
-    }
-  } else {
-    safewayError = "A ZIP code is required to search Safeway.";
-    fredMeyerError = "A ZIP code is required to search Fred Meyer.";
-    traderJoesError = "A ZIP code is required to search Trader Joe's.";
+  for (const row of results) {
+    if (row.persisted) persistedByChain[row.key] = true;
   }
 
-  try {
-    let qfcLocationId = locationId;
-    let store = null;
-    if (!qfcLocationId && zip) {
-      const stores = await findQfcStores(zip);
-      store = stores[0] ?? null;
-      qfcLocationId = store?.locationId;
-    }
-    if (!qfcLocationId) throw new Error("No QFC store was found for that ZIP code.");
-    if (!store && zip) {
-      const stores = await findQfcStores(zip);
-      store = stores.find((row) => row.locationId === qfcLocationId) ?? stores[0] ?? null;
-    }
-    const products = await searchQfcProducts(query, qfcLocationId);
-    if (store && (await rememberAll(products, { ...store, chain: "QFC" }, "api", "kroger"))) {
-      persistedByChain.qfc = true;
-    }
-    for (const product of products) offers.push(asOffer(product, "QFC"));
-  } catch (error) {
-    qfcError = error.message;
-  }
+  const errorFor = (key) => results.find((row) => row.key === key)?.error ?? null;
 
-  const wrote = Object.values(persistedByChain).some(Boolean);
   return {
     offers,
     lowest: lowestOffer(offers),
-    qfcError,
-    fredMeyerError,
-    safewayError,
-    traderJoesError,
+    qfcError: errorFor("qfc"),
+    fredMeyerError: zip
+      ? errorFor("fredMeyer")
+      : "A ZIP code is required to search Fred Meyer.",
+    safewayError: zip ? errorFor("safeway") : "A ZIP code is required to search Safeway.",
+    traderJoesError: zip
+      ? errorFor("traderJoes")
+      : "A ZIP code is required to search Trader Joe's.",
     canPersist: canPersist(),
-    persisted: wrote,
+    persisted: Object.values(persistedByChain).some(Boolean),
     persistedByChain,
     cooledDown: false,
   };
@@ -425,16 +515,29 @@ app.get("/api/prices", async (req, res) => {
   }
 
   const zip = req.query.zip ? String(req.query.zip) : "";
-  const cached = readIngestCache(zip, query);
+  const forceRefresh =
+    req.query.refresh === "1" || req.query.refresh === "true" || req.query.fresh === "1";
+  /** Optional: comma-separated keys qfc,fredMeyer,safeway,traderJoes */
+  const chainsRaw = req.query.chains ? String(req.query.chains) : "";
+  const allowedKeys = chainsRaw
+    ? new Set(
+        chainsRaw
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      )
+    : null;
+  const cacheKey = allowedKeys ? `${query}::${[...allowedKeys].sort().join(",")}` : query;
+  const cached = forceRefresh ? null : readIngestCache(zip, cacheKey);
   if (cached) {
     res.status(200).json({ ...cached, cooledDown: true });
     return;
   }
 
-  const body = await lookupPrices(query, zip || null, req.query.locationId);
+  const body = await lookupPrices(query, zip || null, req.query.locationId, allowedKeys);
   // Do not freeze a partial/failed multi-store result for the full cooldown.
   if (!hasRetailerError(body)) {
-    writeIngestCache(zip, query, body);
+    writeIngestCache(zip, cacheKey, body);
   }
   const status =
     body.offers.length > 0 ||

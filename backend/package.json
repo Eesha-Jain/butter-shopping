@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "bootstrap": "node bootstrap-staples.js",
-    "bootstrap:uw": "node bootstrap-staples.js --zip=98195"
+    "bootstrap:uw": "node bootstrap-staples.js --zip=98195",
+    "refresh:kroger": "node bootstrap-staples.js --zip=98195 --chains=qfc,fredMeyer --concurrency=3"
   },
   "keywords": [],
   "type": "module",

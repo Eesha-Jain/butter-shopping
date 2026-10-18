@@ -1,3 +1,4 @@
+import { SymbolView } from 'expo-symbols';
 import { useEffect, useMemo, useState } from 'react';
 import {
   Animated,
@@ -149,8 +150,16 @@ export function ShopFiltersDrawer({
           ]}>
           <View style={styles.header}>
             <ThemedText type="subtitle">Filters</ThemedText>
-            <Pressable onPress={() => requestClose()}>
-              <ThemedText type="linkPrimary">Close</ThemedText>
+            <Pressable
+              onPress={() => requestClose()}
+              hitSlop={12}
+              accessibilityRole="button"
+              accessibilityLabel="Close">
+              <SymbolView
+                name={{ ios: 'xmark', android: 'close', web: 'close' }}
+                size={20}
+                tintColor={theme.text}
+              />
             </Pressable>
           </View>
 
