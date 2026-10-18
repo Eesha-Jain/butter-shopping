@@ -1,177 +1,143 @@
-import { Image } from 'expo-image';
-import { SymbolView } from 'expo-symbols';
-import { Platform, Pressable, ScrollView, StyleSheet } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ExternalLink } from '@/components/external-link';
+import { useSession } from '@/auth/session';
+import {
+  getWeeklyShoppingBoard,
+  listMyLocations,
+  resolveShopZip,
+  showSuccessToast,
+  type WeeklyBoardColumn,
+  type WeeklyShoppingBoard,
+} from '@/backend';
+import { WeeklyShoppingBoardView } from '@/components/shop/weekly-shopping-board';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Collapsible } from '@/components/ui/collapsible';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { BottomTabInset, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
-export default function TabTwoScreen() {
-  const safeAreaInsets = useSafeAreaInsets();
-  const insets = {
-    ...safeAreaInsets,
-    bottom: safeAreaInsets.bottom + BottomTabInset + Spacing.three,
-  };
+export default function DaysScreen() {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
+  const { isGuest, requestSignIn } = useSession();
+  const [board, setBoard] = useState<WeeklyShoppingBoard | null>(null);
+  const [locationLabel, setLocationLabel] = useState('Campus area');
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const contentPlatformStyle = Platform.select({
-    android: {
-      paddingTop: insets.top,
-      paddingLeft: insets.left,
-      paddingRight: insets.right,
-      paddingBottom: insets.bottom,
+  const load = useCallback(
+    async (refresh = false) => {
+      if (refresh) setRefreshing(true);
+      else setLoading(true);
+      setError(null);
+      try {
+        const zip = await resolveShopZip().catch(() => '98195');
+        if (!isGuest) {
+          const locations = await listMyLocations().catch(() => []);
+          const home = locations.find((row) => row.is_default) ?? locations[0];
+          if (home) {
+            const line = [home.address_line1, home.city, home.region, home.postal_code]
+              .filter(Boolean)
+              .join(', ');
+            setLocationLabel(line || zip);
+          } else {
+            setLocationLabel(zip);
+          }
+        } else {
+          setLocationLabel(zip);
+        }
+        const next = await getWeeklyShoppingBoard({ postalCode: zip, isGuest });
+        setBoard(next);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not load weekly shopping.');
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
     },
-    web: {
-      paddingTop: Spacing.six,
-      paddingBottom: Spacing.four,
-    },
-  });
+    [isGuest],
+  );
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const onColumnPress = (column: WeeklyBoardColumn) => {
+    const bits = [column.dateLabel, column.headline, column.timeWindowLabel, column.detail].filter(
+      Boolean,
+    );
+    showSuccessToast(column.title, bits.join(' · '));
+  };
 
   return (
-    <ScrollView
-      style={[styles.scrollView, styles.transparent]}
-      contentInset={insets}
-      contentContainerStyle={[styles.contentContainer, contentPlatformStyle]}>
-      <ThemedView style={[styles.container, styles.transparent]}>
-        <ThemedView style={[styles.titleContainer, styles.transparent]}>
-          <ThemedText type="subtitle">Days</ThemedText>
-          <ThemedText style={styles.centerText} themeColor="textSecondary">
-            This starter app includes example{'\n'}code to help you get started.
+    <ThemedView style={styles.root}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.content,
+          {
+            paddingTop: insets.top + Spacing.three,
+            paddingBottom: insets.bottom + BottomTabInset + Spacing.four,
+          },
+        ]}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void load(true)}
+            tintColor={theme.text}
+          />
+        }>
+        <View style={styles.header}>
+          <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>
+            {locationLabel}
           </ThemedText>
+        </View>
 
-          <ExternalLink href="https://docs.expo.dev" asChild>
-            <Pressable style={({ pressed }) => pressed && styles.pressed}>
-              <ThemedView type="backgroundElement" style={styles.linkButton}>
-                <ThemedText type="link">Expo documentation</ThemedText>
-                <SymbolView
-                  tintColor={theme.text}
-                  name={{ ios: 'arrow.up.right.square', android: 'link', web: 'link' }}
-                  size={12}
-                />
-              </ThemedView>
+        {error && !board ? (
+          <View style={styles.centered}>
+            <ThemedText>{error}</ThemedText>
+            <Pressable onPress={() => void load()}>
+              <ThemedText type="linkPrimary">Try again</ThemedText>
             </Pressable>
-          </ExternalLink>
-        </ThemedView>
-
-        <ThemedView style={[styles.sectionsWrapper, styles.transparent]}>
-          <Collapsible title="File-based routing">
-            <ThemedText type="small">
-              This app has two screens: <ThemedText type="code">src/app/index.tsx</ThemedText> and{' '}
-              <ThemedText type="code">src/app/(app)/days.tsx</ThemedText>
-            </ThemedText>
-            <ThemedText type="small">
-              The layout file in <ThemedText type="code">src/app/_layout.tsx</ThemedText> sets up
-              the tab navigator.
-            </ThemedText>
-            <ExternalLink href="https://docs.expo.dev/router/introduction">
-              <ThemedText type="linkPrimary">Learn more</ThemedText>
-            </ExternalLink>
-          </Collapsible>
-
-          <Collapsible title="Android, iOS, and web support">
-            <ThemedView type="backgroundElement" style={styles.collapsibleContent}>
-              <ThemedText type="small">
-                You can open this project on Android, iOS, and the web. To open the web version,
-                press <ThemedText type="smallBold">w</ThemedText> in the terminal running this
-                project.
-              </ThemedText>
-            </ThemedView>
-          </Collapsible>
-
-          <Collapsible title="Images">
-            <ThemedText type="small">
-              For static images, you can use the <ThemedText type="code">@2x</ThemedText> and{' '}
-              <ThemedText type="code">@3x</ThemedText> suffixes to provide files for different
-              screen densities.
-            </ThemedText>
-            <Image source={require('@/assets/images/logo.png')} style={styles.imageReact} />
-            <ExternalLink href="https://reactnative.dev/docs/images">
-              <ThemedText type="linkPrimary">Learn more</ThemedText>
-            </ExternalLink>
-          </Collapsible>
-
-          <Collapsible title="Light and dark mode components">
-            <ThemedText type="small">
-              This template has light and dark mode support. The{' '}
-              <ThemedText type="code">useColorScheme()</ThemedText> hook lets you inspect what the
-              user&apos;s current color scheme is, and so you can adjust UI colors accordingly.
-            </ThemedText>
-            <ExternalLink href="https://docs.expo.dev/develop/user-interface/color-themes/">
-              <ThemedText type="linkPrimary">Learn more</ThemedText>
-            </ExternalLink>
-          </Collapsible>
-
-          <Collapsible title="Animations">
-            <ThemedText type="small">
-              This template includes an example of an animated component. The{' '}
-              <ThemedText type="code">src/components/ui/collapsible.tsx</ThemedText> component uses
-              the powerful <ThemedText type="code">react-native-reanimated</ThemedText> library to
-              animate opening this hint.
-            </ThemedText>
-          </Collapsible>
-        </ThemedView>
-      </ThemedView>
-    </ScrollView>
+          </View>
+        ) : loading && !board ? (
+          <View style={styles.centered}>
+            <ActivityIndicator color={theme.primary} />
+          </View>
+        ) : (
+          <WeeklyShoppingBoardView
+            board={board}
+            loading={loading}
+            onSignIn={requestSignIn}
+            onColumnPress={onColumnPress}
+          />
+        )}
+      </ScrollView>
+    </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
-  scrollView: {
+  root: {
     flex: 1,
   },
-  transparent: {
-    backgroundColor: 'transparent',
+  content: {
+    gap: Spacing.four,
   },
-  contentContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-  },
-  container: {
-    maxWidth: MaxContentWidth,
-    flexGrow: 1,
-  },
-  titleContainer: {
-    gap: Spacing.three,
-    alignItems: 'center',
+  header: {
     paddingHorizontal: Spacing.four,
+  },
+  centered: {
     paddingVertical: Spacing.six,
-  },
-  centerText: {
-    textAlign: 'center',
-  },
-  pressed: {
-    opacity: 0.7,
-  },
-  linkButton: {
-    flexDirection: 'row',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-    borderRadius: Spacing.five,
-    justifyContent: 'center',
-    gap: Spacing.one,
     alignItems: 'center',
-  },
-  sectionsWrapper: {
-    gap: Spacing.five,
-    paddingHorizontal: Spacing.four,
-    paddingTop: Spacing.three,
-  },
-  collapsibleContent: {
-    alignItems: 'center',
-  },
-  imageTutorial: {
-    width: '100%',
-    aspectRatio: 296 / 171,
-    borderRadius: Spacing.three,
-    marginTop: Spacing.two,
-  },
-  imageReact: {
-    width: 100,
-    height: 100,
-    alignSelf: 'center',
+    gap: Spacing.two,
   },
 });
