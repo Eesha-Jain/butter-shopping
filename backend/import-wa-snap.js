@@ -51,11 +51,10 @@ function field(attributes, names) {
   return null;
 }
 
+const GROCERY_TYPES = new Set(["grocery store", "super store", "supermarket"]);
+
 function keepGrocery(type) {
-  const value = String(type ?? "").toLowerCase();
-  if (!value) return false;
-  if (value.includes("convenience") || value.includes("gas")) return false;
-  return value.includes("super") || value.includes("grocery") || value.includes("market");
+  return GROCERY_TYPES.has(String(type ?? "").trim().toLowerCase());
 }
 
 function zip5(value) {
@@ -190,9 +189,130 @@ async function importDiscounts() {
   return saved;
 }
 
-const features = await fetchWashington();
-const stores = await importStores(features);
-const discounts = await importDiscounts();
-console.log(
-  `Washington SNAP groceries: ${stores.inserted} added, ${stores.updated} marked. Discount rows saved: ${discounts}.`,
+function sqlText(value) {
+  if (value == null || String(value).trim() === "") return "null";
+  return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+function sqlNum(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? String(number) : "null";
+}
+
+function groceryRows(features) {
+  const rows = [];
+  const seen = new Set();
+  for (const feature of features) {
+    const attributes = feature.attributes ?? {};
+    if (!keepGrocery(field(attributes, ["Store_Type", "STORE_TYPE", "StoreType"]))) continue;
+    const name = String(field(attributes, ["Store_Name", "STORE_NAME", "StoreName"]) ?? "").trim();
+    const postal = zip5(field(attributes, ["Zip_Code", "ZIP_CODE", "Zip", "Zip5"]));
+    if (!name || postal.length !== 5) continue;
+    const objectId = field(attributes, ["ObjectId", "OBJECTID", "objectid"]) ?? `${name}|${postal}`;
+    const sourceRef = String(objectId);
+    if (seen.has(sourceRef)) continue;
+    seen.add(sourceRef);
+    const geometry = feature.geometry ?? {};
+    rows.push({
+      name,
+      address: field(attributes, ["Store_Street_Address", "Address", "Street"]),
+      city: field(attributes, ["City", "CITY"]),
+      postal,
+      latitude: geometry.y ?? field(attributes, ["Latitude", "LATITUDE"]),
+      longitude: geometry.x ?? field(attributes, ["Longitude", "LONGITUDE"]),
+      sourceRef,
+      chain: chainNameFor(name),
+    });
+  }
+  return rows;
+}
+
+function writeSqlFiles(rows, directory) {
+  fs.mkdirSync(directory, { recursive: true });
+  const setup = `create table if not exists public.wa_snap_stage (
+  name text not null,
+  address text,
+  city text,
+  postal_code text not null,
+  latitude double precision,
+  longitude double precision,
+  source_ref text not null,
+  chain_name text
 );
+truncate public.wa_snap_stage;
+`;
+  fs.writeFileSync(path.join(directory, "00-setup.sql"), setup);
+  const size = 200;
+  for (let index = 0; index < rows.length; index += size) {
+    const values = rows.slice(index, index + size).map(
+      (row) =>
+        `(${sqlText(row.name)}, ${sqlText(row.address)}, ${sqlText(row.city)}, ${sqlText(row.postal)}, ${sqlNum(row.latitude)}, ${sqlNum(row.longitude)}, ${sqlText(row.sourceRef)}, ${sqlText(row.chain)})`,
+    );
+    const file = `${String(index / size + 1).padStart(3, "0")}-rows.sql`;
+    fs.writeFileSync(
+      path.join(directory, file),
+      `insert into public.wa_snap_stage (name, address, city, postal_code, latitude, longitude, source_ref, chain_name) values\n${values.join(",\n")};\n`,
+    );
+  }
+  fs.writeFileSync(
+    path.join(directory, "99-merge.sql"),
+    `insert into public.chains (name)
+select distinct chain_name
+from public.wa_snap_stage
+where chain_name is not null
+on conflict do nothing;
+
+update public.stores as store
+set accepts_snap = true,
+    region = 'WA'
+from public.wa_snap_stage as incoming
+where store.postal_code = incoming.postal_code
+  and lower(btrim(store.name)) = lower(btrim(incoming.name));
+
+insert into public.stores (
+  name, chain_id, address_line1, city, region, postal_code, country,
+  latitude, longitude, accepts_snap, source, source_ref
+)
+select
+  incoming.name,
+  chain.id,
+  incoming.address,
+  incoming.city,
+  'WA',
+  incoming.postal_code,
+  'US',
+  incoming.latitude,
+  incoming.longitude,
+  true,
+  'usda_snap',
+  incoming.source_ref
+from public.wa_snap_stage as incoming
+left join public.chains as chain on chain.name = incoming.chain_name
+where not exists (
+  select 1
+  from public.stores as store
+  where store.postal_code = incoming.postal_code
+    and lower(btrim(store.name)) = lower(btrim(incoming.name))
+)
+on conflict (source, source_ref) do update
+set accepts_snap = true,
+    region = 'WA';
+
+drop table public.wa_snap_stage;
+`,
+  );
+}
+
+const sqlDir = process.argv.indexOf("--sql-dir");
+const features = await fetchWashington();
+if (sqlDir !== -1) {
+  const rows = groceryRows(features);
+  writeSqlFiles(rows, process.argv[sqlDir + 1]);
+  console.log(`Wrote SQL for ${rows.length} Washington grocery SNAP stores.`);
+} else {
+  const stores = await importStores(features);
+  const discounts = await importDiscounts();
+  console.log(
+    `Washington SNAP groceries: ${stores.inserted} added, ${stores.updated} marked. Discount rows saved: ${discounts}.`,
+  );
+}
