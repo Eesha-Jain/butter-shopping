@@ -36,7 +36,4 @@ The app is built with **TypeScript, React Native, and Expo**. Its data services 
 - Receive spoken assistant responses where supported.
 
 ## Video Demo
-
-<video src="./assets/demovideo.mp4" controls playsinline width="100%">
-  Your browser does not support embedded videos. [Watch the demo](./assets/demovideo.mp4).
-</video>
+https://github.com/user-attachments/assets/c4cb805e-9a49-4044-80d0-b1da2f7a45ab
