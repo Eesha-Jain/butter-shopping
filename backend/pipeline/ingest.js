@@ -469,20 +469,25 @@ export async function ingestPromotion(raw) {
     return true;
   }
 
-  const groupFilter =
-    offer.requiresGroup == null
-      ? "requires_group=is.null"
-      : `requires_group=eq.${encodeURIComponent(offer.requiresGroup)}`;
-  const existing = await rest(
-    `promotions?chain_id=eq.${chain}&${groupFilter}&select=id&limit=1`,
-  );
-  if (existing?.[0]?.id) {
-    await rest(`promotions?id=eq.${existing[0].id}`, {
-      method: "PATCH",
-      headers: { Prefer: "return=minimal" },
-      body: JSON.stringify(row),
-    });
-    return true;
+  // Basket-wide policies only: one row per chain + eligibility group.
+  // Product-linked weekly-ad deals must not overwrite each other via this path.
+  const isBasketWide = !productId && !offer.productUpc && !offer.productName;
+  if (isBasketWide) {
+    const groupFilter =
+      offer.requiresGroup == null
+        ? "requires_group=is.null"
+        : `requires_group=eq.${encodeURIComponent(offer.requiresGroup)}`;
+    const existing = await rest(
+      `promotions?chain_id=eq.${chain}&${groupFilter}&product_id=is.null&select=id&limit=1`,
+    );
+    if (existing?.[0]?.id) {
+      await rest(`promotions?id=eq.${existing[0].id}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify(row),
+      });
+      return true;
+    }
   }
 
   await rest("promotions", {

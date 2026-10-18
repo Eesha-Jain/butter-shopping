@@ -233,6 +233,7 @@ export {
   suggestDiscountDate,
   suggestGroceryDate,
   getWeeklyShoppingBoard,
+  weeklyBoardPassesQualityGate,
   traitsChangedSince,
   openProductOnList,
   unpreferStore,

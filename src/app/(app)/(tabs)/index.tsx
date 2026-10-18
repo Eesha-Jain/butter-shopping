@@ -1,6 +1,7 @@
 import * as Haptics from 'expo-haptics';
 import * as Location from 'expo-location';
 import { Image } from 'expo-image';
+import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import {
@@ -51,6 +52,7 @@ import {
   getProductPromotionMap,
   getProductTraitsForIds,
   getProductsByIds,
+  getWeeklyShoppingBoard,
   indexTraitsByProduct,
   listCampusPopularProducts,
   listFoodTraits,
@@ -60,6 +62,8 @@ import {
   listMyStapleProductIds,
   listShelfForStores,
   listTrending,
+  type WeeklyBoardColumn,
+  type WeeklyShoppingBoard,
   removeListItem,
   resolveSearchCoords,
   resolveShopZip,
@@ -88,6 +92,7 @@ import { ProductPeek } from '@/components/shop/product-peek';
 import type { ProductPeekAnchor } from '@/components/shop/product-peek-layout';
 import { ShopFiltersDrawer } from '@/components/shop/shop-filters-drawer';
 import { ShopProductCard, type ShopCardActions } from '@/components/shop/shop-product-card';
+import { WeeklyShoppingBoardView } from '@/components/shop/weekly-shopping-board';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { ButterChip } from '@/components/ui/butter-chip';
@@ -252,6 +257,8 @@ export default function ShopScreen() {
   const [onSaleOnly, setOnSaleOnly] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [shellReady, setShellReady] = useState(false);
+  const [weeklyBoard, setWeeklyBoard] = useState<WeeklyShoppingBoard | null>(null);
+  const [weeklyBoardLoading, setWeeklyBoardLoading] = useState(false);
 
   const [search, setSearch] = useState('');
   const [peekProduct, setPeekProduct] = useState<Product | null>(null);
@@ -427,6 +434,26 @@ export default function ShopScreen() {
         if (!cancelled) setFavoriteIds(new Set(ids));
       } catch {
         if (!cancelled) setFavoriteIds(new Set());
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isGuest, shellReady]);
+
+  useEffect(() => {
+    if (!shellReady) return;
+    let cancelled = false;
+    setWeeklyBoardLoading(true);
+    void (async () => {
+      try {
+        const zip = await resolveShopZip().catch(() => '98195');
+        const board = await getWeeklyShoppingBoard({ postalCode: zip, isGuest });
+        if (!cancelled) setWeeklyBoard(board.showBoard ? board : null);
+      } catch {
+        if (!cancelled) setWeeklyBoard(null);
+      } finally {
+        if (!cancelled) setWeeklyBoardLoading(false);
       }
     })();
     return () => {
@@ -1178,6 +1205,28 @@ export default function ShopScreen() {
     scrollYRef.current.browse = 0;
   }, []);
 
+  const onWeeklyBoardColumnPress = useCallback(
+    (column: WeeklyBoardColumn) => {
+      if (column.needsSignIn) {
+        requestSignIn('signUp');
+        return;
+      }
+      if (
+        (column.id === 'today' || column.id === 'bestDeal') &&
+        column.chips.some((chip) => chip.fromPromo)
+      ) {
+        setOnSaleOnly(true);
+        resetBrowseScroll();
+        return;
+      }
+      router.push({
+        pathname: '/list',
+        params: { focusYmd: column.ymd, segment: 'calendar' },
+      });
+    },
+    [requestSignIn, resetBrowseScroll],
+  );
+
   const tapHaptic = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
   };
@@ -1482,6 +1531,15 @@ export default function ShopScreen() {
                 }}>
                 {renderSearchRow()}
               </View>
+
+              {!isSearching && (weeklyBoardLoading || weeklyBoard) ? (
+                <WeeklyShoppingBoardView
+                  board={weeklyBoard}
+                  loading={weeklyBoardLoading}
+                  onSignIn={() => requestSignIn('signUp')}
+                  onColumnPress={onWeeklyBoardColumnPress}
+                />
+              ) : null}
 
               {locationSuggestions.length > 0 ? (
                 <ScrollView
