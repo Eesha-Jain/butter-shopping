@@ -62,7 +62,25 @@ export const CATEGORY_KEYWORDS = [
   { category: "Frozen", patterns: ["frozen", "ice cream", "frozen pizza"] },
   {
     category: "Beverages",
-    patterns: ["fruit juice", "orange juice", "apple juice", "coffee", "juice", "water", "soda", "tea"],
+    // Drink forms override produce tokens (smoothie / sparkling water before mango/strawberry).
+    patterns: [
+      "fruit juice",
+      "orange juice",
+      "apple juice",
+      "fruit drink",
+      "smoothie",
+      "smoothies",
+      "sparkling water",
+      "sparkling",
+      "lemonade",
+      "kombucha",
+      "nectar",
+      "coffee",
+      "juice",
+      "water",
+      "soda",
+      "tea",
+    ],
   },
   {
     category: "Dairy",

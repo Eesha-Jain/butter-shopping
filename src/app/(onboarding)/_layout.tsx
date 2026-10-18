@@ -18,6 +18,7 @@ export default function OnboardingLayout() {
         <Stack.Screen name="index" options={{ animation: 'fade' }} />
         <Stack.Screen name="welcome" options={{ animation: 'fade' }} />
         <Stack.Screen name="account" />
+        <Stack.Screen name="privacy" options={{ animation: 'fade' }} />
         <Stack.Screen name="eat" />
         <Stack.Screen name="save" />
         <Stack.Screen name="shop" />

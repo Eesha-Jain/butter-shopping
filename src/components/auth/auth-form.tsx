@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import { router } from 'expo-router';
 import { useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
@@ -224,9 +225,14 @@ export function AuthForm({
           </View>
 
           {mode === 'signUp' ? (
-            <Text style={[styles.terms, { color: theme.textSecondary }]}>
-              By signing up, you agree to our terms of service.
-            </Text>
+            <Pressable
+              onPress={() => router.push('/privacy')}
+              accessibilityRole="button"
+              accessibilityLabel="Privacy policy">
+              <Text style={[styles.terms, { color: theme.textSecondary }]}>
+                By signing up, you agree to our privacy policy.
+              </Text>
+            </Pressable>
           ) : null}
 
           <ButterButton

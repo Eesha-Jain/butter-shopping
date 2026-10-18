@@ -16,6 +16,8 @@ const KEYS = {
   aiTextReplyAudio: 'butter.aiTextReplyAudio',
   /** 'female' | 'male' | 'cow'. Cow moos; the reply text still shows the words. */
   aiVoice: 'butter.aiVoice',
+  /** Text of the last three voice requests, newest first. Not the audio. */
+  recentVoiceTexts: 'butter.recentVoiceTexts',
   activeListId: 'butter.activeListId',
 } as const;
 

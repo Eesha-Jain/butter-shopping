@@ -21,14 +21,18 @@ import {
   useAudioRecorderState,
 } from 'expo-audio';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
 
 import {
   addListItem,
   getAiVoice,
   getMyDefaultList,
+  getRecentVoiceTexts,
   isAiTextReplyAudioEnabled,
+  listMyLocations,
   openProductOnList,
+  rememberVoiceText,
   removeListItem,
   searchProducts,
   speakAssistant,
@@ -409,7 +413,12 @@ function VoiceAgent() {
   const heardVoice = useRef(false);
   const autoStopLock = useRef(false);
   const promptRef = useRef<string | null>(null);
+  const locationRef = useRef<string | null>(null);
   const clarifyMode = useRef(false);
+  const voiceExtras = useCallback(
+    () => ({ location: locationRef.current, recentTexts: getRecentVoiceTexts() }),
+    [],
+  );
   const setCards = useCallback((next: ItemCard[]) => {
     cardsRef.current = next;
     setCardsState(next);
@@ -417,6 +426,32 @@ function VoiceAgent() {
   const setSplits = useCallback((next: VoiceOrderSplit[]) => {
     splitsRef.current = next;
     setSplitsState(next);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const rows = await listMyLocations();
+        const home = rows.find((row) => row.is_default) ?? rows[0] ?? null;
+        const area = [home?.city, home?.region].filter((part) => part && part.trim()).join(', ');
+        if (area) {
+          if (active) locationRef.current = area;
+          return;
+        }
+        const permission = await Location.getForegroundPermissionsAsync();
+        if (!permission.granted) return;
+        const place = await Location.getCurrentPositionAsync({});
+        if (active) {
+          locationRef.current = `${place.coords.latitude.toFixed(2)}, ${place.coords.longitude.toFixed(2)}`;
+        }
+      } catch {
+        // Voice still works without a place.
+      }
+    })();
+    return () => {
+      active = false;
+    };
   }, []);
 
   const pulse = useRef(new Animated.Value(0)).current;
@@ -866,7 +901,10 @@ function VoiceAgent() {
       setPhrases(result.phrases ?? null);
       setReplyLanguage(result.language);
       setTranscript(cleanTranscript || null);
-      if (cleanTranscript) promptRef.current = cleanTranscript;
+      if (cleanTranscript) {
+        promptRef.current = cleanTranscript;
+        rememberVoiceText(cleanTranscript);
+      }
       const listed = cardsFromResult(result);
       const stillConfused =
         resultIsConfused(result) || listed.length > 0 || (result.splits ?? []).length > 0;
@@ -1062,7 +1100,11 @@ function VoiceAgent() {
       return;
     }
     try {
-      const result = await voiceOrder(uri, clarifying ? promptRef.current ?? undefined : undefined);
+      const result = await voiceOrder(
+        uri,
+        clarifying ? promptRef.current ?? undefined : undefined,
+        voiceExtras(),
+      );
       if (clarifying) {
         const heard =
           result.heard != null
@@ -1079,7 +1121,7 @@ function VoiceAgent() {
         setClarifyText('');
         const prompt = promptRef.current?.trim();
         if (result.heard == null && prompt && (result.added ?? []).length === 0) {
-          const resolved = await voiceOrderFromText(prompt, heard);
+          const resolved = await voiceOrderFromText(prompt, heard, voiceExtras());
           await applyResult(resolved, { playAudio: true, keepPrompt: true });
           return;
         }
@@ -1122,7 +1164,7 @@ function VoiceAgent() {
       setPhase('idle');
       autoStopLock.current = false;
     }
-  }, [recorder, applyResult, applyVerbal, chooseSplit, setCards, speakLine, startListening]);
+  }, [recorder, applyResult, applyVerbal, chooseSplit, setCards, speakLine, startListening, voiceExtras]);
 
   useEffect(() => {
     if (phase !== 'listening' || !recorderState.isRecording) return;
@@ -1193,7 +1235,7 @@ function VoiceAgent() {
     setPhase('processing');
     setReply('Checking that…');
     try {
-      const result = await voiceOrderFromText(prompt, note);
+      const result = await voiceOrderFromText(prompt, note, voiceExtras());
       setClarifyText('');
       await applyResult(result, { playAudio: isAiTextReplyAudioEnabled(), keepPrompt: true });
     } catch (err) {
@@ -1201,7 +1243,7 @@ function VoiceAgent() {
     } finally {
       setPhase('idle');
     }
-  }, [applyResult, clarifyText, phase, recorder, replyPlayer, transcript]);
+  }, [applyResult, clarifyText, phase, recorder, replyPlayer, transcript, voiceExtras]);
 
   const onPressInTalk = useCallback(() => {
     if (phaseRef.current !== 'idle') return;
@@ -1260,7 +1302,8 @@ function VoiceAgent() {
     setReply(null);
     setTranscript(null);
     try {
-      const result = await voiceOrderFromText(text);
+      const result = await voiceOrderFromText(text, undefined, voiceExtras());
+      rememberVoiceText(text);
       await applyResult(result, { playAudio: isAiTextReplyAudioEnabled() });
       setTypedText('');
     } catch (err) {
@@ -1269,7 +1312,7 @@ function VoiceAgent() {
     } finally {
       setPhase('idle');
     }
-  }, [typedText, phase, applyQuantity, applyResult, applyVerbal, chooseSplit, replyLanguage, replyPlayer, speakLine]);
+  }, [typedText, phase, applyQuantity, applyResult, applyVerbal, chooseSplit, replyLanguage, replyPlayer, speakLine, voiceExtras]);
 
   const label =
     phase === 'processing' ? 'Thinking…' : phase === 'listening' ? 'Listening… tap to stop' : 'Tap to talk';
