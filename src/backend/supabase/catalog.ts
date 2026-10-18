@@ -50,13 +50,13 @@ export async function findProductByUpc(upc: string): Promise<Product | null> {
  * Stores within radiusKm of a coordinate, nearest first. Stores without
  * latitude and longitude are omitted.
  */
-export async function nearbyStores(input: {
+export async function nearbyShops(input: {
   latitude: number;
   longitude: number;
   radiusKm?: number;
 }): Promise<NearbyStore[]> {
   return unwrap(
-    await supabase.rpc('nearby_stores', {
+    await supabase.rpc('nearby_shops', {
       p_latitude: input.latitude,
       p_longitude: input.longitude,
       p_radius_km: input.radiusKm ?? 25,

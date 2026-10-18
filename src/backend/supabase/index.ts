@@ -56,7 +56,7 @@ export {
   listCurrentPromotions,
   listReportedOffers,
   listReportableStores,
-  nearbyStores,
+  nearbyShops,
   productWarnings,
   registerReportableStore,
   reportManualPrice,
@@ -64,6 +64,7 @@ export {
   searchCategories,
   searchProducts,
 } from './catalog';
+export { fetchNearbyShops, getUserCoords } from './locationService';
 export {
   getWeeklyBudgetCents,
   planLowestTrip,

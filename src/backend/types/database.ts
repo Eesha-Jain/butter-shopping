@@ -76,7 +76,7 @@ export type Database = {
       create_group: { Args: { p_name: string; p_kind: 'household' | 'event' }; Returns: string };
       join_group: { Args: { p_invite_code: string }; Returns: string };
       leave_group: { Args: { p_group_id: string }; Returns: undefined };
-      nearby_stores: {
+      nearby_shops: {
         Args: { p_latitude: number; p_longitude: number; p_radius_km?: number };
         Returns: NearbyStore[];
       };
