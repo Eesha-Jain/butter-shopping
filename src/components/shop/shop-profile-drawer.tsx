@@ -19,8 +19,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import type { AuthMode } from '@/auth/auth-mode';
 import {
-  clearLocalData,
   getAiVoice,
   getEffectiveGroceryCashbackBps,
   isAiTextReplyAudioEnabled,
@@ -28,13 +28,12 @@ import {
   removeMyAvatar,
   setAiTextReplyAudioEnabled,
   setAiVoice,
-  type AiVoice,
   setGroceryCashbackBps,
   showErrorToast,
   showSuccessToast,
   uploadMyAvatar,
+  type AiVoice
 } from '@/backend';
-import type { AuthMode } from '@/auth/auth-mode';
 import { ThemedText } from '@/components/themed-text';
 import { ButterButton } from '@/components/ui/butter-button';
 import { ButterChip } from '@/components/ui/butter-chip';
@@ -490,13 +489,13 @@ export function ShopProfileDrawer({
           )}
 
           {/* TEMP: testing only — remove before shipping */}
-          {/* <Pressable
+          <Pressable
             onPress={handleResetLocalData}
             style={[styles.outlineBtn, { borderColor: theme.border, marginTop: 'auto' }]}>
             <ThemedText type="smallBold" themeColor="textSecondary">
               Reset local data
             </ThemedText>
-          </Pressable> */}
+          </Pressable>
         </Animated.View>
       </View>
     </Modal>

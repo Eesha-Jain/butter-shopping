@@ -152,12 +152,8 @@ export function WeeklyShoppingBoardView({ board, loading, onSignIn, onColumnPres
     );
   }
 
-  if (!board) {
-    return (
-      <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>
-        Could not load weekly shopping suggestions.
-      </ThemedText>
-    );
+  if (!board || !board.showBoard || board.columns.length === 0) {
+    return null;
   }
 
   const recommended = board.columns.find((c) => c.id === 'recommended');

@@ -1,6 +1,6 @@
 import * as Haptics from 'expo-haptics';
 import { SymbolView } from 'expo-symbols';
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -29,6 +29,7 @@ import { useActiveList } from '@/auth/active-list';
 import { useGuestCart } from '@/auth/guest-cart-context';
 import { useSession } from '@/auth/session';
 import {
+  addListItem,
   getCheapestShelfSaleByProductIds,
   getMyProfile,
   getProductsByIds,
@@ -44,6 +45,7 @@ import {
   recommendShoppingPlan,
   removeListItem,
   resolveShopZip,
+  saveHabit,
   setListItemDone,
   showErrorToast,
   showSuccessToast,
@@ -72,9 +74,11 @@ import {
   assignGroceryDay,
   buildGroceryDays,
   parseYmd,
+  ymdFromLocalDate,
   type GroceryDayPlan,
 } from '@/components/plan/grocery-days';
 import { DayFiltersDrawer } from '@/components/plan/day-filters-drawer';
+import { CadencePickerModal } from '@/components/plan/cadence-picker-modal';
 import { ListItemRow, cadenceLabel } from '@/components/plan/list-item-row';
 import {
   ShoppingCompleteOverlay,
@@ -100,6 +104,12 @@ import { NativeIconButton } from '@/components/ui/native-icon-button';
 import { formatSavingsCents, MIN_SAVINGS_CENTS, SavingsChip } from '@/components/ui/savings-chip';
 import { BottomTabInset, Fonts, Radius, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+
+type CadencePrompt = {
+  groupId: string;
+  productId: string;
+  name: string;
+};
 
 type Segment = 'calendar' | 'list' | 'past';
 
@@ -132,6 +142,17 @@ function habitKey(habit: Pick<ItemHabit, 'product_id' | 'category_id'>): string 
   if (habit.product_id) return `p:${habit.product_id}`;
   if (habit.category_id) return `c:${habit.category_id}`;
   return null;
+}
+
+/** Same advance rule as add_due_habit_items: step by interval until after today. */
+function nextDueAfterToday(nextDueOn: string, intervalDays: number, todayYmd: string): string {
+  let next = nextDueOn;
+  do {
+    const date = parseYmd(next);
+    date.setDate(date.getDate() + intervalDays);
+    next = ymdFromLocalDate(date);
+  } while (next <= todayYmd);
+  return next;
 }
 
 function itemHabitKey(item: Pick<ResolvedListItem, 'product_id' | 'category_id'>): string | null {
@@ -186,6 +207,7 @@ export default function PlanScreen() {
   const myUserId = session?.user.id ?? null;
   const guestCart = useGuestCart();
   const { targets, isLoading: listsLoading } = useActiveList();
+  const routeParams = useLocalSearchParams<{ focusYmd?: string; segment?: string }>();
 
   const [segment, setSegment] = useState<Segment>('calendar');
   const [error, setError] = useState<string | null>(null);
@@ -209,6 +231,8 @@ export default function PlanScreen() {
   );
   const [productImages, setProductImages] = useState<Map<string, string | null>>(() => new Map());
   const [productNames, setProductNames] = useState<Map<string, string>>(() => new Map());
+  /** Unit shelf/sale price cents by product id (for guest Plan rows). */
+  const [unitPriceByProduct, setUnitPriceByProduct] = useState<Map<string, number>>(() => new Map());
   /** Unit cents saved (regular − shelf) by product id. */
   const [unitSavingsByProduct, setUnitSavingsByProduct] = useState<Map<string, number>>(
     () => new Map(),
@@ -222,13 +246,19 @@ export default function PlanScreen() {
 
   const [collapsedOrderKeys, setCollapsedOrderKeys] = useState<Set<string>>(() => new Set());
   const [placingKey, setPlacingKey] = useState<string | null>(null);
+  const [addingStapleId, setAddingStapleId] = useState<string | null>(null);
+  const [dismissedStapleIds, setDismissedStapleIds] = useState<Set<string>>(() => new Set());
 
   const [pastDetail, setPastDetail] = useState<RunOrder | null>(null);
   const [pastItems, setPastItems] = useState<OrderItem[]>([]);
   const [pastShares, setPastShares] = useState<OrderShare[]>([]);
+  const [pastLoadError, setPastLoadError] = useState<string | null>(null);
+  const [cadenceQueue, setCadenceQueue] = useState<CadencePrompt[]>([]);
+  const [cadenceSaving, setCadenceSaving] = useState(false);
 
   const todayYmd = todayLocalDateKey();
   const showSource = targets.length > 1;
+  const cadencePrompt = cadenceQueue[0] ?? null;
 
   const habitMapByGroup = useMemo(() => {
     const out = new Map<string, Map<string, ItemHabit>>();
@@ -253,7 +283,7 @@ export default function PlanScreen() {
 
   /** Auto-add staples that are not on any of that group's lists yet. */
   const upcomingStaples = useMemo(() => {
-    const out: { habit: ItemHabit; groupName: string }[] = [];
+    const out: { habit: ItemHabit; groupId: string; groupName: string }[] = [];
     for (const [groupId, data] of groupsData) {
       const onList = new Set(
         lists
@@ -263,13 +293,19 @@ export default function PlanScreen() {
       );
       for (const habit of data.habits) {
         const key = habitKey(habit);
-        if (habit.auto_add_enabled && habit.next_due_on && key && !onList.has(key)) {
-          out.push({ habit, groupName: data.group.name });
+        if (
+          habit.auto_add_enabled &&
+          habit.next_due_on &&
+          key &&
+          !onList.has(key) &&
+          !dismissedStapleIds.has(habit.id)
+        ) {
+          out.push({ habit, groupId, groupName: data.group.name });
         }
       }
     }
     return out;
-  }, [groupsData, lists]);
+  }, [groupsData, lists, dismissedStapleIds]);
 
   const upcomingPlaced = useMemo(
     () =>
@@ -455,6 +491,19 @@ export default function PlanScreen() {
     },
     [activeYmd],
   );
+
+  // Shop weekly board → Plan calendar day.
+  useEffect(() => {
+    const focus = typeof routeParams.focusYmd === 'string' ? routeParams.focusYmd : null;
+    if (!focus || !groceryPlan.windowYmds.includes(focus)) return;
+    setSelectedYmd(focus);
+    if (routeParams.segment === 'list' || routeParams.segment === 'calendar') {
+      setSegment(routeParams.segment);
+    } else {
+      setSegment('calendar');
+    }
+  }, [routeParams.focusYmd, routeParams.segment, groceryPlan.windowYmds]);
+
   const activeReasons = useMemo(
     () => groceryPlan.reasons.get(activeYmd) ?? [],
     [groceryPlan, activeYmd],
@@ -552,10 +601,11 @@ export default function PlanScreen() {
       activeReasons.includes('bestDeal'));
 
   const loadProductMeta = useCallback(async (productIds: string[]) => {
-    const ids = [...new Set(productIds)];
+    const ids = [...new Set(productIds.filter(Boolean))];
     if (ids.length === 0) {
       setProductImages(new Map());
       setProductNames(new Map());
+      setUnitPriceByProduct(new Map());
       setUnitSavingsByProduct(new Map());
       return;
     }
@@ -565,14 +615,47 @@ export default function PlanScreen() {
     ]);
     setProductImages(new Map(products.map((product) => [product.id, product.image_path])));
     setProductNames(new Map(products.map((product) => [product.id, product.name])));
+    const prices = new Map<string, number>();
     const savings = new Map<string, number>();
     for (const [id, sale] of sales ?? []) {
+      prices.set(id, sale.priceCents);
       if (sale.regularPriceCents != null && sale.regularPriceCents > sale.priceCents) {
         savings.set(id, sale.regularPriceCents - sale.priceCents);
       }
     }
+    setUnitPriceByProduct(prices);
     setUnitSavingsByProduct(savings);
   }, []);
+
+  const guestProductIds = useMemo(
+    () =>
+      [
+        ...new Set(
+          guestCart.items
+            .map((item) => item.productId)
+            .filter((id): id is string => Boolean(id)),
+        ),
+      ],
+    [guestCart.items],
+  );
+
+  useEffect(() => {
+    if (!isGuest) return;
+    void loadProductMeta(guestProductIds);
+  }, [isGuest, guestProductIds, loadProductMeta]);
+
+  const guestTripSavingsCents = useMemo(() => {
+    if (!isGuest) return 0;
+    let sum = 0;
+    for (const item of guestCart.items) {
+      if (!item.productId) continue;
+      const unit = unitSavingsByProduct.get(item.productId);
+      if (unit == null || unit < MIN_SAVINGS_CENTS) continue;
+      const qty = item.quantity > 0 ? item.quantity : 1;
+      sum += Math.round(unit * qty);
+    }
+    return sum;
+  }, [isGuest, guestCart.items, unitSavingsByProduct]);
 
   const loadPlan = useCallback(
     async (refresh = false) => {
@@ -593,11 +676,13 @@ export default function PlanScreen() {
       if (refresh) setIsRefreshing(true);
       else setIsLoading(true);
       setError(null);
+      setPastLoadError(null);
       try {
         const zip = await resolveShopZip().catch(() => '98195');
         const uniqueGroups = [
           ...new Map(targets.map((target) => [target.group.id, target.group])).values(),
         ];
+        let orderLoadFailed = false;
         const [listRows, groupRows, shopDay, discount, profile] = await Promise.all([
           Promise.all(
             targets.map(async (target) => ({
@@ -608,20 +693,23 @@ export default function PlanScreen() {
           Promise.all(
             uniqueGroups.map(async (group): Promise<GroupData> => {
               const shared = group.kind !== 'personal';
-              const [habits, placed, expiring, members] = await Promise.all([
+              const [habits, placedResult, expiring, members] = await Promise.all([
                 listHabits(group.id).catch(() => [] as ItemHabit[]),
-                listGroupOrders(group.id, { status: ['ordered', 'complete'] }).catch(
-                  () => [] as GroupOrderRow[],
-                ),
+                listGroupOrders(group.id, { status: 'ordered' })
+                  .then((rows) => ({ ok: true as const, rows }))
+                  .catch(() => {
+                    orderLoadFailed = true;
+                    return { ok: false as const, rows: [] as GroupOrderRow[] };
+                  }),
                 listExpiringPurchases(group.id).catch(() => [] as ExpiringPurchase[]),
                 shared ? listGroupMembersWithProfiles(group.id).catch(() => null) : null,
               ]);
               return {
                 group,
                 habits,
-                placed,
+                placed: placedResult.rows,
                 expiring,
-                rotation: members ? buildRotation(members, placed) : null,
+                rotation: members ? buildRotation(members, placedResult.rows) : null,
               };
             }),
           ),
@@ -638,6 +726,9 @@ export default function PlanScreen() {
         setBestShopDay(shopDay);
         setBestDealYmd(discount);
         setPreferredDays(profile?.preferred_days ?? null);
+        if (orderLoadFailed) {
+          setPastLoadError('Could not load past orders. Pull to refresh.');
+        }
         void loadProductMeta(
           [
             ...listRows.flatMap((row) => row.items.map((item) => item.product_id)),
@@ -684,6 +775,53 @@ export default function PlanScreen() {
     );
   };
 
+  const addDueStaple = async (habit: ItemHabit, groupId: string) => {
+    if (addingStapleId) return;
+    if (!habit.product_id) {
+      router.push('/staples');
+      return;
+    }
+    const target = targets.find((row) => row.group.id === groupId);
+    if (!target) {
+      showErrorToast(new Error('No list found for this group.'));
+      return;
+    }
+    const name = productNames.get(habit.product_id) ?? 'Staple';
+    setAddingStapleId(habit.id);
+    setDismissedStapleIds((ids) => new Set(ids).add(habit.id));
+    try {
+      await addListItem({
+        listId: target.list.id,
+        productId: habit.product_id,
+        amountBase: habit.usual_amount_base ?? undefined,
+      });
+      try {
+        await saveHabit({
+          groupId,
+          productId: habit.product_id,
+          intervalDays: habit.interval_days,
+          usualAmountBase: habit.usual_amount_base ?? undefined,
+          nextDueOn: nextDueAfterToday(habit.next_due_on, habit.interval_days, todayYmd),
+          autoAddEnabled: habit.auto_add_enabled,
+        });
+      } catch {
+        // List row landed; cron will still advance next_due_on later.
+      }
+      showSuccessToast('Added to list', name);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await loadPlan(true);
+    } catch (err) {
+      setDismissedStapleIds((ids) => {
+        const next = new Set(ids);
+        next.delete(habit.id);
+        return next;
+      });
+      showErrorToast(err);
+    } finally {
+      setAddingStapleId(null);
+    }
+  };
+
   const placeOrder = (order: RunOrder) => {
     if (!order.listId || !order.storeId || placingKey) return;
     const { listId, storeId } = order;
@@ -717,7 +855,28 @@ export default function PlanScreen() {
                 showSuccessToast('Order placed', `${order.storeName} · ${formatShortDate(order.ymd)}`);
                 setCollapsedOrderKeys(new Set());
                 if (checkoutUrl) void Linking.openURL(checkoutUrl).catch(() => undefined);
+
+                const habits = habitMapByGroup.get(order.groupId);
+                const seen = new Set<string>();
+                const prompts: CadencePrompt[] = [];
+                for (const line of order.lines) {
+                  const productId = line.item.product_id;
+                  if (!productId || seen.has(productId)) continue;
+                  seen.add(productId);
+                  if (habits?.has(`p:${productId}`)) continue;
+                  prompts.push({
+                    groupId: order.groupId,
+                    productId,
+                    name:
+                      productNames.get(productId)?.trim() ||
+                      itemTitle(line.item) ||
+                      'This item',
+                  });
+                }
+
+                setSegment('past');
                 await loadPlan(true);
+                if (prompts.length > 0) setCadenceQueue(prompts);
               } catch (err) {
                 showErrorToast(err, 'Could not place this order.');
               } finally {
@@ -729,6 +888,38 @@ export default function PlanScreen() {
       ],
     );
   };
+
+  const advanceCadenceQueue = useCallback(() => {
+    setCadenceQueue((queue) => queue.slice(1));
+  }, []);
+
+  const onCadencePick = useCallback(
+    async (intervalDays: number) => {
+      const prompt = cadenceQueue[0];
+      if (!prompt || cadenceSaving) return;
+      setCadenceSaving(true);
+      try {
+        await saveHabit({
+          groupId: prompt.groupId,
+          productId: prompt.productId,
+          intervalDays,
+          autoAddEnabled: true,
+          nextDueOn: nextDueAfterToday(todayYmd, intervalDays, todayYmd),
+        });
+        showSuccessToast(
+          'Staple saved',
+          `${prompt.name} · every ${intervalDays === 7 ? 'week' : intervalDays === 14 ? '2 weeks' : 'month'}`,
+        );
+        advanceCadenceQueue();
+        void loadPlan(true);
+      } catch (err) {
+        showErrorToast(err, 'Could not save that staple.');
+      } finally {
+        setCadenceSaving(false);
+      }
+    },
+    [advanceCadenceQueue, cadenceQueue, cadenceSaving, loadPlan, todayYmd],
+  );
 
   const openPastDetail = async (order: RunOrder) => {
     if (!order.placed) return;
@@ -902,6 +1093,15 @@ export default function PlanScreen() {
             <ThemedText type="small" themeColor="textSecondary">
               Your picks stay on-device until you sign up. Then they sync to your grocery list.
             </ThemedText>
+            {guestTripSavingsCents >= MIN_SAVINGS_CENTS ? (
+              <View style={styles.tripSavingsRow}>
+                <SavingsChip
+                  compact={false}
+                  cents={guestTripSavingsCents}
+                  label={`Save ${formatSavingsCents(guestTripSavingsCents)} this trip`}
+                />
+              </View>
+            ) : null}
           </Animated.View>
           {guestCart.items.length === 0 ? (
             <View style={styles.emptyBlock}>
@@ -911,15 +1111,32 @@ export default function PlanScreen() {
           ) : (
             <View style={styles.guestCard}>
               <ThemedText type="smallBold">Your picks</ThemedText>
-              {guestCart.items.map((item) => (
-                <ListItemRow
-                  key={item.id}
-                  title={item.customName?.trim() || 'Product'}
-                  quantity={item.quantity}
-                  onDone={() => guestCart.removeItem(item.id)}
-                  onDelete={() => guestCart.removeItem(item.id)}
-                />
-              ))}
+              {guestCart.items.map((item) => {
+                const productId = item.productId ?? null;
+                const unitPrice = productId ? unitPriceByProduct.get(productId) : undefined;
+                const unitSave = productId ? unitSavingsByProduct.get(productId) : undefined;
+                const qty = item.quantity > 0 ? item.quantity : 1;
+                const lineSave =
+                  unitSave != null && unitSave >= MIN_SAVINGS_CENTS
+                    ? Math.round(unitSave * qty)
+                    : null;
+                const title =
+                  (productId ? productNames.get(productId) : null)?.trim() ||
+                  item.customName?.trim() ||
+                  'Product';
+                return (
+                  <ListItemRow
+                    key={item.id}
+                    title={title}
+                    quantity={item.quantity}
+                    priceCents={unitPrice ?? null}
+                    savingsCents={lineSave}
+                    imagePath={productId ? productImages.get(productId) : null}
+                    onDone={() => guestCart.removeItem(item.id)}
+                    onDelete={() => guestCart.removeItem(item.id)}
+                  />
+                );
+              })}
             </View>
           )}
           <ButterButton label="Sign up to plan trips" variant="ink" onPress={() => requestSignIn('signUp')} />
@@ -1134,20 +1351,25 @@ export default function PlanScreen() {
 
             {isGroceryDay && dayStaples.length > 0 ? (
               <Animated.View layout={drawerLayout} style={styles.section}>
-                <SectionDivider label="Staples due" hint="Running low by this trip" />
-                {dayStaples.map(({ habit, groupName }) => {
+                <SectionDivider label="Staples due" hint="Tap to add · Running low by this trip" />
+                {dayStaples.map(({ habit, groupId, groupName }) => {
                   const name = habit.product_id
                     ? (productNames.get(habit.product_id) ?? 'Staple')
                     : 'Category staple';
+                  const busy = addingStapleId === habit.id;
                   return (
                     <ListItemRow
                       key={habit.id}
                       title={showSource ? `${name} · ${groupName}` : name}
                       imagePath={habit.product_id ? productImages.get(habit.product_id) : null}
                       cadenceTag={cadenceLabel(habit.interval_days)}
-                      dueLabel={`Due ${formatShortDate(habit.next_due_on)}`}
-                      onDone={() => router.push('/staples')}
-                      onDelete={() => router.push('/staples')}
+                      dueLabel={busy ? 'Adding…' : `Due ${formatShortDate(habit.next_due_on)}`}
+                      onDone={() => {
+                        if (!busy) void addDueStaple(habit, groupId);
+                      }}
+                      onDelete={() => {
+                        setDismissedStapleIds((ids) => new Set(ids).add(habit.id));
+                      }}
                     />
                   );
                 })}
@@ -1196,10 +1418,15 @@ export default function PlanScreen() {
             <ThemedText type="smallBold" style={styles.dayTitle}>
               Past orders
             </ThemedText>
+            {pastLoadError ? (
+              <ThemedText type="small" style={{ color: theme.error }}>
+                {pastLoadError}
+              </ThemedText>
+            ) : null}
             {pastOrders.length === 0 ? (
               <View style={styles.emptyBlock}>
                 <ThemedText type="small" themeColor="textSecondary" style={styles.centerText}>
-                  No orders placed yet.
+                  {pastLoadError ? 'Past orders unavailable right now.' : 'No orders placed yet.'}
                 </ThemedText>
               </View>
             ) : (
@@ -1353,6 +1580,13 @@ export default function PlanScreen() {
         />
       ) : null}
       <ShoppingCompleteOverlay origin={celebration} onContinue={() => setCelebration(null)} />
+
+      <CadencePickerModal
+        visible={cadencePrompt != null && !cadenceSaving}
+        productName={cadencePrompt?.name ?? ''}
+        onPickDays={(days) => void onCadencePick(days)}
+        onDismiss={advanceCadenceQueue}
+      />
     </ThemedView>
   );
 }
