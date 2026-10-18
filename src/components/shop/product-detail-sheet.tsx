@@ -17,10 +17,12 @@ import {
   fetchVisaMerchantOffers,
   formatLocalDateTime,
   formatPromotionBadge,
+  formatPromotionTerms,
   getEffectiveGroceryCashbackBps,
   getProductTraitsForIds,
   listFoodTraits,
   listProductStoreOffers,
+  productCardName,
   refreshProductStoreOffers,
   reportManualPrice,
   reportStoreProductAvailability,
@@ -37,12 +39,15 @@ import {
 } from '@/backend';
 import type { FoodTrait, Promotion } from '@/backend/types';
 import { ProductPhoto } from '@/components/shop/product-photo';
+import { SnapBadge } from '@/components/shop/snap-badge';
 import { ThemedText } from '@/components/themed-text';
 import { ButterBlock } from '@/components/ui/butter-block';
 import { ButterButton } from '@/components/ui/butter-button';
 import { ButterChip } from '@/components/ui/butter-chip';
+import { SavingsChip } from '@/components/ui/savings-chip';
 import { Fonts, Radius, SheetChrome, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { useSnapOptedIn } from '@/hooks/use-snap-opted-in';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 type PendingEvidence = {
@@ -58,6 +63,8 @@ type Props = {
   preferenceRules?: SessionFoodRule[];
   quantityOnList?: number;
   favorited?: boolean;
+  /** Product category is SNAP-eligible (caller resolves from categories). */
+  snapEligible?: boolean;
   onAdd: () => void;
   onIncrement: () => void;
   onDecrement: () => void;
@@ -109,6 +116,7 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
     preferenceRules = [],
     quantityOnList,
     favorited,
+    snapEligible = false,
     onAdd,
     onIncrement,
     onDecrement,
@@ -118,6 +126,8 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
 ) {
   const theme = useTheme();
   const { isGuest, requestSignIn } = useSession();
+  const snapOptedIn = useSnapOptedIn();
+  const showProductSnap = snapOptedIn && snapEligible;
   const snapPoints = useMemo(() => ['55%', '82%'], []);
   const onList = quantityOnList != null && quantityOnList > 0;
   const [offers, setOffers] = useState<ProductStoreOffer[]>([]);
@@ -451,9 +461,12 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
           },
         ]}>
         <View style={styles.offerMeta}>
-          <ThemedText type="smallBold" numberOfLines={1}>
-            {offer.chainName ?? offer.storeName}
-          </ThemedText>
+          <View style={styles.offerTitleRow}>
+            <ThemedText type="smallBold" numberOfLines={1} style={styles.offerTitle}>
+              {offer.chainName ?? offer.storeName}
+            </ThemedText>
+            {snapOptedIn && offer.acceptsSnap ? <SnapBadge size="sm" /> : null}
+          </View>
           <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>
             {offer.storeName}
             {!offer.isAvailable ? ' · out of stock' : ''}
@@ -631,7 +644,7 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
                 <ButterBlock size={120} color={theme.accentSoft}>
                   <ProductPhoto
                     imagePath={product.image_path}
-                    placeholderLetter={product.name}
+                    placeholderLetter={productCardName(product)}
                     size={86}
                   />
                 </ButterBlock>
@@ -646,8 +659,9 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
               <View style={styles.meta}>
                 <View style={styles.titleRow}>
                   <ThemedText type="smallBold" style={styles.titleFlex}>
-                    {product.name}
+                    {productCardName(product)}
                   </ThemedText>
+                  {showProductSnap ? <SnapBadge size="md" /> : null}
                   {onToggleFavorite ? (
                     <Pressable onPress={onToggleFavorite} hitSlop={8} style={styles.heartBtn}>
                       <SymbolView
@@ -663,30 +677,47 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
                     {product.brand}
                   </ThemedText>
                 ) : null}
+                {promotion ? (
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {[
+                      formatPromotionTerms(promotion),
+                      formatPromoEnds(promotion),
+                      promotion.requires_group
+                        ? formatGroupLabel(promotion.requires_group)
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </ThemedText>
+                ) : null}
               </View>
             </Animated.View>
 
             {best ? (
               <View style={styles.heroPrice}>
-                <ThemedText style={[styles.heroPriceValue, { color: theme.text }]}>
-                  {formatCents(
-                    best.net.netCents < best.net.shelfCents
-                      ? best.net.netCents
-                      : best.net.shelfCents,
-                  )}
-                </ThemedText>
+                <View style={styles.heroPriceRow}>
+                  <ThemedText style={[styles.heroPriceValue, { color: theme.text }]}>
+                    {formatCents(
+                      best.net.netCents < best.net.shelfCents
+                        ? best.net.netCents
+                        : best.net.shelfCents,
+                    )}
+                  </ThemedText>
+                  {savingsVsNext > 0 ? (
+                    <SavingsChip
+                      cents={savingsVsNext}
+                      label={`Save ${formatCents(savingsVsNext)} vs next`}
+                      compact={false}
+                    />
+                  ) : null}
+                </View>
                 <ThemedText type="smallBold">
                   at {best.offer.chainName ?? best.offer.storeName}
                   {best.net.netCents < best.net.shelfCents ? ' · best after rewards' : ''}
                 </ThemedText>
-                {(savingsVsNext > 0 ||
-                  best.net.cashbackCents > 0 ||
-                  best.net.visaOfferCents > 0) && (
+                {(best.net.cashbackCents > 0 || best.net.visaOfferCents > 0) && (
                   <ThemedText type="small" themeColor="textSecondary">
                     {[
-                      savingsVsNext > 0
-                        ? `Save ${formatCents(savingsVsNext)} vs ${runnerUp?.offer.chainName ?? runnerUp?.offer.storeName ?? 'next'}`
-                        : null,
                       best.net.cashbackCents > 0
                         ? `−${formatCents(best.net.cashbackCents)} cash back`
                         : null,
@@ -820,8 +851,9 @@ const styles = StyleSheet.create({
   badge: {
     position: 'absolute',
     top: Spacing.half,
-    left: Spacing.half,
+    right: Spacing.half,
     zIndex: 1,
+    maxWidth: '90%',
     paddingHorizontal: Spacing.two,
     paddingVertical: Spacing.half,
     borderRadius: Spacing.one,
@@ -841,6 +873,14 @@ const styles = StyleSheet.create({
     fontSize: Type.section,
     lineHeight: 28,
   },
+  offerTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
+  },
+  offerTitle: {
+    flexShrink: 1,
+  },
   heartBtn: {
     width: 36,
     height: 36,
@@ -849,6 +889,12 @@ const styles = StyleSheet.create({
   },
   heroPrice: {
     gap: Spacing.one,
+  },
+  heroPriceRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: Spacing.two,
   },
   heroPriceValue: {
     fontFamily: Fonts.sansBold,

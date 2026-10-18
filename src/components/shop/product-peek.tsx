@@ -1,170 +1,377 @@
 import * as Haptics from 'expo-haptics';
-import { Modal, Pressable, StyleSheet, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown, FadeOut } from 'react-native-reanimated';
+import { SymbolView } from 'expo-symbols';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+  useWindowDimensions,
+} from 'react-native';
+import Animated, {
+  Extrapolation,
+  interpolate,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import type { Product } from '@/backend';
+import type { Product, SessionFoodRule } from '@/backend';
+import type { Promotion } from '@/backend/types';
+import { ProductDetailBody } from '@/components/shop/product-detail-body';
+import {
+  computeExpandedPeekRect,
+  isValidPeekAnchor,
+  PEEK_DEFAULT_HEIGHT,
+  PEEK_MAX_WIDTH,
+  type ProductPeekAnchor,
+} from '@/components/shop/product-peek-layout';
 import { ProductPhoto } from '@/components/shop/product-photo';
 import { ThemedText } from '@/components/themed-text';
 import { ButterBlock } from '@/components/ui/butter-block';
-import { Fonts, Radius, SheetChrome, Spacing, Type } from '@/constants/theme';
+import { ButterButton } from '@/components/ui/butter-button';
+import { Radius, SheetChrome, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 type Props = {
   product: Product | null;
   visible: boolean;
+  anchor: ProductPeekAnchor | null;
+  compact?: boolean;
   saleBadge?: string | null;
-  priceCents?: number | null;
+  promotion?: Promotion | null;
+  preferenceRules?: SessionFoodRule[];
   quantityOnList?: number;
+  favorited?: boolean;
+  onToggleFavorite?: () => void;
   onClose: () => void;
-  onOpenFull: () => void;
   onAdd: () => void;
   onIncrement: () => void;
   onDecrement: () => void;
 };
 
-function formatPrice(cents: number): string {
-  return `$${(cents / 100).toFixed(cents % 100 === 0 ? 0 : 2)}`;
-}
+const SPRING = { damping: 18, stiffness: 280, mass: 0.9 };
+const CLOSE_MS = 220;
+const RETARGET_MS = 220;
+const HERO_END = 144;
+const MAX_HEIGHT_RATIO = 0.85;
 
 /**
- * Messages-style stay-open peek — butter block hero, light details, See more → sheet.
+ * Product popup — morphs from the pressed card frame into a scrollable detail panel,
+ * clamped to screen edges.
  */
 export function ProductPeek({
   product,
   visible,
+  anchor,
+  compact,
   saleBadge,
-  priceCents,
+  promotion,
+  preferenceRules,
   quantityOnList,
+  favorited,
+  onToggleFavorite,
   onClose,
-  onOpenFull,
   onAdd,
   onIncrement,
   onDecrement,
 }: Props) {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const onList = quantityOnList != null && quantityOnList > 0;
 
-  if (!product) return null;
+  // Keeps the last product rendered through the collapse after the parent clears it.
+  const [displayProduct, setDisplayProduct] = useState<Product | null>(null);
+  if (visible && product && product !== displayProduct) {
+    setDisplayProduct(product);
+  }
+  const [scrollContentHeight, setScrollContentHeight] = useState(0);
+  const [footerHeight, setFooterHeight] = useState(0);
+  const closingRef = useRef(false);
+  const openedIdRef = useRef<string | null>(null);
+
+  const progress = useSharedValue(0);
+  const fadeOnly = useSharedValue(false);
+  const fromRect = useSharedValue<ProductPeekAnchor>({ x: 0, y: 0, width: 1, height: 1 });
+  const toX = useSharedValue(0);
+  const toY = useSharedValue(0);
+  const toW = useSharedValue(PEEK_MAX_WIDTH);
+  const toH = useSharedValue(PEEK_DEFAULT_HEIGHT);
+
+  const heroStart = compact ? 112 : 128;
+
+  const contentHeight =
+    scrollContentHeight > 0
+      ? Math.min(scrollContentHeight + footerHeight, windowHeight * MAX_HEIGHT_RATIO)
+      : PEEK_DEFAULT_HEIGHT;
+
+  const targetRect = useMemo(() => {
+    if (!isValidPeekAnchor(anchor)) {
+      const w = Math.min(PEEK_MAX_WIDTH, windowWidth - Spacing.four * 2);
+      const h = contentHeight;
+      return {
+        x: (windowWidth - w) / 2,
+        y: (windowHeight - h) / 2,
+        width: w,
+        height: h,
+      };
+    }
+    return computeExpandedPeekRect(
+      anchor,
+      { width: windowWidth, height: windowHeight },
+      insets,
+      contentHeight,
+    );
+  }, [anchor, windowWidth, windowHeight, insets, contentHeight]);
+
+  const finishClose = useCallback(() => {
+    closingRef.current = false;
+    openedIdRef.current = null;
+    setDisplayProduct(null);
+    setScrollContentHeight(0);
+    onClose();
+  }, [onClose]);
+
+  const animateClose = useCallback(() => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    progress.set(
+      withTiming(0, { duration: CLOSE_MS }, (finished) => {
+        if (finished) {
+          runOnJS(finishClose)();
+        }
+      }),
+    );
+  }, [finishClose, progress]);
+
+  // Parent cleared the product externally — still collapse before unmounting.
+  useEffect(() => {
+    if (!visible && displayProduct && !closingRef.current) {
+      animateClose();
+    }
+  }, [visible, displayProduct, animateClose]);
+
+  // Open spring runs once per product; later size changes (offers loading) ease to the new frame.
+  useEffect(() => {
+    if (!visible || !displayProduct || closingRef.current) return;
+    const firstOpen = openedIdRef.current !== displayProduct.id;
+    if (firstOpen) {
+      const hasAnchor = isValidPeekAnchor(anchor);
+      fadeOnly.set(!hasAnchor);
+      fromRect.set(hasAnchor ? anchor : targetRect);
+      toX.set(targetRect.x);
+      toY.set(targetRect.y);
+      toW.set(targetRect.width);
+      toH.set(targetRect.height);
+      openedIdRef.current = displayProduct.id;
+      progress.set(0);
+      progress.set(withSpring(1, SPRING));
+    } else {
+      const ease = { duration: RETARGET_MS };
+      toX.set(withTiming(targetRect.x, ease));
+      toY.set(withTiming(targetRect.y, ease));
+      toW.set(withTiming(targetRect.width, ease));
+      toH.set(withTiming(targetRect.height, ease));
+    }
+  }, [
+    visible,
+    displayProduct,
+    anchor,
+    targetRect,
+    fadeOnly,
+    fromRect,
+    toX,
+    toY,
+    toW,
+    toH,
+    progress,
+  ]);
+
+  const backdropStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.get(), [0, 1], [0, 1], Extrapolation.CLAMP),
+  }));
+
+  const panelStyle = useAnimatedStyle(() => {
+    const p = progress.get();
+    const from = fromRect.get();
+    return {
+      position: 'absolute',
+      left: interpolate(p, [0, 1], [from.x, toX.get()], Extrapolation.CLAMP),
+      top: interpolate(p, [0, 1], [from.y, toY.get()], Extrapolation.CLAMP),
+      // Size may overshoot slightly with the spring for a "grow" feel.
+      width: interpolate(p, [0, 1], [from.width, toW.get()]),
+      height: interpolate(p, [0, 1], [from.height, toH.get()]),
+      borderRadius: interpolate(p, [0, 1], [Spacing.two, Radius.sheet], Extrapolation.CLAMP),
+      opacity: fadeOnly.get() ? interpolate(p, [0, 1], [0, 1], Extrapolation.CLAMP) : 1,
+      overflow: 'hidden' as const,
+    };
+  });
+
+  const heroWrapStyle = useAnimatedStyle(() => {
+    const scale = interpolate(
+      progress.get(),
+      [0, 1],
+      [heroStart / HERO_END, 1],
+      Extrapolation.CLAMP,
+    );
+    return { transform: [{ scale }] };
+  });
+
+  const detailsStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.get(), [0.55, 1], [0, 1], Extrapolation.CLAMP),
+  }));
+
+  const peekProduct = displayProduct;
+  if (!peekProduct) return null;
+
+  const innerWidth = targetRect.width;
 
   return (
     <Modal
-      visible={visible}
+      visible
       transparent
       animationType="none"
-      onRequestClose={onClose}
+      onRequestClose={animateClose}
       statusBarTranslucent>
       <View style={styles.root}>
         <Animated.View
-          entering={FadeIn.duration(220)}
-          exiting={FadeOut.duration(180)}
-          style={[styles.backdrop, { backgroundColor: SheetChrome.scrim }]}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Dismiss" />
+          style={[styles.backdrop, { backgroundColor: SheetChrome.scrim }, backdropStyle]}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={animateClose}
+            accessibilityLabel="Dismiss"
+          />
         </Animated.View>
 
         <Animated.View
-          entering={FadeInDown.duration(240).springify().damping(18)}
-          exiting={FadeOut.duration(160)}
           style={[
+            panelStyle,
             styles.card,
             {
               backgroundColor: theme.background,
               borderColor: theme.border,
             },
           ]}>
-          <View style={styles.hero}>
-            <ButterBlock size={168} color={onList ? theme.backgroundSelected : theme.accentSoft}>
-              <ProductPhoto
-                imagePath={product.image_path}
-                placeholderLetter={product.name}
-                size={120}
-              />
-            </ButterBlock>
-            {saleBadge ? (
-              <View style={[styles.saleMark, { backgroundColor: theme.primary }]}>
-                <ThemedText type="smallBold" style={{ color: theme.primaryText, fontSize: 11 }}>
-                  {saleBadge}
-                </ThemedText>
-              </View>
-            ) : null}
-          </View>
+          <View style={[styles.cardInner, { width: innerWidth }]}>
+            <ScrollView
+              style={styles.scroll}
+              contentContainerStyle={styles.scrollContent}
+              keyboardShouldPersistTaps="handled"
+              automaticallyAdjustKeyboardInsets
+              showsVerticalScrollIndicator={false}
+              onContentSizeChange={(_w, h) => {
+                const next = Math.ceil(h);
+                if (Math.abs(next - scrollContentHeight) > 2) setScrollContentHeight(next);
+              }}>
+              <Animated.View style={[styles.hero, heroWrapStyle]}>
+                <ButterBlock
+                  size={HERO_END}
+                  color={onList ? theme.backgroundSelected : theme.accentSoft}>
+                  <ProductPhoto
+                    imagePath={peekProduct.image_path}
+                    placeholderLetter={peekProduct.name}
+                    size={104}
+                  />
+                </ButterBlock>
+                {saleBadge ? (
+                  <View style={[styles.saleMark, { backgroundColor: theme.primary }]}>
+                    <ThemedText type="smallBold" style={{ color: theme.primaryText, fontSize: 11 }}>
+                      {saleBadge}
+                    </ThemedText>
+                  </View>
+                ) : null}
+              </Animated.View>
 
-          <ThemedText type="smallBold" style={styles.name}>
-            {product.name}
-          </ThemedText>
-          {product.brand ? (
-            <ThemedText type="small" themeColor="textSecondary">
-              {product.brand}
-            </ThemedText>
-          ) : null}
-
-          {onList ? (
-            <View style={styles.onListBlock}>
-              {priceCents != null ? (
-                <ThemedText type="smallBold" style={styles.price}>
-                  {formatPrice(priceCents)}
-                </ThemedText>
-              ) : null}
-              <View
-                style={[
-                  styles.stepper,
-                  {
-                    backgroundColor: theme.backgroundSelected,
-                    borderColor: theme.border,
-                  },
-                ]}>
-                <Pressable
-                  onPress={() => {
-                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    onDecrement();
-                  }}
-                  hitSlop={8}
-                  style={styles.stepBtn}>
-                  <ThemedText type="smallBold">−</ThemedText>
-                </Pressable>
-                <ThemedText type="smallBold">{quantityOnList} on list</ThemedText>
-                <Pressable
-                  onPress={() => {
-                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    onIncrement();
-                  }}
-                  hitSlop={8}
-                  style={styles.stepBtn}>
-                  <ThemedText type="smallBold">+</ThemedText>
-                </Pressable>
+              <View style={styles.titleRow}>
+                <View style={styles.titleText}>
+                  <ThemedText type="smallBold" style={styles.name}>
+                    {peekProduct.name}
+                  </ThemedText>
+                  {peekProduct.brand ? (
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {peekProduct.brand}
+                    </ThemedText>
+                  ) : null}
+                </View>
+                {onToggleFavorite ? (
+                  <Pressable
+                    onPress={onToggleFavorite}
+                    hitSlop={8}
+                    style={styles.heartBtn}
+                    accessibilityRole="button"
+                    accessibilityLabel={favorited ? 'Remove from favorites' : 'Add to favorites'}>
+                    <SymbolView
+                      name={favorited ? 'heart.fill' : 'heart'}
+                      size={20}
+                      tintColor={favorited ? theme.error : theme.textSecondary}
+                    />
+                  </Pressable>
+                ) : null}
               </View>
-            </View>
-          ) : (
-            <View style={styles.priceRow}>
-              {priceCents != null ? (
-                <ThemedText type="smallBold" style={styles.price}>
-                  {formatPrice(priceCents)}
-                </ThemedText>
+
+              <Animated.View style={detailsStyle}>
+                <ProductDetailBody
+                  key={peekProduct.id}
+                  product={peekProduct}
+                  saleBadge={saleBadge}
+                  promotion={promotion}
+                  preferenceRules={preferenceRules}
+                />
+              </Animated.View>
+            </ScrollView>
+
+            <View
+              style={[styles.footer, { borderTopColor: theme.border }]}
+              onLayout={(e) => {
+                const h = Math.ceil(e.nativeEvent.layout.height);
+                if (Math.abs(h - footerHeight) > 2) setFooterHeight(h);
+              }}>
+              {onList ? (
+                <View
+                  style={[
+                    styles.stepper,
+                    {
+                      backgroundColor: theme.backgroundSelected,
+                      borderColor: theme.border,
+                    },
+                  ]}>
+                  <Pressable
+                    onPress={() => {
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      onDecrement();
+                    }}
+                    hitSlop={8}
+                    style={styles.stepBtn}>
+                    <ThemedText type="smallBold">−</ThemedText>
+                  </Pressable>
+                  <ThemedText type="smallBold">{quantityOnList} on list</ThemedText>
+                  <Pressable
+                    onPress={() => {
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      onIncrement();
+                    }}
+                    hitSlop={8}
+                    style={styles.stepBtn}>
+                    <ThemedText type="smallBold">+</ThemedText>
+                  </Pressable>
+                </View>
               ) : (
-                <View style={styles.priceSpacer} />
+                <ButterButton
+                  label="Add to list"
+                  variant="ink"
+                  onPress={() => {
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    onAdd();
+                  }}
+                />
               )}
-              <Pressable
-                onPress={() => {
-                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  onAdd();
-                }}
-                style={[styles.addBtn, { borderColor: theme.border }]}
-                hitSlop={10}
-                accessibilityRole="button"
-                accessibilityLabel="Add to list">
-                <ThemedText
-                  type="smallBold"
-                  style={{ color: theme.text, fontFamily: Fonts.sansBold, fontSize: 18 }}>
-                  +
-                </ThemedText>
-              </Pressable>
             </View>
-          )}
-
-          <Pressable onPress={onOpenFull} hitSlop={8} style={styles.seeMore}>
-            <ThemedText type="smallBold" style={{ color: theme.textSecondary }}>
-              See more
-            </ThemedText>
-          </Pressable>
+          </View>
         </Animated.View>
       </View>
     </Modal>
@@ -174,27 +381,35 @@ export function ProductPeek({
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.four,
   },
   backdrop: {
     ...StyleSheet.absoluteFill,
   },
   card: {
-    width: '100%',
-    maxWidth: 340,
-    borderRadius: Radius.sheet,
     borderWidth: StyleSheet.hairlineWidth,
-    padding: Spacing.four,
-    gap: Spacing.two,
+    // Inner content is laid out at final width; centering lets it overflow evenly while the panel grows.
     alignItems: 'center',
     zIndex: 1,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+  },
+  cardInner: {
+    flex: 1,
+  },
+  scroll: {
+    flex: 1,
+  },
+  scrollContent: {
+    padding: Spacing.four,
+    gap: Spacing.three,
   },
   hero: {
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: Spacing.one,
+    alignSelf: 'center',
   },
   saleMark: {
     position: 'absolute',
@@ -205,57 +420,46 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.half,
     borderRadius: Spacing.one,
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.two,
+  },
+  titleText: {
+    flex: 1,
+    gap: Spacing.half,
+  },
   name: {
     fontSize: Type.section,
     lineHeight: 28,
-    textAlign: 'center',
   },
-  priceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    alignSelf: 'stretch',
-    gap: Spacing.two,
-    minHeight: 32,
-    marginTop: Spacing.one,
-  },
-  price: {
-    fontSize: 18,
-  },
-  priceSpacer: {
-    flex: 1,
-  },
-  onListBlock: {
-    alignSelf: 'stretch',
-    gap: Spacing.one,
-    marginTop: Spacing.one,
-  },
-  addBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: StyleSheet.hairlineWidth,
-    backgroundColor: 'transparent',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stepper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderRadius: 18,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: Spacing.two,
-    minHeight: 40,
-  },
-  stepBtn: {
+  heartBtn: {
     width: 36,
     height: 36,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  seeMore: {
-    marginTop: Spacing.two,
-    paddingVertical: Spacing.one,
+  footer: {
+    paddingHorizontal: Spacing.four,
+    paddingTop: Spacing.three,
+    paddingBottom: Spacing.four,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  stepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderRadius: Radius.button,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: Spacing.three,
+    minHeight: 52,
+  },
+  stepBtn: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
+
+export type { ProductPeekAnchor } from '@/components/shop/product-peek-layout';

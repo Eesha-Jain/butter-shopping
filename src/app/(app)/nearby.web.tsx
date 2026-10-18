@@ -9,13 +9,16 @@ import {
 } from 'react-native';
 
 import { fetchNearbyShops, type NearbyStore } from '@/backend';
+import { SnapBadge } from '@/components/shop/snap-badge';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Spacing } from '@/constants/theme';
+import { useSnapOptedIn } from '@/hooks/use-snap-opted-in';
 import { useTheme } from '@/hooks/use-theme';
 
 export default function NearbyScreen() {
   const theme = useTheme();
+  const snapOptedIn = useSnapOptedIn();
   const [shops, setShops] = useState<NearbyStore[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -106,7 +109,10 @@ export default function NearbyScreen() {
       renderItem={({ item }) => (
         <ThemedView type="backgroundElement" style={styles.row}>
           <View style={styles.rowText}>
-            <ThemedText>{item.name}</ThemedText>
+            <View style={styles.nameRow}>
+              <ThemedText style={styles.nameFlex}>{item.name}</ThemedText>
+              {snapOptedIn && item.accepts_snap ? <SnapBadge size="sm" /> : null}
+            </View>
             {item.city ? (
               <ThemedText type="small" themeColor="textSecondary">
                 {item.city}
@@ -163,5 +169,13 @@ const styles = StyleSheet.create({
   rowText: {
     flex: 1,
     gap: Spacing.half,
+  },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
+  },
+  nameFlex: {
+    flexShrink: 1,
   },
 });

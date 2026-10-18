@@ -9,7 +9,7 @@ type Props = {
   hint?: string;
 };
 
-/** Soft ink rule + label between Plan sections (Future, Buy here). */
+/** Soft ink rule + label between Plan sections. */
 export function SectionDivider({ label, hint }: Props) {
   const theme = useTheme();
 

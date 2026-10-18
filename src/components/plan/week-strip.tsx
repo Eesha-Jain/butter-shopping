@@ -1,9 +1,16 @@
 import * as Haptics from 'expo-haptics';
+import { SymbolView, type AndroidSymbol, type SFSymbol } from 'expo-symbols';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Fonts, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+
+const BEST_PRICE_SYMBOL = {
+  ios: 'dollarsign.circle.fill',
+  android: 'sell',
+  web: 'sell',
+} satisfies { ios: SFSymbol; android: AndroidSymbol; web: AndroidSymbol };
 
 export type WeekDayCell = {
   ymd: string;
@@ -13,6 +20,8 @@ export type WeekDayCell = {
   isRecommended: boolean;
   hasHabitsDue: boolean;
   isBestDeal: boolean;
+  isGroceryDay: boolean;
+  itemCount: number;
 };
 
 type Props = {
@@ -33,7 +42,7 @@ export function WeekStrip({ days, selectedYmd, onSelect }: Props) {
         contentContainerStyle={styles.row}>
         {days.map((day) => {
           const selected = day.ymd === selectedYmd;
-          const accent = day.isRecommended || day.isBestDeal || day.hasHabitsDue;
+          const accent = day.isGroceryDay;
           const labelColor = selected ? theme.primary : theme.text;
           const mutedColor = selected ? theme.primary : theme.textSecondary;
           return (
@@ -44,14 +53,31 @@ export function WeekStrip({ days, selectedYmd, onSelect }: Props) {
                 onSelect(day.ymd);
               }}
               accessibilityRole="button"
+              accessibilityLabel={`${day.weekday} ${day.dayNum}${day.isRecommended ? ', lowest prices' : ''}`}
               accessibilityState={{ selected }}
               style={[
                 styles.cell,
                 {
-                  backgroundColor: selected ? theme.secondary : theme.background,
+                  backgroundColor: selected
+                    ? theme.secondary
+                    : day.isRecommended
+                      ? theme.backgroundSelected
+                      : theme.background,
                   borderColor: selected || accent ? theme.borderInk : theme.border,
+                  opacity: selected || accent ? 1 : 0.55,
                 },
               ]}>
+              {day.isGroceryDay && day.itemCount > 0 ? (
+                <View
+                  style={[
+                    styles.badge,
+                    { backgroundColor: theme.primary, borderColor: theme.background },
+                  ]}>
+                  <ThemedText type="smallBold" style={[styles.badgeText, { color: theme.secondary }]}>
+                    {day.itemCount}
+                  </ThemedText>
+                </View>
+              ) : null}
               <ThemedText type="small" style={[styles.weekday, { color: mutedColor }]}>
                 {day.weekday}
               </ThemedText>
@@ -60,11 +86,10 @@ export function WeekStrip({ days, selectedYmd, onSelect }: Props) {
               </ThemedText>
               <View style={styles.dots}>
                 {day.isRecommended ? (
-                  <View
-                    style={[
-                      styles.dot,
-                      { backgroundColor: selected ? theme.primary : theme.secondary },
-                    ]}
+                  <SymbolView
+                    name={BEST_PRICE_SYMBOL}
+                    size={12}
+                    tintColor={selected ? theme.primary : theme.primaryDark}
                   />
                 ) : null}
                 {day.hasHabitsDue ? (
@@ -90,13 +115,14 @@ export function WeekStrip({ days, selectedYmd, onSelect }: Props) {
 const styles = StyleSheet.create({
   wash: {
     borderRadius: Radius.card,
-    paddingVertical: Spacing.two,
+    paddingVertical: Spacing.one,
     paddingHorizontal: Spacing.one,
   },
   row: {
     flexDirection: 'row',
     gap: Spacing.two,
-    paddingHorizontal: Spacing.one,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.two,
   },
   cell: {
     width: 52,
@@ -119,8 +145,24 @@ const styles = StyleSheet.create({
   dots: {
     flexDirection: 'row',
     gap: 3,
-    minHeight: 6,
+    minHeight: 12,
     alignItems: 'center',
+  },
+  badge: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeText: {
+    fontSize: 11,
+    lineHeight: 13,
   },
   dot: {
     width: 6,

@@ -16,16 +16,19 @@ Do not call Supabase REST from a new adapter. Emit an envelope and call ingest.
 | Safeway XAPI | [`../../safeway.js`](../../safeway.js) | `shelf` `source: scrape` | Public storefront XAPI |
 | Trader Joe's GraphQL | [`../../traderjoes.js`](../../traderjoes.js) | `shelf` `source: scrape` | Public site GraphQL |
 | WA discount policies | [`../../wa-discounts.json`](../../wa-discounts.json) via [`../../import-wa-snap.js`](../../import-wa-snap.js) | `promotion` | Senior/student day policies |
+| Weekly ads (JSON) | [`weekly-ad.js`](weekly-ad.js) + [`../../import-weekly-ads.js`](../../import-weekly-ads.js) | `promotion` | Product-scoped circular deals; sample [`../../weekly-ads.sample.json`](../../weekly-ads.sample.json) |
 | Manual shelf report | `report_manual_price` RPC | `user_report` (SQL path) | Trusted authority over api/scrape |
 
 ## Adding a weekly-ad scraper
 
-1. Fetch the ad for one store or chain.
-2. For each deal, build `promotionOffer({ chainName, discountType, discountValue, startsAt, endsAt, weekdays?, productUpc?, externalRef })`.
-3. Call `ingestPromotion(envelope)`.
+1. Fetch the ad for one store or chain (HTML/JSON).
+2. Map rows into deal objects and call `weeklyAdPromotionOffers({ chainName, startsAt, endsAt, deals })`.
+3. For each envelope, `ingestPromotion(envelope)` (or run `node import-weekly-ads.js ads.json`).
 4. Prefer a stable `externalRef` (e.g. `weekly-ad:safeway:2026-10-15:sku`) so re-runs upsert.
+5. Set `productUpc` whenever possible so the deal attaches to a catalog product and shows on cards.
+6. For buy-X-get-Y, use `discountType: 'bogo'` with `buyQuantity` / `getQuantity` (e.g. 3 and 1).
 
-Shelf observations (temporary sale price on a product) use `shelfOffer` with `promoPriceCents` / `regularPriceCents`, not a promotion row, unless the deal is calendar- or eligibility-based.
+Shelf observations (temporary sale price on a product) use `shelfOffer` with `promoPriceCents` / `regularPriceCents`, not a promotion row, unless the deal is calendar- or eligibility-based. Card badges also fall back to regular vs sale shelf deltas when no promotion row exists.
 
 ## Match for the app
 

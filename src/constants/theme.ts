@@ -7,13 +7,15 @@ import '@/global.css';
 
 import { Platform } from 'react-native';
 
+/** Same gold as onboarding Continue / full-bleed canvas (`onboarding-shell`). */
+export const BUTTER_YELLOW = '#ffd700';
+
 /**
- * Quiet Butter language (main app) — one cream canvas everywhere (Shop + sheets):
- * - Canvas = background `#FFFBF0` (never nest pale-yellow info panels on top)
+ * Quiet Butter language (main app) — cream canvas, onboarding gold accents:
+ * - Canvas = background `#FFFBF0` (never nest mismatched pale-yellow panels)
  * - Quiet well = backgroundElement — photo pads / soft chips idle only
- * - Selected / on-list = backgroundSelected — small accents only
- * - Butter block = accentSoft — shiny ButterBlock fill behind square product photos
- * - Gold = primary — handle, sale mark, CTA label on ink — never large fill panels
+ * - Selected / on-list / butter block = same `#ffd700` as onboarding
+ * - Gold = primary — handle, sale mark, CTA label on ink
  * - Ink = text / secondary / borderInk — primary CTAs and selected interactive edges
  *
  * CTA / stepper lock: ink fill + gold label (match onboarding Continue).
@@ -25,21 +27,25 @@ export const Colors = {
     background: '#FFFBF0',
     /** Cream card / chip surface. */
     backgroundElement: '#FFF8E7',
-    backgroundSelected: '#FFE9A8',
+    /** Selected wash — same hue as onboarding yellow. */
+    backgroundSelected: BUTTER_YELLOW,
     textSecondary: '#5C5A52',
-    primary: '#ffd700',
+    primary: BUTTER_YELLOW,
     primaryDark: '#998100',
     primaryText: '#000000',
     secondary: '#000000',
-    /** Butter-block base / shine — clearer gold than khaki, softer than primary. */
-    accentSoft: '#FFE566',
+    /** Butter-block fill — matches onboarding yellow. */
+    accentSoft: BUTTER_YELLOW,
     /** Soft divider border. */
     border: '#E6DFC8',
     /** Strong ink border for interactive surfaces (chips, cards, inputs). */
     borderInk: '#000000',
     borderError: '#E5484D',
     error: '#E5484D',
-    tint: '#ffd700',
+    /** Dollars-saved chip fill (distinct from checkbox green). */
+    savings: '#1B7A4A',
+    savingsText: '#FFFFFF',
+    tint: BUTTER_YELLOW,
   },
   dark: {
     text: '#ffffff',
@@ -47,16 +53,18 @@ export const Colors = {
     backgroundElement: '#1E1C18',
     backgroundSelected: '#2E2A22',
     textSecondary: '#B0B4BA',
-    primary: '#ffd700',
-    primaryDark: '#ffd700',
+    primary: BUTTER_YELLOW,
+    primaryDark: BUTTER_YELLOW,
     primaryText: '#000000',
     secondary: '#F5F5F5',
-    accentSoft: '#FFE566',
+    accentSoft: BUTTER_YELLOW,
     border: '#3A3A3E',
-    borderInk: '#ffd700',
+    borderInk: BUTTER_YELLOW,
     borderError: '#E5484D',
     error: '#FF6369',
-    tint: '#ffd700',
+    savings: '#2E9E5B',
+    savingsText: '#FFFFFF',
+    tint: BUTTER_YELLOW,
   },
 } as const;
 

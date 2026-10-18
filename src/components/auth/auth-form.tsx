@@ -16,7 +16,7 @@ import type { AuthMode } from '@/auth/auth-mode';
 import { useSession } from '@/auth/session';
 import { runAction, showSuccessToast, signIn, signInWithGoogle, signUp } from '@/backend';
 import { ButterButton } from '@/components/ui/butter-button';
-import { Fonts, MaxContentWidth, Radius, Spacing } from '@/constants/theme';
+import { Colors, Fonts, MaxContentWidth, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 export type { AuthMode } from '@/auth/auth-mode';
@@ -37,7 +37,8 @@ export function AuthForm({
   onAuthSuccess,
   onGuestContinue,
 }: AuthFormProps) {
-  const theme = useTheme();
+  const activeTheme = useTheme();
+  const theme = embedded ? Colors.light : activeTheme;
   const { continueAsGuest } = useSession();
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [email, setEmail] = useState('');
