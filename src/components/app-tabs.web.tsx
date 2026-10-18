@@ -37,6 +37,9 @@ export default function AppTabs() {
           <TabTrigger name="nearby" href="/nearby" asChild>
             <TabButton>Nearby</TabButton>
           </TabTrigger>
+          <TabTrigger name="list" href={'/list' as Href} asChild>
+            <TabButton>List</TabButton>
+          </TabTrigger>
         </CustomTabList>
       </TabList>
     </Tabs>

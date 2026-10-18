@@ -30,6 +30,11 @@ export default function AppTabs() {
         <NativeTabs.Trigger.Icon sf="mappin.and.ellipse" md="location_on" />
       </NativeTabs.Trigger>
 
+      <NativeTabs.Trigger name="list">
+        <NativeTabs.Trigger.Label>List</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf="checklist" md="format_list_bulleted" />
+      </NativeTabs.Trigger>
+
       <NativeTabs.Trigger name="days">
         <NativeTabs.Trigger.Label>Days</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf="calendar" md="calendar_month" />

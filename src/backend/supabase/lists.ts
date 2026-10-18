@@ -1,7 +1,9 @@
-import type { GroceryList, ListItem, ResolvedListItem } from '../types';
+import type { GroceryList, Group, ListItem, ResolvedListItem } from '../types';
 import { supabase } from './client';
 import { fail } from '../errors';
 import { unwrap, unwrapOne, unwrapVoid } from './query';
+import { listMyGroups } from './groups';
+import { addDueHabitItems, listHabits } from './purchases';
 
 /**
  * Lists in a group. Every group has one default list created with the group.
@@ -90,6 +92,113 @@ export async function removeListItem(itemId: string): Promise<void> {
  */
 export async function listResolvedItems(listId: string): Promise<ResolvedListItem[]> {
   return unwrap(await supabase.from('v_list_items').select('*').eq('list_id', listId));
+}
+
+function openItemKey(item: Pick<ListItem, 'product_id' | 'category_id' | 'custom_name' | 'done_at'>): string | null {
+  if (item.done_at) {
+    return null;
+  }
+  if (item.product_id) {
+    return `p:${item.product_id}`;
+  }
+  if (item.category_id) {
+    return `c:${item.category_id}`;
+  }
+  const name = item.custom_name?.trim().toLowerCase();
+  return name ? `n:${name}` : null;
+}
+
+/** The caller's personal group and its default grocery list. */
+export async function getDefaultGroceryList(): Promise<{ group: Group; list: GroceryList }> {
+  const groups = await listMyGroups();
+  const group = groups.find((row) => row.kind === 'personal') ?? groups[0];
+  if (!group) {
+    fail('No grocery group yet. Sign in again after signup finishes.');
+  }
+  const lists = await listGroupLists(group.id);
+  const list = lists.find((row) => row.is_default) ?? lists[0];
+  if (!list) {
+    fail('This group has no grocery list.');
+  }
+  return { group, list };
+}
+
+/**
+ * Raw list rows (no price or display-name view). Names can be filled in later
+ * with listResolvedItems.
+ */
+export async function listListItems(listId: string): Promise<ListItem[]> {
+  return unwrap(
+    await supabase.from('list_items').select('*').eq('list_id', listId).order('created_at'),
+  );
+}
+
+/**
+ * Adds staples (habits) and optional recipe ingredients to the default list.
+ * Skips a target that already has an open row. Does not use listResolvedItems.
+ */
+export async function buildStandardList(input?: { recipeIds?: string[] }): Promise<number> {
+  const { group, list } = await getDefaultGroceryList();
+  const existing = await listListItems(list.id);
+  const keys = new Set(
+    existing.map(openItemKey).filter((key): key is string => key != null),
+  );
+
+  let added = 0;
+  const habits = await listHabits(group.id);
+  for (const habit of habits) {
+    if (!habit.auto_add_enabled) {
+      continue;
+    }
+    const candidate = {
+      product_id: habit.product_id,
+      category_id: habit.category_id,
+      custom_name: null,
+      done_at: null,
+    };
+    const key = openItemKey(candidate);
+    if (!key || keys.has(key)) {
+      continue;
+    }
+    await addListItem({
+      listId: list.id,
+      productId: habit.product_id ?? undefined,
+      categoryId: habit.category_id ?? undefined,
+      amountBase: habit.usual_amount_base ?? undefined,
+    });
+    keys.add(key);
+    added += 1;
+  }
+
+  for (const recipeId of input?.recipeIds ?? []) {
+    const ingredients = unwrap(
+      await supabase.from('recipe_ingredients').select('*').eq('recipe_id', recipeId),
+    );
+    for (const ingredient of ingredients) {
+      const candidate = {
+        product_id: null,
+        category_id: ingredient.category_id,
+        custom_name: ingredient.category_id ? null : ingredient.raw_text,
+        done_at: null,
+      };
+      const key = openItemKey(candidate);
+      if (!key || keys.has(key)) {
+        continue;
+      }
+      await addListItem({
+        listId: list.id,
+        categoryId: ingredient.category_id ?? undefined,
+        customName: ingredient.category_id ? undefined : ingredient.raw_text,
+        amountBase: ingredient.amount_base ?? undefined,
+        sourceRecipeId: recipeId,
+      });
+      keys.add(key);
+      added += 1;
+    }
+  }
+
+  await addDueHabitItems();
+  return added;
 }
 
 /**
