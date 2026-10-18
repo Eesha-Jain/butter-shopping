@@ -409,41 +409,63 @@ export default function RecipeImportScreen() {
             ))
           )}
 
-          {preview.skipped.length > 0 ? (
+          {preview.skipped.some((line) => line.reason !== 'not_in_catalog') ? (
             <View style={[styles.caution, { borderColor: theme.border }]}>
               <ThemedText type="smallBold">Not added — you may still have these</ThemedText>
               <ThemedText type="small" themeColor="textSecondary">
                 Tap Add anyway if you already used them up.
               </ThemedText>
-              {preview.skipped.map((line) => {
-                const forced = forcedIds.includes(line.ingredientId);
-                return (
+              {preview.skipped
+                .filter((line) => line.reason !== 'not_in_catalog')
+                .map((line) => {
+                  const forced = forcedIds.includes(line.ingredientId);
+                  return (
+                    <View
+                      key={line.ingredientId}
+                      style={[styles.lineRow, { backgroundColor: theme.backgroundElement }]}>
+                      <View style={styles.lineMeta}>
+                        <ThemedText type="small">{line.label}</ThemedText>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          {line.reason === 'already_on_list'
+                            ? 'Already on your open list'
+                            : [
+                                line.lastPurchasedAt
+                                  ? `Bought ${formatLocalDateTime(line.lastPurchasedAt)}`
+                                  : 'In recent purchases',
+                                line.expiresOn ? `· good until ${line.expiresOn}` : null,
+                              ]
+                                .filter(Boolean)
+                                .join(' ')}
+                        </ThemedText>
+                      </View>
+                      <Pressable onPress={() => toggleForce(line.ingredientId)} hitSlop={6}>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          {forced ? 'Will add' : 'Add anyway'}
+                        </ThemedText>
+                      </Pressable>
+                    </View>
+                  );
+                })}
+            </View>
+          ) : null}
+
+          {preview.skipped.some((line) => line.reason === 'not_in_catalog') ? (
+            <View style={styles.preview}>
+              <ThemedText type="smallBold">Item not found</ThemedText>
+              {preview.skipped
+                .filter((line) => line.reason === 'not_in_catalog')
+                .map((line) => (
                   <View
                     key={line.ingredientId}
                     style={[styles.lineRow, { backgroundColor: theme.backgroundElement }]}>
                     <View style={styles.lineMeta}>
                       <ThemedText type="small">{line.label}</ThemedText>
                       <ThemedText type="small" themeColor="textSecondary">
-                        {line.reason === 'already_on_list'
-                          ? 'Already on your open list'
-                          : [
-                              line.lastPurchasedAt
-                                ? `Bought ${formatLocalDateTime(line.lastPurchasedAt)}`
-                                : 'In recent purchases',
-                              line.expiresOn ? `· good until ${line.expiresOn}` : null,
-                            ]
-                              .filter(Boolean)
-                              .join(' ')}
+                        Item not found
                       </ThemedText>
                     </View>
-                    <Pressable onPress={() => toggleForce(line.ingredientId)} hitSlop={6}>
-                      <ThemedText type="small" themeColor="textSecondary">
-                        {forced ? 'Will add' : 'Add anyway'}
-                      </ThemedText>
-                    </Pressable>
                   </View>
-                );
-              })}
+                ))}
             </View>
           ) : null}
 
