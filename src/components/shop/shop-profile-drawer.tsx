@@ -427,9 +427,6 @@ export function ShopProfileDrawer({
               />
             </View>
             <ThemedText type="smallBold">AI voice</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              Woman and man read the reply.
-            </ThemedText>
             <View style={styles.cashbackRow}>
               {(
                 [

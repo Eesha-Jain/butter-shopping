@@ -570,12 +570,12 @@ export default function PlanScreen() {
                 onPress={() => router.push('/recipe-import')}
               />
               <NativeIconButton
-                accessibilityLabel="Staples"
-                tooltip="Staples you buy often"
+                accessibilityLabel="Favorites"
+                tooltip="Favorites"
                 tooltipAlign="right"
-                iosSymbol="tag.fill"
-                androidSymbol="sell"
-                onPress={() => router.push('/staples')}
+                iosSymbol="heart.fill"
+                androidSymbol="favorite"
+                onPress={() => router.push('/favorites')}
               />
               <NativeIconButton
                 accessibilityLabel="Manage groups"
