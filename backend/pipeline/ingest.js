@@ -121,6 +121,11 @@ async function findProduct({ upc, productName, brand }) {
   return loose?.id ?? null;
 }
 
+function absoluteImageUrl(value) {
+  const raw = String(value ?? "").trim();
+  return /^https?:\/\//i.test(raw) ? raw : null;
+}
+
 async function categoryIdForProductName(productName) {
   const categoryName = categoryForProductName(productName);
   if (!categoryName) return null;
@@ -244,6 +249,7 @@ export async function ingestShelf(raw) {
   let createdFresh = false;
   if (!productId) {
     const categoryId = await categoryIdForProductName(offer.productName);
+    const imagePath = absoluteImageUrl(offer.imageUrl);
     const created = await rest("products", {
       method: "POST",
       headers: { Prefer: "return=representation" },
@@ -251,6 +257,7 @@ export async function ingestShelf(raw) {
         name: offer.productName,
         brand: offer.brand,
         upc: offer.upc,
+        ...(imagePath ? { image_path: imagePath } : {}),
         ...(categoryId
           ? { category_id: categoryId, category_source: "keyword" }
           : {}),
@@ -262,7 +269,7 @@ export async function ingestShelf(raw) {
   if (!productId) throw new Error("Product save did not return a row.");
 
   const existingProducts = await rest(
-    `products?id=eq.${productId}&select=id,upc,brand,size_base_amount,size_base_unit,category_id,category_source&limit=1`,
+    `products?id=eq.${productId}&select=id,upc,brand,size_base_amount,size_base_unit,image_path,category_id,category_source&limit=1`,
   );
   const existing = existingProducts?.[0];
   if (existing) {
@@ -271,6 +278,7 @@ export async function ingestShelf(raw) {
       brand: offer.brand,
       sizeBaseAmount: offer.sizeBaseAmount ?? null,
       sizeBaseUnit: offer.sizeBaseUnit ?? null,
+      imageUrl: offer.imageUrl ?? null,
     });
     if (!existing.category_id) {
       const categoryId = await categoryIdForProductName(offer.productName);
@@ -305,7 +313,7 @@ export async function ingestShelf(raw) {
       product_id: productId,
       store_sku: offer.externalRef,
       product_url: offer.productUrl,
-      is_available: true,
+      is_available: offer.available !== false,
     }),
   });
   const storeProductId = listings?.[0]?.id;

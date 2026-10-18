@@ -29,13 +29,17 @@ export function shouldAppendAutomatedPrice(source, trusted) {
 
 /**
  * Patch for products: only fill currently null fields from the observation.
- * @param {{ upc?: string | null, brand?: string | null, size_base_amount?: number | null, size_base_unit?: string | null }} existing
- * @param {{ upc?: string | null, brand?: string | null, sizeBaseAmount?: number | null, sizeBaseUnit?: string | null }} incoming
+ * @param {{ upc?: string | null, brand?: string | null, size_base_amount?: number | null, size_base_unit?: string | null, image_path?: string | null }} existing
+ * @param {{ upc?: string | null, brand?: string | null, sizeBaseAmount?: number | null, sizeBaseUnit?: string | null, imageUrl?: string | null }} incoming
  */
 export function nullOnlyProductPatch(existing, incoming) {
   const patch = {};
   if (existing.upc == null && incoming.upc) patch.upc = incoming.upc;
   if (existing.brand == null && incoming.brand) patch.brand = incoming.brand;
+  if ((existing.image_path == null || existing.image_path === "") && incoming.imageUrl) {
+    const imageUrl = String(incoming.imageUrl).trim();
+    if (/^https?:\/\//i.test(imageUrl)) patch.image_path = imageUrl;
+  }
   if (
     existing.size_base_amount == null &&
     incoming.sizeBaseAmount != null &&
