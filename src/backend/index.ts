@@ -10,6 +10,7 @@ export { AppError, fail, runAction } from './errors';
 export { showErrorToast, showSuccessToast, messageFromUnknown } from './toast';
 export {
   clearGuest,
+  clearLocalData,
   getLocalGroceryCashbackBps,
   hasCompletedOnboardingLocally,
   hasSignedInBefore,

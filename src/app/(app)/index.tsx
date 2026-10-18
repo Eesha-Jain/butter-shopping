@@ -1201,9 +1201,9 @@ export default function ShopScreen() {
               setProfileOpen(false);
               requestSignIn();
             }}
-            onSignOut={() => {
+            onSignOut={async () => {
               setProfileOpen(false);
-              void signOut();
+              await signOut();
             }}
             onAvatarChanged={(path) => {
               setAvatarPath(path);

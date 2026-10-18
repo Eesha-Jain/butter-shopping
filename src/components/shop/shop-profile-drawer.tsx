@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  DevSettings,
   Easing,
   Modal,
   Platform,
@@ -17,6 +18,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
+  clearLocalData,
   getEffectiveGroceryCashbackBps,
   publicImageUrl,
   removeMyAvatar,
@@ -39,7 +41,7 @@ type Props = {
   avatarVersion: number;
   isGuest: boolean;
   onClose: () => void;
-  onSignOut: () => void;
+  onSignOut: () => void | Promise<void>;
   onSignIn: () => void;
   onAvatarChanged: (path: string | null) => void;
 };
@@ -221,6 +223,38 @@ export function ShopProfileDrawer({
     ]);
   };
 
+  /** TEMP: clears guest prefs / cart / onboarding flag, signs out, reloads. */
+  const handleResetLocalData = () => {
+    Alert.alert(
+      'Reset local data',
+      'Clear guest cart, favorites, onboarding, and sign out? The app will reload.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: () => {
+            requestClose(() => {
+              void (async () => {
+                try {
+                  clearLocalData();
+                  await onSignOut();
+                } catch {
+                  // Still reload so a partial clear is usable.
+                }
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.location.reload();
+                  return;
+                }
+                DevSettings.reload();
+              })();
+            });
+          },
+        },
+      ],
+    );
+  };
+
   return (
     <Modal
       visible={visible}
@@ -359,6 +393,15 @@ export function ShopProfileDrawer({
               <ThemedText type="smallBold">Sign out</ThemedText>
             </Pressable>
           )}
+
+          {/* TEMP: testing only — remove before shipping */}
+          <Pressable
+            onPress={handleResetLocalData}
+            style={[styles.outlineBtn, { borderColor: theme.border, marginTop: 'auto' }]}>
+            <ThemedText type="smallBold" themeColor="textSecondary">
+              Reset local data
+            </ThemedText>
+          </Pressable>
         </Animated.View>
       </View>
     </Modal>
