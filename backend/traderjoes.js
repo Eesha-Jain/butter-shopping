@@ -17,6 +17,8 @@ query SearchProducts($pageSize: Int, $currentPage: Int, $storeCode: String, $pub
       url_key
       primary_image
       primary_image_meta { url }
+      sales_size
+      sales_uom_description
       price_range {
         minimum_price {
           final_price {
@@ -137,12 +139,24 @@ function productPriceCents(product) {
 export function mapTraderJoesProduct(product) {
   const sku = product.sku ?? null;
   const urlKey = product.url_key ?? null;
+  // Public SearchProducts GraphQL does not expose barcode/UPC (only sku).
+  // Prefer any barcode-like field if Magento adds it later; never invent a UPC from sku.
+  const rawUpc =
+    product.upc ??
+    product.barcode ??
+    product.ean ??
+    product.gtin ??
+    product.gtin14 ??
+    null;
+  const upcDigits = String(rawUpc ?? "").replace(/\D/g, "");
   return {
     productId: sku,
-    upc: null,
+    upc: upcDigits.length >= 8 && upcDigits.length <= 14 ? upcDigits : null,
     name: product.item_title ?? product.name ?? "Unknown product",
     brand: "Trader Joe's",
-    size: null,
+    size: product.sales_size
+      ? `${product.sales_size}${product.sales_uom_description ? ` ${product.sales_uom_description}` : ""}`
+      : null,
     priceCents: productPriceCents(product),
     regularPriceCents: productPriceCents(product),
     promoPriceCents: null,

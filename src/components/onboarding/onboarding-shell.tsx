@@ -15,9 +15,10 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { OnboardingCow } from '@/components/onboarding/onboarding-cow';
-import { Fonts, Spacing } from '@/constants/theme';
+import { BUTTER_YELLOW, Fonts, Spacing } from '@/constants/theme';
 
-export const ONBOARDING_YELLOW = '#ffd700';
+/** @deprecated Prefer BUTTER_YELLOW from theme — kept for onboarding imports. */
+export const ONBOARDING_YELLOW = BUTTER_YELLOW;
 const INK = '#000000';
 const BUBBLE = '#ffffff';
 const COMPACT_MS = 280;

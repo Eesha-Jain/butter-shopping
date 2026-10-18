@@ -1,13 +1,15 @@
 import { Image } from 'expo-image';
+import { SymbolView } from 'expo-symbols';
+import type { ComponentProps } from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import { publicImageUrl } from '@/backend';
-import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 
 type Props = {
   imagePath: string | null | undefined;
-  /** Fallback letter when no image (usually product name initial). */
+  /** @deprecated Letter fallback replaced by bag icon — kept for call-site compat. */
   placeholderLetter?: string;
   size?: number;
   /** Well fill — transparent so ButterBlock shows through, or match block color. */
@@ -17,16 +19,18 @@ type Props = {
 
 /**
  * Square contain photo well for butter-block pods — readable packaging, no ink frame.
+ * Missing art → small shopping-bag glyph.
  */
 export function ProductPhoto({
   imagePath,
-  placeholderLetter = '?',
   size = 84,
   backgroundColor = 'transparent',
   style,
 }: Props) {
+  const theme = useTheme();
   const imageUrl = publicImageUrl('public-assets', imagePath ?? null);
   const radius = Math.min(14, size * 0.14);
+  const iconSize = Math.max(22, Math.round(size * 0.38));
 
   return (
     <View
@@ -44,9 +48,17 @@ export function ProductPhoto({
         <Image source={{ uri: imageUrl }} style={styles.image} contentFit="contain" />
       ) : (
         <View style={styles.placeholder}>
-          <ThemedText type="smallBold" themeColor="textSecondary">
-            {placeholderLetter.slice(0, 1).toUpperCase()}
-          </ThemedText>
+          <SymbolView
+            name={
+              {
+                ios: 'bag.fill',
+                android: 'shopping_bag',
+                web: 'shopping_bag',
+              } as ComponentProps<typeof SymbolView>['name']
+            }
+            size={iconSize}
+            tintColor={theme.textSecondary}
+          />
         </View>
       )}
     </View>

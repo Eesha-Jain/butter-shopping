@@ -1,5 +1,6 @@
 import * as Haptics from 'expo-haptics';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { useRef } from 'react';
+import { Pressable, StyleSheet, View, type View as RNView } from 'react-native';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -8,6 +9,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import type { Product } from '@/backend';
+import type { ProductPeekAnchor } from '@/components/shop/product-peek-layout';
 import { ProductPhoto } from '@/components/shop/product-photo';
 import { ThemedText } from '@/components/themed-text';
 import { ButterBlock } from '@/components/ui/butter-block';
@@ -24,13 +26,23 @@ type Props = {
   /** Quiet note when net price includes cash back (no promo). */
   priceNote?: string | null;
   quantityOnList?: number;
+  /** @deprecated Prefer metaLabel — still maps to “Sponsored”. */
   sponsored?: boolean;
+  /** Quiet line under the name (e.g. Sponsored / Popular). */
+  metaLabel?: string | null;
+  /**
+   * Butter-block fill override. Use cream on gold surfaces (trending banner)
+   * so the stick doesn’t vanish into the same `#ffd700`.
+   */
+  butterColor?: string;
   /** Narrow carousel width (staples / trending). */
   compact?: boolean;
   index?: number;
   priceCents?: number | null;
+  /** Hide grid copy while the in-place peek overlay is showing this product. */
+  isPeekSource?: boolean;
   onPress: () => void;
-  onLongPress?: () => void;
+  onLongPress?: (anchor: ProductPeekAnchor) => void;
   onAdd: () => void;
   onIncrement: () => void;
   onDecrement: () => void;
@@ -59,8 +71,11 @@ export function ProductCard({
   priceNote,
   quantityOnList,
   sponsored,
+  metaLabel,
+  butterColor,
   compact,
   priceCents,
+  isPeekSource,
   onPress,
   onLongPress,
   onAdd,
@@ -68,51 +83,49 @@ export function ProductCard({
   onDecrement,
 }: Props) {
   const theme = useTheme();
+  const rootRef = useRef<RNView>(null);
   const onList = quantityOnList != null && quantityOnList > 0;
   const press = useSharedValue(1);
+  const resolvedMeta = metaLabel ?? (sponsored ? 'Sponsored' : null);
+
+  const handleLongPress = () => {
+    if (!onLongPress) return;
+    if (!rootRef.current) {
+      // Zero-size anchor → peek falls back to a centered fade.
+      onLongPress({ x: 0, y: 0, width: 0, height: 0 });
+      return;
+    }
+    rootRef.current.measureInWindow((x, y, width, height) => {
+      onLongPress({ x, y, width, height });
+    });
+  };
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: press.value }],
   }));
 
-  const blockColor = onList ? theme.backgroundSelected : theme.accentSoft;
-  const blockSize = compact ? 140 : 160;
-  const photoSize = Math.round(blockSize * 0.72);
+  const blockColor =
+    butterColor ?? (onList ? theme.backgroundSelected : theme.accentSoft);
+  const blockSize = compact ? 112 : 128;
+  const photoSize = Math.round(blockSize * 0.7);
   const showCompare =
     compareAtCents != null && priceCents != null && compareAtCents > priceCents;
 
-  const priceBlock = (
-    <View style={styles.priceStack}>
-      {showCompare ? (
-        <ThemedText type="small" themeColor="textSecondary" style={styles.compareAt}>
-          {formatPrice(compareAtCents!)}
-        </ThemedText>
-      ) : null}
-      {priceCents != null ? (
-        <ThemedText type="smallBold" style={styles.price}>
-          {formatPrice(priceCents)}
-        </ThemedText>
-      ) : null}
-      {savingsLabel ? (
-        <ThemedText type="smallBold" style={[styles.savings, { color: theme.primaryDark }]}>
-          {savingsLabel}
-        </ThemedText>
-      ) : priceNote ? (
-        <ThemedText type="small" themeColor="textSecondary" style={styles.priceNote}>
-          {priceNote}
-        </ThemedText>
-      ) : null}
-    </View>
-  );
-
   return (
     <AnimatedPressable
+      ref={rootRef}
       onPress={onPress}
-      onLongPress={onLongPress}
+      onLongPress={onLongPress ? handleLongPress : undefined}
       delayLongPress={400}
       onPressIn={() => setPressScale(press, 0.97, 90)}
       onPressOut={() => setPressScale(press, 1, 140)}
-      style={[styles.card, compact && styles.cardCompact, animatedStyle]}
+      style={[
+        styles.card,
+        compact && styles.cardCompact,
+        isPeekSource && styles.peekSource,
+        animatedStyle,
+      ]}
+      pointerEvents={isPeekSource ? 'none' : 'auto'}
       accessibilityRole="button"
       accessibilityLabel={product.name}>
       <View style={styles.blockStage}>
@@ -136,15 +149,33 @@ export function ProductCard({
         <ThemedText type="smallBold" numberOfLines={2} style={styles.name}>
           {product.name}
         </ThemedText>
-        {sponsored ? (
-          <ThemedText type="small" themeColor="textSecondary">
-            Sponsored
+        {resolvedMeta ? (
+          <ThemedText type="small" themeColor="textSecondary" style={styles.meta}>
+            {resolvedMeta}
           </ThemedText>
         ) : null}
 
         {onList ? (
           <View style={styles.onListBlock}>
-            {priceCents != null || savingsLabel || priceNote ? priceBlock : null}
+            {showCompare ? (
+              <ThemedText type="small" themeColor="textSecondary" style={styles.compareAt}>
+                {formatPrice(compareAtCents!)}
+              </ThemedText>
+            ) : null}
+            {priceCents != null ? (
+              <ThemedText type="smallBold" style={styles.price}>
+                {formatPrice(priceCents)}
+              </ThemedText>
+            ) : null}
+            {savingsLabel ? (
+              <ThemedText type="smallBold" style={[styles.savings, { color: theme.primaryDark }]}>
+                {savingsLabel}
+              </ThemedText>
+            ) : priceNote ? (
+              <ThemedText type="small" themeColor="textSecondary" style={styles.priceNote}>
+                {priceNote}
+              </ThemedText>
+            ) : null}
             <View
               style={[
                 styles.stepper,
@@ -175,27 +206,45 @@ export function ProductCard({
             </View>
           </View>
         ) : (
-          <View style={styles.priceRow}>
-            {priceCents != null || savingsLabel || priceNote ? (
-              priceBlock
-            ) : (
-              <View style={styles.priceSpacer} />
-            )}
-            <Pressable
-              onPress={() => {
-                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                onAdd();
-              }}
-              style={styles.addBtn}
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel="Add to list">
-              <ThemedText
-                type="smallBold"
-                style={{ color: theme.text, fontFamily: Fonts.sansBold, fontSize: 22 }}>
-                +
+          <View style={styles.priceCol}>
+            {showCompare ? (
+              <ThemedText type="small" themeColor="textSecondary" style={styles.compareAt}>
+                {formatPrice(compareAtCents!)}
               </ThemedText>
-            </Pressable>
+            ) : null}
+            <View style={styles.priceRow}>
+              {priceCents != null ? (
+                <ThemedText type="smallBold" style={styles.price}>
+                  {formatPrice(priceCents)}
+                </ThemedText>
+              ) : (
+                <View style={styles.priceSpacer} />
+              )}
+              <Pressable
+                onPress={() => {
+                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  onAdd();
+                }}
+                style={styles.addBtn}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel="Add to list">
+                <ThemedText
+                  type="smallBold"
+                  style={{ color: theme.text, fontFamily: Fonts.sansBold, fontSize: 20, lineHeight: 22 }}>
+                  +
+                </ThemedText>
+              </Pressable>
+            </View>
+            {savingsLabel ? (
+              <ThemedText type="smallBold" style={[styles.savings, { color: theme.primaryDark }]}>
+                {savingsLabel}
+              </ThemedText>
+            ) : priceNote ? (
+              <ThemedText type="small" themeColor="textSecondary" style={styles.priceNote}>
+                {priceNote}
+              </ThemedText>
+            ) : null}
           </View>
         )}
       </View>
@@ -208,12 +257,15 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: Spacing.two,
     paddingVertical: Spacing.one,
-    minHeight: 200,
+    minHeight: 172,
   },
   cardCompact: {
-    width: 156,
+    width: 128,
     flex: 0,
-    minHeight: 188,
+    minHeight: 168,
+  },
+  peekSource: {
+    opacity: 0,
   },
   blockStage: {
     alignItems: 'center',
@@ -237,19 +289,23 @@ const styles = StyleSheet.create({
   name: {
     lineHeight: 18,
   },
+  meta: {
+    fontSize: 11,
+    lineHeight: 14,
+  },
+  priceCol: {
+    gap: 2,
+  },
   priceRow: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
+    alignItems: 'center',
     justifyContent: 'space-between',
     gap: Spacing.two,
-    minHeight: 32,
-  },
-  priceStack: {
-    flexShrink: 1,
-    gap: 1,
+    minHeight: 28,
   },
   price: {
     fontSize: 15,
+    lineHeight: 20,
   },
   compareAt: {
     fontSize: 12,
@@ -268,9 +324,8 @@ const styles = StyleSheet.create({
     gap: Spacing.one,
   },
   addBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 28,
+    height: 28,
     alignItems: 'center',
     justifyContent: 'center',
   },
