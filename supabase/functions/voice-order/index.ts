@@ -263,6 +263,22 @@ const NOISE_WORDS = new Set([
   'check',
   'mic',
   'audio',
+  'you',
+  'your',
+  'yourself',
+  'me',
+  'my',
+  'mine',
+  'off',
+  'up',
+  'the',
+  'of',
+  'to',
+  'it',
+  'this',
+  'that',
+  'them',
+  'just',
 ]);
 
 /** A grocery count: a number word, or a digit from 1 to 24. "123" is a mic check, not a quantity. */
@@ -274,13 +290,44 @@ function spokenQuantity(word: string): number | null {
   return n;
 }
 
+/** Insults are not foods. Stems cover "fucking" and "shitty" without matching a real product token. */
+const CURSE_WORDS = new Set([
+  'fuck', 'fucking', 'fucked', 'fucker', 'fucks', 'motherfucker', 'shit', 'shitty', 'bullshit',
+  'bitch', 'bastard', 'asshole', 'ass', 'damn', 'damned', 'goddamn', 'crap', 'crappy',
+  'dick', 'piss', 'pissed', 'slut', 'cunt', 'whore', 'hell', 'wtf', 'stfu',
+]);
+
+function isCurseToken(word: string): boolean {
+  const raw = word.toLowerCase().replace(/[^a-z]/g, '');
+  if (!raw) return false;
+  if (CURSE_WORDS.has(raw) || CURSE_WORDS.has(normalizeToken(raw))) return true;
+  return raw.startsWith('fuck') || raw.startsWith('shit');
+}
+
+function withoutCurses(name: string): string {
+  return name.split(/\s+/).filter((word) => word && !isCurseToken(word)).join(' ').trim();
+}
+
 function isNoiseName(name: string): boolean {
   const words = name.toLowerCase().split(/[\s,]+/).filter(Boolean);
-  return words.length === 0 || words.every((word) => NOISE_WORDS.has(word) || /^\d+$/.test(word));
+  return words.length === 0 || words.every((word) => NOISE_WORDS.has(word) || isCurseToken(word) || /^\d+$/.test(word));
 }
 
 function keepGroceryItems(items: ParsedItem[]): ParsedItem[] {
-  return items.filter((item) => item.name.trim() && !isNoiseName(item.name));
+  return items
+    .map((item) => ({ ...item, name: withoutCurses(item.name) }))
+    .filter((item) => item.name.trim() && !isNoiseName(item.name));
+}
+
+/** English item words have to appear in what was said. A model cannot invent a food from an insult. */
+function groundedGroceryItems(items: ParsedItem[], source: string, language: string): ParsedItem[] {
+  if (language !== 'en') return items;
+  const heard = new Set(tokensOf(withoutCurses(source)).filter((token) => !/^\d+$/.test(token)));
+  return items.filter((item) => {
+    const words = tokensOf(item.name).filter((token) => !/^\d+$/.test(token) && token.length > 1);
+    const head = words[words.length - 1];
+    return Boolean(head && heard.has(head));
+  });
 }
 
 type ReplyVoice = 'female' | 'male' | 'cow';
@@ -470,6 +517,7 @@ function speakableLine(text: string): string | null {
   const line = text.replace(/[\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_SPEAK_CHARS);
   if (!line) return null;
   if (looksLikeHomeAddress(line)) return null;
+  if (tokensOf(line).some((token) => isCurseToken(token))) return null;
   if (/https?:|www\.|\b(api[_ ]?key|password|system prompt|ignore (all |previous )?instructions)\b/i.test(line)) {
     return null;
   }
@@ -574,7 +622,7 @@ function clarificationDetail(note: string): { words: string[]; quantity: number 
       quantity = qty;
       continue;
     }
-    if (CLARIFICATION_FILLERS.has(word) || NOISE_WORDS.has(word)) continue;
+    if (CLARIFICATION_FILLERS.has(word) || NOISE_WORDS.has(word) || isCurseToken(word)) continue;
     words.push(word);
   }
   return { words, quantity };
@@ -1316,6 +1364,7 @@ Deno.serve(async (req) => {
                   'A number is a quantity only when it is a count directly before a food. Keep counts above 24 as given. Do not shrink them. "123" beside mic-check words is not a quantity. ' +
                   'A fat percent is part of the name, with quantity 1. "2% milk" and "3% milk" are milk, not 2 or 3 of another food. ' +
                   '"testing testing 123 potato" is one item: potato. ' +
+                  'Ignore insults and curse words. Never invent a food the shopper did not say. ' +
                   'If the only words are not foods, call add_items with an empty items array. ' +
                   'You cannot browse the web. You only call add_items.' +
                   (shopperLocation ? ` The shopper is near ${shopperLocation}. Use that only for nearby-store wording.` : '') +
@@ -1385,7 +1434,11 @@ Deno.serve(async (req) => {
         confused: true,
       });
     }
-    items = containGroceryItems(restorePercentNames(keepGroceryItems(items), shownTranscript));
+    items = groundedGroceryItems(
+      containGroceryItems(restorePercentNames(keepGroceryItems(items), shownTranscript)),
+      `${shownTranscript} ${clarifyNote}`,
+      language,
+    );
     const clarifySide = clarificationSide(clarifyNote);
     if (clarifySide === 'two') {
       items = items.flatMap((item) => {
@@ -1396,10 +1449,11 @@ Deno.serve(async (req) => {
       });
     }
     if (items.length === 0) {
+      const swore = tokensOf(`${shownTranscript} ${clarifyNote}`).some((token) => isCurseToken(token));
       const empty = await localizeAssistantText(
         xaiKey,
         language,
-        "Name a food, like eggs or potatoes.",
+        swore ? 'I only add groceries.' : 'Name a food, like eggs or potatoes.',
       );
       return json({
         transcript: shownTranscript,
