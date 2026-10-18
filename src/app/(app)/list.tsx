@@ -594,6 +594,12 @@ export default function PlanScreen() {
             </ThemedText>
             <View style={styles.headerActions}>
               <NativeIconButton
+                accessibilityLabel="Import recipe"
+                iosSymbol="text.book.closed.fill"
+                androidSymbol="menu_book"
+                onPress={() => router.push('/recipe-import')}
+              />
+              <NativeIconButton
                 accessibilityLabel="Staples"
                 iosSymbol="carrot.fill"
                 androidSymbol="nutrition"
@@ -688,6 +694,11 @@ export default function PlanScreen() {
                   Nothing on this trip yet. Add picks from Shop, then come back to plan.
                 </ThemedText>
                 <ButterButton label="Browse shop" variant="yellow" onPress={() => router.push('/')} />
+                <ButterButton
+                  label="Import recipe"
+                  variant="ghost"
+                  onPress={() => router.push('/recipe-import')}
+                />
               </View>
             ) : (
               openItems.map((item) => {

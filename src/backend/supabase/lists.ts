@@ -1,9 +1,28 @@
-import type { GroceryList, Group, ListItem, ResolvedListItem } from '../types';
+import type { GroceryList, Group, ListItem, RecipeIngredient, ResolvedListItem } from '../types';
 import { supabase } from './client';
 import { AppError, fail } from '../errors';
 import { unwrap, unwrapOne, unwrapVoid } from './query';
 import { listMyGroups } from './groups';
-import { addDueHabitItems, listHabits } from './purchases';
+import { addDueHabitItems, listActivePantryItems, listHabits } from './purchases';
+
+export type RecipeListSkipReason = 'still_have' | 'already_on_list';
+
+export type RecipeListPreviewLine = {
+  ingredientId: string;
+  label: string;
+  categoryId: string | null;
+  amountBase: number | null;
+  reason?: RecipeListSkipReason;
+  lastPurchasedAt?: string | null;
+  expiresOn?: string | null;
+};
+
+export type RecipeListPreview = {
+  recipeId: string;
+  title: string;
+  willAdd: RecipeListPreviewLine[];
+  skipped: RecipeListPreviewLine[];
+};
 
 export type ActiveListTarget = {
   group: Group;
@@ -290,4 +309,132 @@ export async function addRecipeToList(input: { listId: string; recipeId: string 
     added += 1;
   }
   return added;
+}
+
+function normalizeName(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function pantryMatchForIngredient(
+  ingredient: RecipeIngredient,
+  pantry: Awaited<ReturnType<typeof listActivePantryItems>>,
+): Awaited<ReturnType<typeof listActivePantryItems>>[number] | null {
+  if (ingredient.category_id) {
+    const byCategory = pantry.find((row) => row.categoryId === ingredient.category_id);
+    if (byCategory) return byCategory;
+  }
+  const needle = normalizeName(ingredient.raw_text);
+  if (!needle) return null;
+  return (
+    pantry.find((row) => {
+      const name = normalizeName(row.productName);
+      return name.includes(needle) || needle.includes(name);
+    }) ?? null
+  );
+}
+
+/**
+ * Preview which recipe ingredients would be added vs skipped because the
+ * household still has them (active pantry) or they are already on the open list.
+ */
+export async function previewRecipeForList(recipeId: string): Promise<RecipeListPreview> {
+  const { group, list } = await getDefaultGroceryList();
+  const recipe = unwrapOne<{ id: string; title: string }>(
+    await supabase.from('recipes').select('id, title').eq('id', recipeId).maybeSingle(),
+    'Recipe not found.',
+  );
+  const ingredients = unwrap(
+    await supabase.from('recipe_ingredients').select('*').eq('recipe_id', recipeId),
+  );
+  const [existing, pantry] = await Promise.all([
+    listListItems(list.id),
+    listActivePantryItems(group.id),
+  ]);
+  const openKeys = new Set(
+    existing.map(openItemKey).filter((key): key is string => key != null),
+  );
+
+  const willAdd: RecipeListPreviewLine[] = [];
+  const skipped: RecipeListPreviewLine[] = [];
+
+  for (const ingredient of ingredients) {
+    const line: RecipeListPreviewLine = {
+      ingredientId: ingredient.id,
+      label: ingredient.raw_text,
+      categoryId: ingredient.category_id,
+      amountBase: ingredient.amount_base,
+    };
+    const candidate = {
+      product_id: null as string | null,
+      category_id: ingredient.category_id,
+      custom_name: ingredient.category_id ? null : ingredient.raw_text,
+      done_at: null as string | null,
+    };
+    const key = openItemKey(candidate);
+    if (key && openKeys.has(key)) {
+      skipped.push({ ...line, reason: 'already_on_list' });
+      continue;
+    }
+    const pantryHit = pantryMatchForIngredient(ingredient, pantry);
+    if (pantryHit) {
+      skipped.push({
+        ...line,
+        reason: 'still_have',
+        lastPurchasedAt: pantryHit.purchasedAt,
+        expiresOn: pantryHit.expiresOn,
+      });
+      continue;
+    }
+    willAdd.push(line);
+  }
+
+  return { recipeId: recipe.id, title: recipe.title, willAdd, skipped };
+}
+
+/**
+ * Adds recipe ingredients with purchase caution. By default only lines from
+ * previewRecipeForList.willAdd are inserted. Pass forceIngredientIds to also
+ * add skipped “still have” / already-on-list rows the user chose.
+ */
+export async function addRecipeToListWithCaution(input: {
+  listId?: string;
+  recipeId: string;
+  forceIngredientIds?: string[];
+}): Promise<{ added: number; skipped: number }> {
+  const { list } = await getDefaultGroceryList();
+  const listId = input.listId ?? list.id;
+  const preview = await previewRecipeForList(input.recipeId);
+  const force = new Set(input.forceIngredientIds ?? []);
+  const toAdd = [
+    ...preview.willAdd,
+    ...preview.skipped.filter((row) => force.has(row.ingredientId)),
+  ];
+
+  const existing = await listListItems(listId);
+  const keys = new Set(
+    existing.map(openItemKey).filter((key): key is string => key != null),
+  );
+
+  let added = 0;
+  for (const line of toAdd) {
+    const candidate = {
+      product_id: null as string | null,
+      category_id: line.categoryId,
+      custom_name: line.categoryId ? null : line.label,
+      done_at: null as string | null,
+    };
+    const key = openItemKey(candidate);
+    if (key && keys.has(key)) continue;
+    await addListItem({
+      listId,
+      categoryId: line.categoryId ?? undefined,
+      customName: line.categoryId ? undefined : line.label,
+      amountBase: line.amountBase ?? undefined,
+      sourceRecipeId: input.recipeId,
+    });
+    if (key) keys.add(key);
+    added += 1;
+  }
+
+  return { added, skipped: preview.skipped.length };
 }
