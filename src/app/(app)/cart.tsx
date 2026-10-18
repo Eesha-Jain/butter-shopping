@@ -14,10 +14,12 @@ import { useGuestCart } from '@/auth/guest-cart-context';
 import { useRequireAccount } from '@/auth/require-account';
 import { useSession } from '@/auth/session';
 import {
+  catalogLinesForItems,
   getMyDefaultList,
   listResolvedItems,
   removeListItem,
   updateListItem,
+  type CatalogLine,
   type ResolvedListItem,
 } from '@/backend';
 import { BottomTabInset, Fonts, MaxContentWidth, Radius, Spacing } from '@/constants/theme';
@@ -141,6 +143,7 @@ function GuestCartBody({
 
 function SignedInCartBody({ theme }: { theme: ReturnType<typeof useTheme> }) {
   const [items, setItems] = useState<ResolvedListItem[] | null>(null);
+  const [lines, setLines] = useState<Map<string, CatalogLine>>(new Map());
   const [listId, setListId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -153,8 +156,9 @@ function SignedInCartBody({ theme }: { theme: ReturnType<typeof useTheme> }) {
     try {
       const { list } = await getMyDefaultList();
       setListId(list.id);
-      const rows = await listResolvedItems(list.id);
-      setItems(rows.filter((row) => !row.done_at));
+      const rows = (await listResolvedItems(list.id)).filter((row) => !row.done_at);
+      setItems(rows);
+      setLines(await catalogLinesForItems(rows));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load your cart.');
       if (!refresh) setItems(null);
@@ -229,7 +233,12 @@ function SignedInCartBody({ theme }: { theme: ReturnType<typeof useTheme> }) {
             key={item.id}
             style={[styles.row, { borderColor: theme.border, backgroundColor: theme.background }]}>
             <View style={styles.rowBody}>
-              <Text style={[styles.itemName, { color: theme.text }]}>{name}</Text>
+              <Text style={[styles.itemName, { color: theme.text }]}>
+                {lines.get(item.id)?.title ?? name}
+              </Text>
+              {lines.get(item.id)?.offer ? (
+                <Text style={[styles.qty, { color: theme.textSecondary }]}>{lines.get(item.id)?.offer}</Text>
+              ) : null}
               {isRequest ? (
                 <Text style={[styles.requestTag, { color: theme.textSecondary }]}>Request</Text>
               ) : null}

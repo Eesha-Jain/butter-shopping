@@ -11,12 +11,17 @@ import { Link } from 'expo-router';
 
 import {
   buildStandardList,
+  catalogLinesForItems,
   getDefaultGroceryList,
   listResolvedItems,
   listVisibleRecipes,
   removeListItem,
+  resolveShopZip,
   setListItemDone,
   showSuccessToast,
+  suggestBestShopDate,
+  type BestShopDay,
+  type CatalogLine,
   type Recipe,
   type ResolvedListItem,
 } from '@/backend';
@@ -28,6 +33,7 @@ import { useTheme } from '@/hooks/use-theme';
 export default function GroceryListScreen() {
   const theme = useTheme();
   const [items, setItems] = useState<ResolvedListItem[] | null>(null);
+  const [lines, setLines] = useState<Map<string, CatalogLine>>(new Map());
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [selectedRecipeIds, setSelectedRecipeIds] = useState<string[]>([]);
   const [listId, setListId] = useState<string | null>(null);
@@ -35,6 +41,7 @@ export default function GroceryListScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isBuilding, setIsBuilding] = useState(false);
+  const [bestShopDay, setBestShopDay] = useState<BestShopDay | null>(null);
 
   const load = useCallback(async (refresh = false) => {
     if (refresh) {
@@ -46,12 +53,19 @@ export default function GroceryListScreen() {
     try {
       const { list } = await getDefaultGroceryList();
       setListId(list.id);
-      const [rows, visibleRecipes] = await Promise.all([
+      const [rows, visibleRecipes, zip] = await Promise.all([
         listResolvedItems(list.id),
         listVisibleRecipes(),
+        resolveShopZip().catch(() => '98195'),
       ]);
       setItems(rows);
+      setLines(await catalogLinesForItems(rows));
       setRecipes(visibleRecipes);
+      try {
+        setBestShopDay(await suggestBestShopDate({ postalCode: zip }));
+      } catch {
+        setBestShopDay(null);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load your grocery list.');
       if (!refresh) {
@@ -142,6 +156,11 @@ export default function GroceryListScreen() {
           <ThemedText type="small" themeColor="textSecondary">
             Built from staples you eat and recipes you pick. Cart is for checkout later.
           </ThemedText>
+          {bestShopDay ? (
+            <ThemedText type="small" themeColor="textSecondary">
+              Suggested shop day {bestShopDay.shopOn}: {bestShopDay.reasonLabel}
+            </ThemedText>
+          ) : null}
           <View style={styles.actions}>
             <Pressable
               onPress={() => void onBuild()}
@@ -195,8 +214,13 @@ export default function GroceryListScreen() {
               void setListItemDone(item.id, !item.done_at).then(() => load(true));
             }}>
             <ThemedText style={item.done_at ? styles.doneText : undefined}>
-              {labelForItem(item)}
+              {lines.get(item.id)?.title ?? labelForItem(item)}
             </ThemedText>
+            {lines.get(item.id)?.offer ? (
+              <ThemedText type="small" themeColor="textSecondary">
+                {lines.get(item.id)?.offer}
+              </ThemedText>
+            ) : null}
             {item.custom_name ? (
               <ThemedText type="small" themeColor="textSecondary">
                 Request

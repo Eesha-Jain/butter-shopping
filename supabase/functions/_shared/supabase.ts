@@ -41,7 +41,9 @@ export function json(body: unknown, status = 200): Response {
   });
 }
 
-export async function sendExpoPush(messages: { to: string; title: string; body: string }[]): Promise<string[]> {
+export async function sendExpoPush(
+  messages: { to: string; title: string; body: string; sound?: 'default' | null }[],
+): Promise<string[]> {
   if (messages.length === 0) return [];
   const response = await fetch('https://exp.host/--/api/v2/push/send', {
     method: 'POST',

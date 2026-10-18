@@ -126,6 +126,74 @@ export async function suggestDiscountDate(input?: {
   return result.data;
 }
 
+export type ShopDayReason = 'shelf_pattern' | 'promotion' | 'preferred' | 'default';
+
+export type ShopDayStoreHint = {
+  store_id: string;
+  name: string;
+  best_dow: number;
+  relative_index: number;
+  obs_count: number;
+};
+
+export type BestShopDay = {
+  shopOn: string;
+  reason: ShopDayReason;
+  score: number;
+  stores: ShopDayStoreHint[];
+  /** Short copy for List / Agent, e.g. why this day was chosen. */
+  reasonLabel: string;
+};
+
+function shopDayReasonLabel(reason: ShopDayReason, stores: ShopDayStoreHint[]): string {
+  if (reason === 'promotion') return 'Best nearby basket discounts land on this day.';
+  if (reason === 'shelf_pattern') {
+    const top = stores[0];
+    if (top?.name) {
+      const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      const dow = days[top.best_dow] ?? 'this weekday';
+      return `${top.name} tends lower on ${dow}s (${top.obs_count} price checks).`;
+    }
+    return 'Nearby stores tend to be cheaper on this weekday.';
+  }
+  if (reason === 'preferred') return 'Matches your preferred grocery day.';
+  return 'Next open shopping day.';
+}
+
+/**
+ * History-aware grocery day: blends shelf day-of-week patterns near a ZIP,
+ * basket promotions, and preferred_days. Pass shopOn to recommendShoppingPlan.
+ */
+export async function suggestBestShopDate(input?: {
+  postalCode?: string;
+  from?: string;
+}): Promise<BestShopDay> {
+  const result = await supabase.rpc('recommend_shop_day' as 'recommend_discount_date', {
+    p_near_postal_code: input?.postalCode ?? '98195',
+    p_from: input?.from ?? null,
+  } as never);
+  if (result.error) fail(result.error, 'Could not choose a shopping day.');
+  const raw = result.data as {
+    shop_on?: string;
+    reason?: string;
+    score?: number;
+    stores?: ShopDayStoreHint[];
+  } | null;
+  const reason = (raw?.reason ?? 'default') as ShopDayReason;
+  const stores = Array.isArray(raw?.stores) ? raw.stores : [];
+  const shopOn =
+    typeof raw?.shop_on === 'string' && raw.shop_on
+      ? raw.shop_on
+      : await suggestGroceryDate();
+  return {
+    shopOn,
+    reason,
+    score: typeof raw?.score === 'number' ? raw.score : 0,
+    stores,
+    reasonLabel: shopDayReasonLabel(reason, stores),
+  };
+}
+
 /** The caller's weekly target, in cents. Null means no target has been set. */
 export async function getWeeklyBudgetCents(): Promise<number | null> {
   const user = await supabase.auth.getUser();

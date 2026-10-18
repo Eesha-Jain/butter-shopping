@@ -58,6 +58,7 @@ export {
   addListItem,
   addRecipeToList,
   buildStandardList,
+  catalogLinesForItems,
   createList,
   getActiveListProductQtyMap,
   getDefaultGroceryList,
@@ -66,11 +67,12 @@ export {
   listListItems,
   listMyListTargets,
   listResolvedItems,
+  openProductOnList,
   removeListItem,
   setListItemDone,
   updateListItem
 } from './lists';
-export type { ActiveListTarget } from './lists';
+export type { ActiveListTarget, CatalogLine } from './lists';
 export {
   formatLocalDateTime,
   getDeviceTimeZone,
@@ -102,9 +104,11 @@ export {
   planLowestTrip,
   priceOptions,
   recommendShoppingPlan,
+  suggestBestShopDate,
   suggestDiscountDate,
   suggestGroceryDate
 } from './planning';
+export type { BestShopDay } from './planning';
 export {
   getMyProfile,
   listFoodTraits,
