@@ -24,6 +24,7 @@ type Props = {
   expanded: boolean;
   placing: boolean;
   myUserId: string | null;
+  grouped?: boolean;
   /** Show which group/list this order is for (when the Plan mixes several). */
   showSource: boolean;
   imageForLine: (line: RunOrderLine) => string | null;
@@ -43,6 +44,7 @@ export function RunOrderCard({
   expanded,
   placing,
   myUserId,
+  grouped = false,
   showSource,
   imageForLine,
   renderLine,
@@ -59,7 +61,7 @@ export function RunOrderCard({
     order.shopper && order.shopper.userId === myUserId ? 'You' : order.shopper?.name;
 
   const meta = [
-    showSource ? order.sourceLabel : null,
+    showSource && !grouped ? order.sourceLabel : null,
     `${order.itemCount} item${order.itemCount === 1 ? '' : 's'}`,
     !isUnpriced && order.totalCents > 0
       ? `${isPlaced ? '' : '~'}${formatMoney(order.totalCents)}`
@@ -91,8 +93,9 @@ export function RunOrderCard({
       layout={drawerLayout}
       style={[
         styles.card,
+        grouped ? styles.groupedCard : null,
         {
-          backgroundColor: theme.background,
+          backgroundColor: grouped ? 'transparent' : theme.background,
           borderColor: isUnpriced ? theme.border : theme.borderInk,
         },
       ]}>
@@ -102,11 +105,11 @@ export function RunOrderCard({
         accessibilityState={canExpand ? { expanded } : undefined}
         accessibilityLabel={`${order.storeName} order, ${meta}, ${status.label}${shopperName ? `, ${shopperName} shopping` : ''}`}
         style={styles.header}>
-        <StoreLogo storeName={order.storeName} unknown={isUnpriced} size={36} />
+        {!grouped ? <StoreLogo storeName={order.storeName} unknown={isUnpriced} size={36} /> : null}
         <View style={styles.headerText}>
           <View style={styles.titleRow}>
             <ThemedText type="smallBold" numberOfLines={1} style={styles.storeName}>
-              {order.storeName}
+              {grouped ? order.sourceLabel : order.storeName}
             </ThemedText>
             <View style={[styles.pill, { backgroundColor: status.bg }]}>
               <ThemedText style={[styles.pillText, { color: status.fg }]}>{status.label}</ThemedText>
@@ -249,6 +252,11 @@ const styles = StyleSheet.create({
     borderRadius: Radius.card,
     padding: Spacing.three,
     gap: Spacing.two,
+  },
+  groupedCard: {
+    borderWidth: 0,
+    borderRadius: 0,
+    padding: 0,
   },
   header: {
     flexDirection: 'row',

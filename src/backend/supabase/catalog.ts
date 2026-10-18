@@ -178,7 +178,7 @@ export async function listCategories(input?: { limit?: number }): Promise<Produc
  * Spreads browse results so one brand/name cluster (e.g. every pasta SKU)
  * cannot dominate the first screen.
  */
-function diversifyProducts(rows: Product[], limit: number): Product[] {
+export function diversifyProducts(rows: Product[], limit: number): Product[] {
   const unique = dedupeProductsByGroup(rows);
   if (unique.length <= limit) return unique;
 
@@ -335,6 +335,59 @@ export async function listActiveProducts(input?: {
   }
 
   return diversifyProducts(interleaved, limit);
+}
+
+const PAGE_SIZE = 1000;
+
+type PageResult<T> = {
+  data: T[] | null;
+  error: { message: string; code?: string } | null;
+  count?: number | null;
+};
+
+/** Reads every row of a query, paging past PostgREST's 1000-row cap. */
+async function selectAllPages<T>(
+  page: (from: number, to: number) => PromiseLike<PageResult<T>>,
+): Promise<T[]> {
+  const first = await page(0, PAGE_SIZE - 1);
+  const rows = unwrap(first);
+  const total = first.count ?? rows.length;
+  if (rows.length < PAGE_SIZE || total <= PAGE_SIZE) return rows;
+  const rest = await Promise.all(
+    Array.from({ length: Math.ceil(total / PAGE_SIZE) - 1 }, (_, i) => {
+      const from = (i + 1) * PAGE_SIZE;
+      return page(from, from + PAGE_SIZE - 1).then((res) => unwrap(res));
+    }),
+  );
+  return [...rows, ...rest.flat()];
+}
+
+/** Every active product, for on-device browse / filter / search. */
+export async function listAllActiveProducts(): Promise<Product[]> {
+  return selectAllPages<Product>((from, to) =>
+    supabase
+      .from('products')
+      .select('*', { count: 'exact' })
+      .eq('is_active', true)
+      .order('id')
+      .range(from, to),
+  );
+}
+
+/** Every product trait row, for on-device food filters. */
+export async function listAllProductTraits(): Promise<ProductTrait[]> {
+  return selectAllPages<ProductTrait>((from, to) =>
+    supabase
+      .from('product_traits')
+      .select('*', { count: 'exact' })
+      .order('id')
+      .range(from, to),
+  );
+}
+
+/** Every category (including children), for aisle parent/child lookups. */
+export async function listAllCategories(): Promise<ProductCategory[]> {
+  return unwrap(await supabase.from('product_categories').select('*').order('name'));
 }
 
 /** Hydrates product rows by id. Order follows the input ids when possible. */

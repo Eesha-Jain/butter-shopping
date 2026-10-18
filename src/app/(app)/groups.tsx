@@ -39,6 +39,12 @@ import { useTheme } from '@/hooks/use-theme';
 
 type Tab = 'groups' | 'create' | 'join';
 
+/** Pulls the 12-character invite code out of a pasted share message; otherwise keeps the text. */
+function extractInviteCode(text: string): string {
+  const match = text.match(/\b[0-9a-f]{12}\b/i);
+  return (match ? match[0] : text).toLowerCase();
+}
+
 // Share.share opens the system sheet (UIActivityViewController on iOS, the
 // chooser on Android), which lists Messages, Slack, Mail, Copy, etc.
 async function shareInvite(group: Pick<Group, 'name' | 'invite_code'>) {
@@ -47,7 +53,7 @@ async function shareInvite(group: Pick<Group, 'name' | 'invite_code'>) {
     await Share.share(
       {
         title: `Join ${group.name} on Butter`,
-        message: `Join "${group.name}" on Butter! Open the app, go to Plan → Groups → Join, and enter invite code: ${group.invite_code}`,
+        message: `Join "${group.name}" on Butter!\n\nInvite code (long-press to copy):\n${group.invite_code}\n\nIn the app: Plan → Groups → Join → Paste from clipboard.`,
       },
       { dialogTitle: 'Share invite', subject: `Join ${group.name} on Butter` },
     );
@@ -198,7 +204,7 @@ export default function GroupsScreen() {
   };
 
   const onJoin = async () => {
-    const code = joinCode.trim();
+    const code = joinCode.trim().toLowerCase();
     if (!code || busy) return;
     setBusy(true);
     setError(null);
@@ -218,12 +224,12 @@ export default function GroupsScreen() {
 
   const onPasteInviteCode = async () => {
     try {
-      const code = (await Clipboard.getStringAsync()).trim();
-      if (!code) {
+      const text = (await Clipboard.getStringAsync()).trim();
+      if (!text) {
         showErrorToast(new Error('No text found in the clipboard.'));
         return;
       }
-      setJoinCode(code.toUpperCase());
+      setJoinCode(extractInviteCode(text));
     } catch (err) {
       showErrorToast(err, 'Could not read the clipboard.');
     }
@@ -522,10 +528,10 @@ export default function GroupsScreen() {
             </View>
             <TextInput
               value={joinCode}
-              onChangeText={setJoinCode}
-              autoCapitalize="characters"
+              onChangeText={(value) => setJoinCode(extractInviteCode(value))}
+              autoCapitalize="none"
               autoCorrect={false}
-              placeholder="ABCD1234"
+              placeholder="a1b2c3d4e5f6"
               placeholderTextColor={theme.textSecondary}
               editable={!busy}
               returnKeyType="go"

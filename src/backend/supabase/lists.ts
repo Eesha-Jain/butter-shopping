@@ -535,8 +535,11 @@ function pantryMatchForIngredient(
  * Preview which recipe ingredients would be added vs skipped because the
  * household still has them (active pantry) or they are already on the open list.
  */
-export async function previewRecipeForList(recipeId: string): Promise<RecipeListPreview> {
-  const { group, list } = await getDefaultGroceryList();
+export async function previewRecipeForList(
+  recipeId: string,
+  target?: ActiveListTarget,
+): Promise<RecipeListPreview> {
+  const { group, list } = target ?? (await getDefaultGroceryList());
   const recipe = unwrapOne<{ id: string; title: string }>(
     await supabase.from('recipes').select('id, title').eq('id', recipeId).maybeSingle(),
     'Recipe not found.',
@@ -602,12 +605,13 @@ export async function previewRecipeForList(recipeId: string): Promise<RecipeList
  */
 export async function addRecipeToListWithCaution(input: {
   listId?: string;
+  target?: ActiveListTarget;
   recipeId: string;
   forceIngredientIds?: string[];
 }): Promise<{ added: number; skipped: number }> {
-  const { list } = await getDefaultGroceryList();
+  const { list } = input.target ?? (await getDefaultGroceryList());
   const listId = input.listId ?? list.id;
-  const preview = await previewRecipeForList(input.recipeId);
+  const preview = await previewRecipeForList(input.recipeId, input.target);
   const force = new Set(input.forceIngredientIds ?? []);
   const toAdd = [
     ...preview.willAdd,

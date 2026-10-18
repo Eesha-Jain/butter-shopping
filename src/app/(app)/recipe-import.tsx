@@ -13,7 +13,9 @@ import {
   View,
 } from 'react-native';
 
+import { useActiveList } from '@/auth/active-list';
 import {
+  type ActiveListTarget,
   addRecipeToListWithCaution,
   formatLocalDateTime,
   importRecipeFromImage,
@@ -40,6 +42,12 @@ export default function RecipeImportScreen() {
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<RecipeListPreview | null>(null);
   const [forcedIds, setForcedIds] = useState<string[]>([]);
+  const { targets, activeTarget, setActiveTarget } = useActiveList();
+  const [pickedListId, setPickedListId] = useState<string | null>(null);
+  const target =
+    targets.find((row) => row.list.id === (pickedListId ?? activeTarget?.list.id)) ??
+    activeTarget ??
+    undefined;
 
   const resetPreview = () => {
     setPreview(null);
@@ -47,9 +55,24 @@ export default function RecipeImportScreen() {
   };
 
   const afterImport = async (recipeId: string) => {
-    const next = await previewRecipeForList(recipeId);
+    const next = await previewRecipeForList(recipeId, target);
     setPreview(next);
     setForcedIds([]);
+  };
+
+  const onPickTarget = async (next: ActiveListTarget) => {
+    if (busy || next.list.id === target?.list.id) return;
+    setPickedListId(next.list.id);
+    if (!preview) return;
+    setBusy(true);
+    try {
+      setPreview(await previewRecipeForList(preview.recipeId, next));
+      setForcedIds([]);
+    } catch (err) {
+      showErrorToast(err, 'Could not check that list.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const onImportText = async () => {
@@ -191,6 +214,7 @@ export default function RecipeImportScreen() {
       const result = await runAction(
         () =>
           addRecipeToListWithCaution({
+            target,
             recipeId: preview.recipeId,
             forceIngredientIds: forcedIds,
           }),
@@ -202,6 +226,7 @@ export default function RecipeImportScreen() {
           ? 'Nothing new was added.'
           : `Added ${result.added} item${result.added === 1 ? '' : 's'}.`,
       );
+      if (target) setActiveTarget(target);
       router.replace('/list');
     } catch {
       // toasted
@@ -227,6 +252,32 @@ export default function RecipeImportScreen() {
         Paste text, drop a link, or photograph a recipe. Items you may still have are left off until
         you add them.
       </ThemedText>
+
+      {targets.length > 1 ? (
+        <View style={styles.preview}>
+          <ThemedText type="smallBold">Add to which list?</ThemedText>
+          <View style={styles.modeRow}>
+            {targets.map((row) => (
+              <Pressable
+                key={row.list.id}
+                onPress={() => void onPickTarget(row)}
+                accessibilityRole="button"
+                style={[
+                  styles.modeChip,
+                  {
+                    borderColor: theme.border,
+                    backgroundColor:
+                      row.list.id === target?.list.id
+                        ? theme.backgroundSelected
+                        : theme.backgroundElement,
+                  },
+                ]}>
+                <ThemedText type="smallBold">{row.group.name}</ThemedText>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      ) : null}
 
       <View style={styles.modeRow}>
         {(['text', 'url', 'photo'] as const).map((key) => (

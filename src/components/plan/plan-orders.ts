@@ -36,6 +36,13 @@ export type RunOrder = {
   placed: GroupOrderRow | null;
 };
 
+export type StoreOrderGroup = {
+  key: string;
+  storeId: string | null;
+  storeName: string;
+  orders: RunOrder[];
+};
+
 export type RunSource = {
   listId: string;
   groupId: string;
@@ -46,6 +53,24 @@ export type RunSource = {
 
 export function runKey(listId: string, ymd: string): string {
   return `${listId}|${ymd}`;
+}
+
+export function groupRunOrdersByStore(orders: RunOrder[]): StoreOrderGroup[] {
+  const groups = new Map<string, StoreOrderGroup>();
+  for (const order of orders) {
+    const storeKey = order.storeId
+      ? `store:${order.storeId}`
+      : `${order.kind}:${order.storeName.trim().toLocaleLowerCase()}`;
+    const group = groups.get(storeKey) ?? {
+      key: storeKey,
+      storeId: order.storeId,
+      storeName: order.storeName,
+      orders: [],
+    };
+    group.orders.push(order);
+    groups.set(storeKey, group);
+  }
+  return [...groups.values()];
 }
 
 /** Splits one list's items for one run into per-store orders. */

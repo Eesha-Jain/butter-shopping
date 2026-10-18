@@ -68,10 +68,12 @@ import {
 import { ListItemRow, cadenceLabel } from '@/components/plan/list-item-row';
 import {
   buildRunOrders,
+  groupRunOrdersByStore,
   placedRunOrder,
   runKey,
   type RunOrder,
   type RunOrderLine,
+  type StoreOrderGroup,
 } from '@/components/plan/plan-orders';
 import { drawerLayout, RunOrderCard } from '@/components/plan/run-order-card';
 import { SectionDivider } from '@/components/plan/section-divider';
@@ -424,6 +426,7 @@ export default function PlanScreen() {
   );
   const isGroceryDay = activeReasons.length > 0;
   const dayOrders = useMemo(() => ordersByDay.get(activeYmd) ?? [], [ordersByDay, activeYmd]);
+  const dayOrderGroups = useMemo(() => groupRunOrdersByStore(dayOrders), [dayOrders]);
   const hasAnyOpenItems = runsByList.some(({ runs }) => runs.size > 0);
 
   const weekDays = useMemo(
@@ -716,13 +719,14 @@ export default function PlanScreen() {
     );
   };
 
-  const renderOrder = (order: RunOrder) => (
+  const renderOrder = (order: RunOrder, grouped = false) => (
     <RunOrderCard
       key={order.key}
       order={order}
       expanded={!collapsedOrderKeys.has(order.key)}
       placing={placingKey === order.key}
       myUserId={myUserId}
+      grouped={grouped}
       showSource={showSource}
       imageForLine={(line) =>
         line.item.product_id ? (productImages.get(line.item.product_id) ?? null) : null
@@ -740,6 +744,48 @@ export default function PlanScreen() {
       onOpenPlaced={() => void openPastDetail(order)}
     />
   );
+
+  const renderOrderGroup = (group: StoreOrderGroup) => {
+    if (group.orders.length === 1) return renderOrder(group.orders[0]);
+    const itemCount = group.orders.reduce((sum, order) => sum + order.itemCount, 0);
+    const sourceCount = new Set(group.orders.map((order) => order.sourceLabel)).size;
+    return (
+      <Animated.View
+        key={group.key}
+        layout={drawerLayout}
+        style={[
+          styles.storeGroup,
+          { backgroundColor: theme.background, borderColor: theme.borderInk },
+        ]}>
+        <View style={styles.storeGroupHeader}>
+          <StoreLogo
+            storeName={group.storeName}
+            unknown={group.orders.every((order) => order.kind === 'unpriced')}
+            size={36}
+          />
+          <View style={styles.storeGroupTitle}>
+            <ThemedText type="smallBold" numberOfLines={1}>
+              {group.storeName}
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              {sourceCount} list{sourceCount === 1 ? '' : 's'} · {itemCount} item
+              {itemCount === 1 ? '' : 's'}
+            </ThemedText>
+          </View>
+        </View>
+        {group.orders.map((order, index) => (
+          <View
+            key={order.key}
+            style={[
+              styles.storeGroupSection,
+              index > 0 ? { borderTopWidth: 1, borderTopColor: theme.border } : null,
+            ]}>
+            {renderOrder(order, true)}
+          </View>
+        ))}
+      </Animated.View>
+    );
+  };
 
   const emptyListBlock = (
     <View style={styles.emptyBlock}>
@@ -953,7 +999,7 @@ export default function PlanScreen() {
                 No grocery run this day. Pick a highlighted day to see its orders.
               </ThemedText>
             ) : dayOrders.length > 0 ? (
-              dayOrders.map(renderOrder)
+              dayOrderGroups.map(renderOrderGroup)
             ) : !hasAnyOpenItems && upcomingPlaced.length === 0 ? (
               emptyListBlock
             ) : (
@@ -1017,7 +1063,7 @@ export default function PlanScreen() {
                       label={ymd === todayYmd ? 'Today' : formatShortDate(ymd)}
                       hint={`${(ordersByDay.get(ymd) ?? []).length} order${(ordersByDay.get(ymd) ?? []).length === 1 ? '' : 's'}`}
                     />
-                    {(ordersByDay.get(ymd) ?? []).map(renderOrder)}
+                    {groupRunOrdersByStore(ordersByDay.get(ymd) ?? []).map(renderOrderGroup)}
                   </Animated.View>
                 ))}
           </Animated.View>
@@ -1268,6 +1314,24 @@ const styles = StyleSheet.create({
   },
   section: {
     gap: Spacing.two,
+  },
+  storeGroup: {
+    borderWidth: 2,
+    borderRadius: Radius.card,
+    padding: Spacing.three,
+    gap: Spacing.two,
+  },
+  storeGroupHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  storeGroupTitle: {
+    flex: 1,
+    gap: 2,
+  },
+  storeGroupSection: {
+    paddingTop: Spacing.two,
   },
   dayTitle: {
     fontSize: Type.section,

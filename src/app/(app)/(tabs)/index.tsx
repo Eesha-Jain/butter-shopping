@@ -1,4 +1,5 @@
 import * as Haptics from 'expo-haptics';
+import * as Location from 'expo-location';
 import { Image } from 'expo-image';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
@@ -18,12 +19,10 @@ import {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   FadeIn,
-  FadeInDown,
   FadeOut,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
-  withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -37,7 +36,6 @@ import {
   applyFoodFilters,
   ensureCatalogForTerm,
   formatPromotionBadge,
-  promotionSavingsHint,
   getActiveListProductQtyMap,
   fetchNearbyShops,
   getCheapestPriceCentsByProductIds,
@@ -47,8 +45,6 @@ import {
   getGuestFavoriteIds,
   getGuestFoodRules,
   getGuestOnboardingDraft,
-  getJson,
-  setJson,
   getMyProfile,
   publicImageUrl,
   saveGuestOnboardingDraft,
@@ -56,15 +52,12 @@ import {
   getProductTraitsForIds,
   getProductsByIds,
   indexTraitsByProduct,
-  listActiveProducts,
   listCampusPopularProducts,
-  listCategories,
   listFoodTraits,
   listMyFavoriteProductIds,
   listMyFoodRules,
   listMyLocations,
   listMyStapleProductIds,
-  listProductsGroupedByCategory,
   listShelfForStores,
   listTrending,
   removeListItem,
@@ -91,10 +84,10 @@ import {
 import { AppHeader } from '@/components/app/app-header';
 import { CategoryIcon } from '@/components/shop/category-icons';
 import { MiniCow } from '@/components/shop/mini-cow';
-import { ProductCard } from '@/components/shop/product-card';
 import { ProductPeek } from '@/components/shop/product-peek';
 import type { ProductPeekAnchor } from '@/components/shop/product-peek-layout';
 import { ShopFiltersDrawer } from '@/components/shop/shop-filters-drawer';
+import { ShopProductCard, type ShopCardActions } from '@/components/shop/shop-product-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { ButterChip } from '@/components/ui/butter-chip';
@@ -112,6 +105,18 @@ import {
   scheduleProductDetailPrefetch,
   setProductPrefetchPaused,
 } from '@/services/product-detail-prefetch';
+import {
+  browseCategories,
+  buildHomeSections,
+  fetchShopCatalog,
+  mergeProducts,
+  productMatchesSearch,
+  productsInAisle,
+  readShopCatalogCache,
+  searchCatalog,
+  writeShopCatalogCache,
+  type ShopCatalog,
+} from '@/services/shop-catalog';
 
 const PENDING_ITEM_ID = '__pending__';
 
@@ -121,13 +126,9 @@ type ShopListItem =
   | { kind: 'section'; section: CategoryProductSection }
   | { kind: 'row'; products: Product[] };
 
-function productMatchesSearch(product: Product, query: string): boolean {
-  const q = query.toLowerCase();
-  return (
-    product.name.toLowerCase().includes(q) ||
-    (product.brand?.toLowerCase().includes(q) ?? false)
-  );
-}
+type ShopListVariant = 'home' | 'browse';
+
+const STRIP_INITIAL_CARDS = 4;
 
 function chunkProducts(products: Product[], size = 2): Product[][] {
   const rows: Product[][] = [];
@@ -137,119 +138,15 @@ function chunkProducts(products: Product[], size = 2): Product[][] {
   return rows;
 }
 
-const SHOP_HOME_CACHE_VERSION = 2;
-const HOME_SCOPE_KEY = 'home';
+/** Store-filtered shelf: rows plus that store's (gross) shelf prices. */
+type StoreShelf = { products: Product[]; priceMap: Map<string, number> };
 
-/** Raw (unfiltered) home catalog; food rules / sort are re-applied on read. */
-type ShopHomeCache = {
-  v: typeof SHOP_HOME_CACHE_VERSION;
-  categories: ProductCategory[];
-  sections: CategoryProductSection[];
-  products: Product[];
-  traits: ProductTrait[];
-  prices: [string, number][];
-  stripPrices: [string, number][];
-  trending: { product: Product; sponsored: boolean }[];
-};
-
-function readShopHomeCache(): ShopHomeCache | null {
-  const cached = getJson<ShopHomeCache>('shopHomeCache');
-  if (
-    !cached ||
-    cached.v !== SHOP_HOME_CACHE_VERSION ||
-    !Array.isArray(cached.products) ||
-    !Array.isArray(cached.sections) ||
-    !Array.isArray(cached.traits)
-  ) {
-    return null;
-  }
-  return cached;
-}
-
-type ShopScope = {
-  key: string;
-  kind: 'home' | 'aisle' | 'favorites' | 'stores';
-  categoryId: string | null;
-  favorites: boolean;
-  favoriteIds: string[];
-  storeIds: string[];
-};
-
-/** Unfiltered rows for one shop view; `priceMap` is gross shelf price (before cashback). */
-type ScopeData = {
-  products: Product[];
-  sections: CategoryProductSection[] | null;
-  priceMap: Map<string, number>;
-  traits: ProductTrait[];
-  nonce: number;
-  requestedIds?: string[];
-  fromDisk?: boolean;
-};
-
-function isScopeFresh(data: ScopeData, scope: ShopScope, nonce: number): boolean {
-  if (data.nonce !== nonce) return false;
-  if (!scope.favorites) return true;
-  const requested = new Set(data.requestedIds ?? []);
-  return scope.favoriteIds.every((id) => requested.has(id));
-}
-
-async function fetchShopScope(
-  scope: ShopScope,
-  geo: OpenPricesGeo | null,
-): Promise<Omit<ScopeData, 'nonce'>> {
-  let products: Product[];
-  let sections: CategoryProductSection[] | null = null;
-  let priceMap: Map<string, number> | null = null;
-
-  if (scope.favorites) {
-    products = scope.favoriteIds.length > 0 ? await getProductsByIds(scope.favoriteIds) : [];
-    if (scope.kind === 'stores') {
-      priceMap = await getStorePriceCentsForStores(
-        scope.storeIds,
-        products.map((row) => row.id),
-      );
-      const stocked = priceMap;
-      products = products.filter((row) => stocked.has(row.id));
-    }
-  } else if (scope.kind === 'stores') {
-    const shelf = await listShelfForStores(scope.storeIds, {
-      limit: 60,
-      categoryId: scope.categoryId,
-    });
-    products = shelf.map((row) => row.product);
-    priceMap = new Map(shelf.map((row) => [row.product.id, row.priceCents]));
-  } else if (scope.kind === 'home') {
-    const [grouped, catalog] = await Promise.all([
-      listProductsGroupedByCategory({ limitPerCategory: AISLE_PREVIEW_COUNT }),
-      listActiveProducts({ limit: 60 }),
-    ]);
-    sections = grouped;
-    products = catalog;
-  } else {
-    products = await listActiveProducts({ categoryId: scope.categoryId, limit: 60 });
-  }
-
-  const allIds = [
-    ...new Set([
-      ...products.map((row) => row.id),
-      ...(sections ?? []).flatMap((section) => section.products.map((row) => row.id)),
-    ]),
-  ];
-  const [traits, cheapest] = await Promise.all([
-    getProductTraitsForIds(allIds).catch(() => [] as ProductTrait[]),
-    priceMap
-      ? Promise.resolve(priceMap)
-      : getCheapestPriceCentsByProductIds(allIds, geo).catch(() => new Map<string, number>()),
-  ]);
-
-  return {
-    products,
-    sections,
-    priceMap: cheapest,
-    traits,
-    requestedIds: scope.favorites ? scope.favoriteIds : undefined,
-  };
-}
+const EMPTY_PRODUCTS: Product[] = [];
+const EMPTY_CATEGORIES: ProductCategory[] = [];
+const EMPTY_TRAITS: ProductTrait[] = [];
+const EMPTY_PRICES = new Map<string, number>();
+const PRICE_BATCH = 60;
+const CACHE_WRITE_DELAY_MS = 2500;
 
 const AISLE_PREVIEW_COUNT = 10;
 const SCROLL_TOP_THRESHOLD = 360;
@@ -281,8 +178,9 @@ export default function ShopScreen() {
     refreshTargets,
   } = useActiveList();
   const guestCart = useGuestCart();
-  const listRef = useRef<FlatList<ShopListItem>>(null);
-  const pendingBrowseRef = useRef<(() => void) | null>(null);
+  const homeListRef = useRef<FlatList<ShopListItem>>(null);
+  const browseListRef = useRef<FlatList<ShopListItem>>(null);
+  const scrollYRef = useRef<Record<ShopListVariant, number>>({ home: 0, browse: 0 });
   const showScrollTopRef = useRef(false);
   const searchStickyAtRef = useRef(Infinity);
   const searchPinnedRef = useRef(false);
@@ -292,16 +190,16 @@ export default function ShopScreen() {
     opacity: pinProgress.value,
   }));
   const seededPrefsRef = useRef(false);
-  const contentOpacity = useSharedValue(1);
   const [showScrollTop, setShowScrollTop] = useState(false);
+  const [listPickerOpen, setListPickerOpen] = useState(false);
 
-  const [initialCache] = useState<ShopHomeCache | null>(readShopHomeCache);
+  const [initialCache] = useState(readShopCatalogCache);
   const [location, setLocation] = useState<UserLocation | null>(null);
+  const [searchLocationLabel, setSearchLocationLabel] = useState<string | null>(null);
   const [qtyMap, setQtyMap] = useState<Map<string, { listItemId: string; quantity: number }>>(
     new Map(),
   );
 
-  const [categories, setCategories] = useState<ProductCategory[]>(() => initialCache?.categories ?? []);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [moreCategoriesOpen, setMoreCategoriesOpen] = useState(false);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
@@ -312,30 +210,27 @@ export default function ShopScreen() {
   const [trending, setTrending] = useState<{ product: Product; sponsored: boolean }[]>(
     () => initialCache?.trending ?? [],
   );
-  const [trendingPrices, setTrendingPrices] = useState<Map<string, number>>(
-    () => new Map(initialCache?.stripPrices ?? []),
+  const [catalog, setCatalog] = useState<ShopCatalog | null>(() =>
+    initialCache
+      ? {
+          products: initialCache.products,
+          traits: initialCache.traits,
+          allCategories: initialCache.allCategories,
+        }
+      : null,
   );
-  const [stripPrices, setStripPrices] = useState<Map<string, number>>(
-    () => new Map(initialCache?.stripPrices ?? []),
+  const [catalogSettled, setCatalogSettled] = useState(false);
+  const [rawPrices, setRawPrices] = useState<Map<string, number>>(
+    () => new Map(initialCache?.prices ?? []),
   );
-  const [scopeCache, setScopeCache] = useState<Map<string, ScopeData>>(() => {
-    const map = new Map<string, ScopeData>();
-    if (initialCache) {
-      map.set(HOME_SCOPE_KEY, {
-        products: initialCache.products,
-        sections: initialCache.sections,
-        priceMap: new Map(initialCache.prices),
-        traits: initialCache.traits,
-        nonce: -1,
-        fromDisk: true,
-      });
-    }
-    return map;
-  });
-  const scopeCacheRef = useRef(scopeCache);
-  const inFlightRef = useRef(new Set<string>());
+  const pricedIdsRef = useRef(new Set<string>());
+  const pricesInFlightRef = useRef(new Set<string>());
+  const favoriteLookupsRef = useRef(new Set<string>());
+  const cacheDirtyRef = useRef(false);
+  const [storeShelves, setStoreShelves] = useState<Map<string, StoreShelf>>(() => new Map());
+  const storeShelvesRef = useRef(storeShelves);
+  const storeFetchesRef = useRef(new Set<string>());
   const geoPromiseRef = useRef<Promise<OpenPricesGeo | null> | null>(null);
-  const [settledTokens, setSettledTokens] = useState<Set<string>>(() => new Set());
   const [dataNonce, setDataNonce] = useState(0);
   const [promotions, setPromotions] = useState<Map<string, Promotion>>(new Map());
   const [checkingStores, setCheckingStores] = useState(false);
@@ -434,6 +329,7 @@ export default function ShopScreen() {
     async (refresh = false) => {
       if (refresh) setIsRefreshing(true);
       else setIsLoading(true);
+      let savedLocation: UserLocation | null = null;
       try {
         const foodTraits = await listFoodTraits().catch(() => null);
         if (foodTraits) setTraits(foodTraits);
@@ -456,7 +352,8 @@ export default function ShopScreen() {
             refreshTargets().catch(() => undefined),
             refreshProfile().catch(() => undefined),
           ]);
-          setLocation(locations.find((row) => row.is_default) ?? locations[0] ?? null);
+          savedLocation = locations.find((row) => row.is_default) ?? locations[0] ?? null;
+          setLocation(savedLocation);
           if (foodRules) {
             const prefs = rulesFromUserFoodRules(foodRules);
             setPreferenceRules(prefs);
@@ -467,8 +364,28 @@ export default function ShopScreen() {
           }
         }
         // Store chips are optional; don't hold products behind the nearby lookup.
-        void fetchNearbyShops()
-          .then(setNearbyStores)
+        void resolveSearchCoords()
+          .then(async (origin) => {
+            let label =
+              origin &&
+              savedLocation?.latitude === origin.latitude &&
+              savedLocation.longitude === origin.longitude
+                ? formatLocation(savedLocation)
+                : null;
+
+            if (!label && origin) {
+              const [place] = await Location.reverseGeocodeAsync(origin).catch(() => []);
+              const parts = [
+                place?.city ?? place?.subregion,
+                place?.region,
+                place?.postalCode,
+              ].filter(Boolean);
+              label = parts.length ? parts.join(', ') : null;
+            }
+
+            setSearchLocationLabel(label);
+            setNearbyStores(await fetchNearbyShops(origin));
+          })
           .catch(() => setNearbyStores([]));
       } catch (err) {
         showErrorToast(err, 'Could not load the shop.');
@@ -533,16 +450,63 @@ export default function ShopScreen() {
     return geoPromiseRef.current;
   }, []);
 
-  const putScope = useCallback((key: string, data: ScopeData) => {
-    const existing = scopeCacheRef.current.get(key);
-    if (existing && existing.nonce > data.nonce) return;
-    const next = new Map(scopeCacheRef.current);
-    next.set(key, data);
-    scopeCacheRef.current = next;
-    setScopeCache(next);
-  }, []);
+  // Whole catalog lives on-device; every browse view below is a local filter of it.
+  useEffect(() => {
+    let cancelled = false;
+    void fetchShopCatalog()
+      .then((next) => {
+        if (cancelled) return;
+        cacheDirtyRef.current = true;
+        setCatalog(next);
+      })
+      .catch((err) => {
+        if (!cancelled && !initialCache) showErrorToast(err, 'Could not load products.');
+      })
+      .finally(() => {
+        if (!cancelled) setCatalogSettled(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dataNonce, initialCache]);
 
-  // Shared shop context (promos, categories, staples, trending, cashback) — not tied to the view.
+  /** Fetches cheapest prices only for ids not priced yet this session (cached values show meanwhile). */
+  const ensurePrices = useCallback(
+    (ids: string[]) => {
+      const missing = [...new Set(ids)].filter(
+        (id) => !pricedIdsRef.current.has(id) && !pricesInFlightRef.current.has(id),
+      );
+      if (missing.length === 0) return;
+      for (const id of missing) pricesInFlightRef.current.add(id);
+      for (let i = 0; i < missing.length; i += PRICE_BATCH) {
+        const batch = missing.slice(i, i + PRICE_BATCH);
+        void (async () => {
+          try {
+            const geo = await getOpenPricesGeo();
+            const map = await getCheapestPriceCentsByProductIds(batch, geo);
+            for (const id of batch) pricedIdsRef.current.add(id);
+            cacheDirtyRef.current = true;
+            setRawPrices((prev) => {
+              const next = new Map(prev);
+              for (const id of batch) {
+                const cents = map.get(id);
+                if (cents == null) next.delete(id);
+                else next.set(id, cents);
+              }
+              return next;
+            });
+          } catch {
+            // Best effort — cards show cached / no price.
+          } finally {
+            for (const id of batch) pricesInFlightRef.current.delete(id);
+          }
+        })();
+      }
+    },
+    [getOpenPricesGeo],
+  );
+
+  // Shared shop context (promos, staples, trending, cashback) — not tied to the view.
   const activeGroupId = activeTarget?.group.id ?? null;
   useEffect(() => {
     if (!shellReady) return;
@@ -554,10 +518,9 @@ export default function ShopScreen() {
           ? null
           : ((await getMyProfile().catch(() => null))?.college_id ?? null);
 
-        const [promoMap, cats, stapleProductIds, trendingRows, popularCampus, nextCashbackBps] =
+        const [promoMap, stapleProductIds, trendingRows, popularCampus, nextCashbackBps] =
           await Promise.all([
             getProductPromotionMap().catch(() => new Map<string, Promotion>()),
-            listCategories().catch(() => null),
             activeGroupId
               ? listMyStapleProductIds(activeGroupId).catch(() => [] as string[])
               : Promise.resolve([] as string[]),
@@ -569,7 +532,6 @@ export default function ShopScreen() {
 
         setPromotions(promoMap);
         setCashbackBps(nextCashbackBps);
-        if (cats && cats.length > 0) setCategories(cats);
 
         // Personal staples only — campus popular folds into Trending below.
         if (stapleProductIds.length > 0) {
@@ -611,16 +573,11 @@ export default function ShopScreen() {
           seenTrending.add(product.id);
           mergedTrending.push({ product, sponsored: false });
         }
-        if (mergedTrending.length > 0) setTrending(mergedTrending);
-
-        const geo = await getOpenPricesGeo();
-        const stripPriceMap = await getCheapestPriceCentsByProductIds(
-          [...stapleProductIds, ...mergedTrending.map((row) => row.product.id)],
-          geo,
-        ).catch(() => new Map<string, number>());
-        if (cancelled) return;
-        setTrendingPrices(stripPriceMap);
-        setStripPrices(stripPriceMap);
+        if (mergedTrending.length > 0) {
+          cacheDirtyRef.current = true;
+          setTrending(mergedTrending);
+        }
+        ensurePrices([...stapleProductIds, ...mergedTrending.map((row) => row.product.id)]);
       } catch (err) {
         if (!cancelled && !initialCache) showErrorToast(err, 'Could not update products.');
       }
@@ -629,165 +586,222 @@ export default function ShopScreen() {
     return () => {
       cancelled = true;
     };
-  }, [activeGroupId, dataNonce, getOpenPricesGeo, initialCache, isGuest, shellReady]);
+  }, [activeGroupId, dataNonce, ensurePrices, initialCache, isGuest, shellReady]);
 
-  // What the grid is showing. Category / favorites / store changes only swap this key; raw rows
-  // are cached per key so going back (or re-opening an aisle) is instant.
-  const scope = useMemo<ShopScope>(() => {
-    const favIds = favoriteIdsKey ? favoriteIdsKey.split(',') : [];
-    const base = {
-      categoryId: selectedCategoryId,
-      favorites: favoritesOnly,
-      favoriteIds: favIds,
-      storeIds: selectedStoreKey ? selectedStoreKey.split(',') : [],
-    };
-    if (selectedStoreKey) {
-      return {
-        ...base,
-        kind: 'stores',
-        key: favoritesOnly
-          ? `stores:${selectedStoreKey}:fav`
-          : `stores:${selectedStoreKey}:${selectedCategoryId ?? ''}`,
-      };
-    }
-    if (favoritesOnly) return { ...base, kind: 'favorites', key: 'fav' };
-    if (selectedCategoryId) return { ...base, kind: 'aisle', key: `aisle:${selectedCategoryId}` };
-    return { ...base, kind: 'home', key: HOME_SCOPE_KEY };
-  }, [favoriteIdsKey, favoritesOnly, selectedCategoryId, selectedStoreKey]);
+  const catalogProducts = catalog?.products ?? EMPTY_PRODUCTS;
+  const allCategories = catalog?.allCategories ?? EMPTY_CATEGORIES;
+  const categories = useMemo(() => browseCategories(allCategories), [allCategories]);
+  const catalogById = useMemo(
+    () => new Map(catalogProducts.map((row) => [row.id, row])),
+    [catalogProducts],
+  );
+  const catalogTraits = catalog?.traits ?? EMPTY_TRAITS;
+  const traitsByProduct = useMemo(() => indexTraitsByProduct(catalogTraits), [catalogTraits]);
+
+  // Favorites that aren't in the local catalog yet (e.g. added from a remote search).
+  useEffect(() => {
+    if (!favoritesOnly || !catalog) return;
+    const missing = [...favoriteIds].filter(
+      (id) => !catalogById.has(id) && !favoriteLookupsRef.current.has(id),
+    );
+    if (missing.length === 0) return;
+    for (const id of missing) favoriteLookupsRef.current.add(id);
+    void getProductsByIds(missing)
+      .then((rows) => {
+        if (rows.length === 0) return;
+        setCatalog((prev) => (prev ? { ...prev, products: mergeProducts(prev.products, rows) } : prev));
+      })
+      .catch(() => undefined);
+  }, [catalog, catalogById, favoriteIds, favoritesOnly]);
+
+  // Store filters need store-specific shelf prices, so those still come from the server (cached per key).
+  const storeScopeKey = hasStoreFilter
+    ? favoritesOnly
+      ? `${dataNonce}|${selectedStoreKey}|fav|${favoriteIdsKey}`
+      : `${dataNonce}|${selectedStoreKey}|${selectedCategoryId ?? ''}`
+    : null;
+  const activeShelf = storeScopeKey ? (storeShelves.get(storeScopeKey) ?? null) : null;
 
   useEffect(() => {
-    if (!shellReady) return;
-    const existing = scopeCacheRef.current.get(scope.key);
-    if (existing && isScopeFresh(existing, scope, dataNonce)) return;
-    const token = `${dataNonce}|${scope.key}|${scope.favoriteIds.join(',')}`;
-    if (inFlightRef.current.has(token)) return;
-    inFlightRef.current.add(token);
-
-    // Results are cached even if the user navigates away before they land.
+    if (!storeScopeKey || storeShelvesRef.current.has(storeScopeKey)) return;
+    if (storeFetchesRef.current.has(storeScopeKey)) return;
+    storeFetchesRef.current.add(storeScopeKey);
+    const key = storeScopeKey;
+    const storeIds = selectedStoreKey.split(',');
     void (async () => {
+      let shelf: StoreShelf = { products: [], priceMap: new Map() };
       try {
-        const geo = await getOpenPricesGeo();
-        const fetched = await fetchShopScope(scope, geo);
-        const prev = scopeCacheRef.current.get(scope.key);
-        const emptyHome =
-          scope.kind === 'home' &&
-          fetched.products.length === 0 &&
-          (fetched.sections?.length ?? 0) === 0;
-        // Keep what is already on screen (cached or previous) if the network returned nothing.
-        if (emptyHome && prev) {
-          putScope(scope.key, { ...prev, nonce: dataNonce });
+        if (favoritesOnly) {
+          const favIds = favoriteIdsKey ? favoriteIdsKey.split(',') : [];
+          const rows = favIds
+            .map((id) => catalogById.get(id))
+            .filter((row): row is Product => row != null);
+          const priceMap = await getStorePriceCentsForStores(
+            storeIds,
+            rows.map((row) => row.id),
+          );
+          shelf = { products: rows.filter((row) => priceMap.has(row.id)), priceMap };
         } else {
-          putScope(scope.key, { ...fetched, nonce: dataNonce });
+          const rows = await listShelfForStores(storeIds, {
+            limit: 60,
+            categoryId: selectedCategoryId,
+          });
+          shelf = {
+            products: rows.map((row) => row.product),
+            priceMap: new Map(rows.map((row) => [row.product.id, row.priceCents])),
+          };
         }
       } catch (err) {
-        if (!scopeCacheRef.current.has(scope.key)) {
-          showErrorToast(err, 'Could not update products.');
-        }
+        showErrorToast(err, 'Could not check nearby stores.');
       } finally {
-        inFlightRef.current.delete(token);
-        setSettledTokens((prev) => new Set(prev).add(token));
+        storeFetchesRef.current.delete(key);
+        const next = new Map(storeShelvesRef.current);
+        next.set(key, shelf);
+        storeShelvesRef.current = next;
+        setStoreShelves(next);
       }
     })();
-  }, [dataNonce, getOpenPricesGeo, putScope, scope, shellReady]);
-
-  const homeData = scopeCache.get(HOME_SCOPE_KEY) ?? null;
-
-  const scopeData = useMemo((): ScopeData | null => {
-    const hit = scopeCache.get(scope.key);
-    if (hit) return hit;
-    // Aisle not loaded yet: show what home already has for it while the full aisle loads.
-    if (scope.kind === 'aisle' && homeData) {
-      const seen = new Set<string>();
-      const rows: Product[] = [];
-      const sectionRows =
-        homeData.sections?.find((section) => section.category.id === scope.categoryId)
-          ?.products ?? [];
-      for (const row of [...sectionRows, ...homeData.products]) {
-        if (row.category_id !== scope.categoryId || seen.has(row.id)) continue;
-        seen.add(row.id);
-        rows.push(row);
-      }
-      return { ...homeData, products: rows, sections: null, nonce: -1 };
-    }
-    return null;
-  }, [homeData, scope, scopeCache]);
-
-  const scopeToken = `${dataNonce}|${scope.key}|${scope.favoriteIds.join(',')}`;
-  const productsLoading =
-    !settledTokens.has(scopeToken) &&
-    !(scopeData && isScopeFresh(scopeData, scope, dataNonce)) &&
-    (scopeData?.products.length ?? 0) === 0;
+  }, [
+    catalogById,
+    favoriteIdsKey,
+    favoritesOnly,
+    selectedCategoryId,
+    selectedStoreKey,
+    storeScopeKey,
+  ]);
 
   const shelfPrices = useMemo(
     () =>
       applyCashbackToPriceMap(
-        new Map([
-          ...stripPrices,
-          ...(homeData?.priceMap ?? []),
-          ...(scopeData?.priceMap ?? []),
-        ]),
+        activeShelf ? new Map([...rawPrices, ...activeShelf.priceMap]) : rawPrices,
         cashbackBps,
       ),
-    [cashbackBps, homeData, scopeData, stripPrices],
+    [activeShelf, cashbackBps, rawPrices],
   );
 
-  const traitsByProduct = useMemo(
-    () => indexTraitsByProduct(scopeData?.traits ?? []),
-    [scopeData],
-  );
+  const stapleIds = useMemo(() => new Set(staples.map((row) => row.id)), [staples]);
+  const promotionProductIds = useMemo(() => new Set(promotions.keys()), [promotions]);
 
+  // Prices only matter to the "cheapest" sort; leaving them out otherwise means price
+  // arrivals don't reshuffle (or recompute) every list.
   const filterOptions = useMemo(
     () => ({
       sort,
-      stapleIds: new Set(staples.map((row) => row.id)),
+      stapleIds,
       onSaleOnly,
-      promotionProductIds: new Set(promotions.keys()),
-      priceCentsByProduct: shelfPrices,
+      promotionProductIds,
+      priceCentsByProduct: sort === 'cheapest' ? shelfPrices : EMPTY_PRICES,
     }),
-    [onSaleOnly, promotions, shelfPrices, sort, staples],
+    [onSaleOnly, promotionProductIds, shelfPrices, sort, stapleIds],
   );
 
-  // Food rules, sort and on-sale are applied on-device — no refetch when they change.
-  const products = useMemo(() => {
-    if (!scopeData) return [];
-    let rows = scopeData.products;
-    if (scope.favorites) {
-      const ids = new Set(scope.favoriteIds);
-      rows = rows.filter(
-        (row) =>
-          ids.has(row.id) && (!scope.categoryId || row.category_id === scope.categoryId),
-      );
+  const showHome = !favoritesOnly && selectedCategoryId == null && !hasStoreFilter;
+
+  const homeSectionsRaw = useMemo(
+    () => buildHomeSections(catalogProducts, categories, AISLE_PREVIEW_COUNT),
+    [catalogProducts, categories],
+  );
+
+  const categorySections = useMemo(
+    (): CategoryProductSection[] =>
+      homeSectionsRaw
+        .map((section) => ({
+          category: section.category,
+          products: applyFoodFilters(section.products, sessionRules, traitsByProduct, filterOptions),
+        }))
+        .filter((section) => section.products.length > 0),
+    [filterOptions, homeSectionsRaw, sessionRules, traitsByProduct],
+  );
+
+  const homeSearchResults = useMemo(() => {
+    if (!showHome || !isSearching) return EMPTY_PRODUCTS;
+    return applyFoodFilters(
+      searchCatalog(catalogProducts, searchQuery),
+      sessionRules,
+      traitsByProduct,
+      filterOptions,
+    );
+  }, [
+    catalogProducts,
+    filterOptions,
+    isSearching,
+    searchQuery,
+    sessionRules,
+    showHome,
+    traitsByProduct,
+  ]);
+
+  // Unfiltered rows for the aisle / favorites / store view.
+  const browseBase = useMemo(() => {
+    if (showHome) return EMPTY_PRODUCTS;
+    if (hasStoreFilter) return activeShelf?.products ?? EMPTY_PRODUCTS;
+    if (favoritesOnly) {
+      return [...favoriteIds]
+        .map((id) => catalogById.get(id))
+        .filter(
+          (row): row is Product =>
+            row != null && (!selectedCategoryId || row.category_id === selectedCategoryId),
+        );
     }
+    return productsInAisle(catalogProducts, allCategories, selectedCategoryId!);
+  }, [
+    activeShelf,
+    allCategories,
+    catalogById,
+    catalogProducts,
+    favoriteIds,
+    favoritesOnly,
+    hasStoreFilter,
+    selectedCategoryId,
+    showHome,
+  ]);
+
+  const browseProducts = useMemo(() => {
+    const rows = isSearching
+      ? browseBase.filter((row) => productMatchesSearch(row, searchQuery))
+      : browseBase;
     return applyFoodFilters(rows, sessionRules, traitsByProduct, filterOptions);
-  }, [filterOptions, scope, scopeData, sessionRules, traitsByProduct]);
+  }, [browseBase, filterOptions, isSearching, searchQuery, sessionRules, traitsByProduct]);
 
-  const categorySections = useMemo((): CategoryProductSection[] => {
-    if (scope.kind !== 'home' || !scopeData?.sections) return [];
-    return scopeData.sections
-      .map((section) => ({
-        category: section.category,
-        products: applyFoodFilters(section.products, sessionRules, traitsByProduct, filterOptions),
-      }))
-      .filter((section) => section.products.length > 0);
-  }, [filterOptions, scope.kind, scopeData, sessionRules, traitsByProduct]);
-
-  // Persist the raw home catalog so the next launch paints instantly.
+  // Price whatever the current view can show (store views come with their own prices).
   useEffect(() => {
-    if (!homeData || homeData.fromDisk || !homeData.sections?.length) return;
-    setJson('shopHomeCache', {
-      v: SHOP_HOME_CACHE_VERSION,
-      categories,
-      sections: homeData.sections,
-      products: homeData.products,
-      traits: homeData.traits,
-      prices: [...homeData.priceMap],
-      stripPrices: [...stripPrices],
-      trending,
-    } satisfies ShopHomeCache);
-  }, [categories, homeData, stripPrices, trending]);
+    if (!catalog) return;
+    if (showHome) {
+      ensurePrices(
+        isSearching
+          ? homeSearchResults.slice(0, 80).map((row) => row.id)
+          : homeSectionsRaw.flatMap((section) => section.products.map((row) => row.id)),
+      );
+    } else if (!hasStoreFilter) {
+      ensurePrices(browseBase.map((row) => row.id));
+    }
+  }, [
+    browseBase,
+    catalog,
+    ensurePrices,
+    hasStoreFilter,
+    homeSearchResults,
+    homeSectionsRaw,
+    isSearching,
+    showHome,
+  ]);
+
+  const productsLoading = hasStoreFilter ? activeShelf == null : catalog == null && !catalogSettled;
+
+  // Persist catalog + prices so the next launch paints instantly (debounced; large write).
+  useEffect(() => {
+    if (!catalog || !cacheDirtyRef.current) return;
+    const timer = setTimeout(() => {
+      cacheDirtyRef.current = false;
+      writeShopCatalogCache(catalog, rawPrices, trending);
+    }, CACHE_WRITE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [catalog, rawPrices, trending]);
 
   const refreshShop = useCallback(() => {
     geoPromiseRef.current = null;
+    pricedIdsRef.current = new Set();
+    favoriteLookupsRef.current = new Set();
     setDataNonce((n) => n + 1);
     void loadShell(true);
   }, [loadShell]);
@@ -811,7 +825,8 @@ export default function ShopScreen() {
       // Unsupported platforms no-op.
     }
 
-    const localMatches = products.filter((row) => productMatchesSearch(row, term));
+    const viewRows = showHome ? catalogProducts : browseBase;
+    const localMatches = viewRows.filter((row) => productMatchesSearch(row, term));
 
     // "ballard", "98107", "fred meyer seattle": treat store/location words as a store filter.
     const locationStores = matchStoresForQuery(term, nearbyStores);
@@ -819,7 +834,7 @@ export default function ShopScreen() {
       const ids = locationStores.map((store) => store.id);
       setSelectedStoreIds(ids);
       setSearch('');
-      scrollListToTop(true);
+      resetBrowseScroll();
       showSuccessToast('Showing stores', describeSelection(storeGroups, ids).join(', '));
       return;
     }
@@ -835,44 +850,53 @@ export default function ShopScreen() {
       if (selectedCategoryId) {
         rawProducts = rawProducts.filter((row) => row.category_id === selectedCategoryId);
       }
-      let priceMap = await (hasStoreFilter
-        ? getStorePriceCentsForStores(
-            selectedStoreKey.split(','),
-            rawProducts.map((row) => row.id),
-          )
-        : getCheapestPriceCentsByProductIds(
-            rawProducts.map((row) => row.id),
-            await getOpenPricesGeo(),
-          ));
+      const shelfKey = storeScopeKey;
+      let storePrices: Map<string, number> | null = null;
       if (hasStoreFilter) {
-        rawProducts = rawProducts.filter((row) => priceMap.has(row.id));
+        const prices = await getStorePriceCentsForStores(
+          selectedStoreKey.split(','),
+          rawProducts.map((row) => row.id),
+        );
+        storePrices = prices;
+        rawProducts = rawProducts.filter((row) => prices.has(row.id));
       }
       const traitsForProducts = await getProductTraitsForIds(rawProducts.map((row) => row.id));
+
+      // New rows join the local catalog, so every view (and later filters) sees them.
+      setCatalog((prev) =>
+        prev
+          ? {
+              ...prev,
+              products: mergeProducts(prev.products, rawProducts),
+              traits: [
+                ...prev.traits.filter(
+                  (row) => !traitsForProducts.some((next) => next.id === row.id),
+                ),
+                ...traitsForProducts,
+              ],
+            }
+          : { products: rawProducts, traits: traitsForProducts, allCategories: [] },
+      );
+      cacheDirtyRef.current = true;
+      if (shelfKey && storePrices) {
+        const prior = storeShelvesRef.current.get(shelfKey);
+        const next = new Map(storeShelvesRef.current);
+        next.set(shelfKey, {
+          products: mergeProducts(prior?.products ?? [], rawProducts),
+          priceMap: new Map([...(prior?.priceMap ?? []), ...storePrices]),
+        });
+        storeShelvesRef.current = next;
+        setStoreShelves(next);
+      } else {
+        ensurePrices(rawProducts.map((row) => row.id));
+      }
+
       const filtered = applyFoodFilters(
         rawProducts,
         sessionRules,
         indexTraitsByProduct(traitsForProducts),
-        {
-          ...filterOptions,
-          priceCentsByProduct: applyCashbackToPriceMap(priceMap, cashbackBps),
-        },
+        filterOptions,
       );
-
-      // Fold results into the current view; filters/sort re-apply on render.
-      const base: ScopeData = scopeCacheRef.current.get(scope.key) ??
-        scopeData ?? { products: [], sections: null, priceMap: new Map(), traits: [], nonce: -1 };
-      const seen = new Set<string>();
-      const mergedProducts = [...rawProducts, ...base.products].filter((row) => {
-        if (seen.has(row.id)) return false;
-        seen.add(row.id);
-        return true;
-      });
-      putScope(scope.key, {
-        ...base,
-        products: mergedProducts,
-        priceMap: new Map([...base.priceMap, ...priceMap]),
-        traits: [...base.traits, ...traitsForProducts],
-      });
       searchResultToast(
         filtered.filter((row) => productMatchesSearch(row, term)).length,
         term,
@@ -1035,13 +1059,10 @@ export default function ShopScreen() {
   const visibleCategories = categories.slice(0, VISIBLE_CATEGORIES);
   const extraCategories = categories.slice(VISIBLE_CATEGORIES);
 
-  const sectionedHome =
-    !favoritesOnly && !isSearching && selectedCategoryId == null && !hasStoreFilter;
-
-  const displayProducts = useMemo(() => {
-    if (!isSearching) return products;
-    return products.filter((row) => productMatchesSearch(row, searchQuery));
-  }, [isSearching, products, searchQuery]);
+  // Home (aisle previews / home search) and browse (aisle, favorites, store) are separate
+  // lists that both stay mounted, so switching between them never rebuilds the home feed.
+  const sectionedHome = showHome && !isSearching;
+  const activeList: ShopListVariant = showHome ? 'home' : 'browse';
 
   const displayTrending = useMemo(() => {
     if (!selectedCategoryId) return trending;
@@ -1053,30 +1074,43 @@ export default function ShopScreen() {
     return staples.filter((product) => product.category_id === selectedCategoryId);
   }, [selectedCategoryId, staples]);
 
-  const listData = useMemo((): ShopListItem[] => {
+  const homeListData = useMemo((): ShopListItem[] => {
     if (sectionedHome) {
       return categorySections.map((section) => ({
         kind: 'section' as const,
         section,
       }));
     }
-    return chunkProducts(displayProducts).map((row) => ({
+    return chunkProducts(homeSearchResults).map((row) => ({
       kind: 'row' as const,
       products: row,
     }));
-  }, [categorySections, displayProducts, sectionedHome]);
+  }, [categorySections, homeSearchResults, sectionedHome]);
+
+  const browseListData = useMemo(
+    (): ShopListItem[] =>
+      chunkProducts(browseProducts).map((row) => ({
+        kind: 'row' as const,
+        products: row,
+      })),
+    [browseProducts],
+  );
 
   // Warm popup data in the background: trending → preferred → what's on screen.
   useEffect(() => {
-    const normal = sectionedHome
-      ? categorySections.flatMap((section) => section.products.slice(0, AISLE_PREVIEW_COUNT))
-      : displayProducts;
+    const normal = !showHome
+      ? browseProducts
+      : sectionedHome
+        ? categorySections.flatMap((section) => section.products.slice(0, AISLE_PREVIEW_COUNT))
+        : homeSearchResults;
     const known = new Map<string, Product>();
-    for (const row of [...staples, ...normal, ...products]) known.set(row.id, row);
+    for (const row of [...staples, ...normal]) known.set(row.id, row);
     const preferredIds = new Set<string>([...favoriteIds, ...effectiveQtyMap.keys()]);
     const preferred = [
       ...staples,
-      ...[...preferredIds].map((id) => known.get(id)).filter((row): row is Product => row != null),
+      ...[...preferredIds]
+        .map((id) => known.get(id) ?? catalogById.get(id))
+        .filter((row): row is Product => row != null),
     ];
     const zip = location?.postal_code?.trim().slice(0, 5);
     scheduleProductDetailPrefetch({
@@ -1088,16 +1122,18 @@ export default function ShopScreen() {
       zip: zip && /^\d{5}$/.test(zip) ? zip : null,
     });
   }, [
+    browseProducts,
+    catalogById,
     categorySections,
-    displayProducts,
     displayTrending,
     effectiveQtyMap,
     favoriteIds,
+    homeSearchResults,
     isGuest,
     location,
-    products,
     sectionedHome,
     sessionRules,
+    showHome,
     staples,
   ]);
 
@@ -1107,45 +1143,55 @@ export default function ShopScreen() {
 
   useEffect(() => () => setProductPrefetchPaused(false), []);
 
-  const contentAnimStyle = useAnimatedStyle(() => ({
-    opacity: contentOpacity.value,
-  }));
+  const applyScrollY = useCallback(
+    (y: number) => {
+      const pinned = y > searchStickyAtRef.current;
+      if (searchPinnedRef.current !== pinned) {
+        searchPinnedRef.current = pinned;
+        setSearchPinned(pinned);
+      }
+      pinProgress.set(Math.min(1, Math.max(0, (y - searchStickyAtRef.current) / 16)));
+      const visible = y > SCROLL_TOP_THRESHOLD;
+      if (showScrollTopRef.current === visible) return;
+      showScrollTopRef.current = visible;
+      setShowScrollTop(visible);
+    },
+    [pinProgress],
+  );
 
-  const scrollListToTop = useCallback((animated: boolean) => {
-    listRef.current?.scrollToOffset({ offset: 0, animated });
+  // Pinned search / scroll-to-top follow whichever list is showing.
+  useEffect(() => {
+    applyScrollY(scrollYRef.current[activeList]);
+  }, [activeList, applyScrollY]);
+
+  const scrollListToTop = useCallback(
+    (animated: boolean) => {
+      const ref = activeList === 'home' ? homeListRef : browseListRef;
+      ref.current?.scrollToOffset({ offset: 0, animated });
+    },
+    [activeList],
+  );
+
+  /** New browse views open at the top; home keeps its scroll so Back lands where you were. */
+  const resetBrowseScroll = useCallback(() => {
+    browseListRef.current?.scrollToOffset({ offset: 0, animated: false });
+    scrollYRef.current.browse = 0;
   }, []);
 
-  const finishBrowseTransition = useCallback(() => {
-    pendingBrowseRef.current?.();
-    pendingBrowseRef.current = null;
-    scrollListToTop(false);
-    contentOpacity.value = withTiming(1, { duration: 220 });
-  }, [contentOpacity, scrollListToTop]);
-
-  const runBrowseTransition = useCallback(
-    (next: () => void) => {
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      pendingBrowseRef.current = next;
-      scrollListToTop(true);
-      contentOpacity.value = withTiming(0, { duration: 150 }, (finished) => {
-        if (finished) {
-          runOnJS(finishBrowseTransition)();
-        }
-      });
-    },
-    [contentOpacity, finishBrowseTransition, scrollListToTop],
-  );
+  const tapHaptic = () => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+  };
 
   const enterAisle = (categoryId: string) => {
     if (selectedCategoryId === categoryId && !favoritesOnly && !search.trim()) {
       scrollListToTop(true);
       return;
     }
-    runBrowseTransition(() => {
-      setSelectedCategoryId(categoryId);
-      setFavoritesOnly(false);
-      setSearch('');
-    });
+    tapHaptic();
+    resetBrowseScroll();
+    setSelectedCategoryId(categoryId);
+    setFavoritesOnly(false);
+    setSearch('');
   };
 
   const browseAll = () => {
@@ -1153,11 +1199,10 @@ export default function ShopScreen() {
       scrollListToTop(true);
       return;
     }
-    runBrowseTransition(() => {
-      setSelectedCategoryId(null);
-      setFavoritesOnly(false);
-      setSearch('');
-    });
+    tapHaptic();
+    setSelectedCategoryId(null);
+    setFavoritesOnly(false);
+    setSearch('');
   };
 
   /** Full shop home — aisles, trending, staples (clears aisle / favorites / search / store). */
@@ -1166,12 +1211,11 @@ export default function ShopScreen() {
       scrollListToTop(true);
       return;
     }
-    runBrowseTransition(() => {
-      setSelectedCategoryId(null);
-      setFavoritesOnly(false);
-      setSearch('');
-      setSelectedStoreIds([]);
-    });
+    tapHaptic();
+    setSelectedCategoryId(null);
+    setFavoritesOnly(false);
+    setSearch('');
+    setSelectedStoreIds([]);
   };
 
   const renderSearchRow = () => (
@@ -1207,18 +1251,16 @@ export default function ShopScreen() {
     </View>
   );
 
-  const onShopScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+  const onHomeScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const y = event.nativeEvent.contentOffset.y;
-    const pinned = y > searchStickyAtRef.current;
-    if (searchPinnedRef.current !== pinned) {
-      searchPinnedRef.current = pinned;
-      setSearchPinned(pinned);
-    }
-    pinProgress.set(Math.min(1, Math.max(0, (y - searchStickyAtRef.current) / 16)));
-    const visible = y > SCROLL_TOP_THRESHOLD;
-    if (showScrollTopRef.current === visible) return;
-    showScrollTopRef.current = visible;
-    setShowScrollTop(visible);
+    scrollYRef.current.home = y;
+    if (activeList === 'home') applyScrollY(y);
+  };
+
+  const onBrowseScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const y = event.nativeEvent.contentOffset.y;
+    scrollYRef.current.browse = y;
+    if (activeList === 'browse') applyScrollY(y);
   };
 
   const openPeek = (
@@ -1241,77 +1283,104 @@ export default function ShopScreen() {
     setPeekClosing(false);
   };
 
+  // Cards get one stable actions object; the ref always points at this render's handlers.
+  const cardHandlersRef = useRef({
+    openPeek,
+    handleToggleFavorite,
+    handleAdd,
+    handleIncrement,
+    handleDecrement,
+  });
+  useEffect(() => {
+    cardHandlersRef.current = {
+      openPeek,
+      handleToggleFavorite,
+      handleAdd,
+      handleIncrement,
+      handleDecrement,
+    };
+  });
+  const cardActions = useMemo<ShopCardActions>(
+    () => ({
+      open: (product, anchor, compact, haptic) =>
+        cardHandlersRef.current.openPeek(product, anchor, compact, haptic),
+      toggleFavorite: (product) => void cardHandlersRef.current.handleToggleFavorite(product.id),
+      add: (product) => void cardHandlersRef.current.handleAdd(product),
+      increment: (product) => void cardHandlersRef.current.handleIncrement(product),
+      decrement: (product) => void cardHandlersRef.current.handleDecrement(product),
+    }),
+    [],
+  );
+
+  const cashbackActive = cashbackBps != null && cashbackBps > 0;
+  const peekSourceId = peekProduct && !peekClosing ? peekProduct.id : null;
+
   const renderProductCard = (
     product: Product,
     index = 0,
     compact = false,
     metaLabel?: string | null,
     butterColor?: string,
-  ) => {
-    const promo = promotions.get(product.id) ?? null;
-    const priceCents = shelfPrices.get(product.id) ?? null;
-    const hint = promo ? promotionSavingsHint(promo, priceCents) : null;
-    const priceNote =
-      !promo && cashbackBps != null && cashbackBps > 0 && priceCents != null
-        ? 'after cash back'
-        : null;
-    return (
-      <ProductCard
-        key={product.id}
-        product={product}
-        index={index}
-        compact={compact}
-        metaLabel={metaLabel}
-        butterColor={butterColor}
-        saleBadge={promo ? formatPromotionBadge(promo) : null}
-        compareAtCents={hint?.compareAtCents}
-        savingsLabel={hint?.savingsLabel}
-        priceNote={priceNote}
-        quantityOnList={effectiveQtyMap.get(product.id)?.quantity}
-        priceCents={priceCents}
-        isPeekSource={peekProduct?.id === product.id && !peekClosing}
-        favorited={favoriteIds.has(product.id)}
-        onPress={(anchor) => openPeek(product, anchor, compact, false)}
-        onLongPress={(anchor) => openPeek(product, anchor, compact, true)}
-        onDoubleTap={() => void handleToggleFavorite(product.id)}
-        onAdd={() => void handleAdd(product)}
-        onIncrement={() => void handleIncrement(product)}
-        onDecrement={() => void handleDecrement(product)}
-      />
-    );
-  };
+  ) => (
+    <ShopProductCard
+      key={product.id}
+      product={product}
+      actions={cardActions}
+      index={index}
+      compact={compact}
+      metaLabel={metaLabel}
+      butterColor={butterColor}
+      promotion={promotions.get(product.id) ?? null}
+      priceCents={shelfPrices.get(product.id) ?? null}
+      cashbackActive={cashbackActive}
+      quantityOnList={effectiveQtyMap.get(product.id)?.quantity}
+      isPeekSource={peekSourceId === product.id}
+      favorited={favoriteIds.has(product.id)}
+    />
+  );
 
+  // Virtualized so a home screen of aisles only mounts the cards that are on screen.
   const renderProductStrip = (products: Product[]) => (
-    <ScrollView
+    <FlatList
       horizontal
+      data={products}
+      keyExtractor={(product) => product.id}
+      renderItem={({ item, index }) => renderProductCard(item, index, true)}
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={styles.productStrip}
-      nestedScrollEnabled>
-      {products.map((product, index) => renderProductCard(product, index, true))}
-    </ScrollView>
+      initialNumToRender={STRIP_INITIAL_CARDS}
+      maxToRenderPerBatch={STRIP_INITIAL_CARDS}
+      windowSize={5}
+      nestedScrollEnabled
+    />
   );
 
   const renderTrendingStrip = (rows: { product: Product; sponsored: boolean }[]) => (
-    <ScrollView
+    <FlatList
       horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.productStrip}
-      nestedScrollEnabled>
-      {rows.map((row, index) =>
+      data={rows}
+      keyExtractor={(row) => row.product.id}
+      renderItem={({ item, index }) =>
         renderProductCard(
-          row.product,
+          item.product,
           index,
           true,
-          row.sponsored ? 'Sponsored' : 'Popular',
+          item.sponsored ? 'Sponsored' : 'Popular',
           // Cream stick on gold banner — same yellow vanishes and reads as a dark blob.
           theme.backgroundElement,
-        ),
-      )}
-    </ScrollView>
+        )
+      }
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.productStrip}
+      initialNumToRender={STRIP_INITIAL_CARDS}
+      maxToRenderPerBatch={STRIP_INITIAL_CARDS}
+      windowSize={5}
+      nestedScrollEnabled
+    />
   );
 
   const focusedAisleName = selectedCategoryId
-    ? (categories.find((row) => row.id === selectedCategoryId)?.name ?? 'Aisle')
+    ? (allCategories.find((row) => row.id === selectedCategoryId)?.name ?? 'Aisle')
     : null;
 
   const dealsStripLabel = (() => {
@@ -1325,36 +1394,26 @@ export default function ShopScreen() {
     return parts.join(' · ');
   })();
 
-  if (isLoading && !shellReady && !initialCache) {
+  const renderShopList = (variant: ShopListVariant) => {
+    const hidden = variant !== activeList;
     return (
-      <ThemedView style={styles.centered}>
-        <ActivityIndicator color={theme.text} />
-        <ThemedText type="small" themeColor="textSecondary">
-          Loading shop
-        </ThemedText>
-      </ThemedView>
-    );
-  }
-
-  return (
-    <ThemedView style={styles.root}>
-      <GestureDetector gesture={leftEdgeSwipe}>
-        <View style={[styles.edgeHitLeft, { top: insets.top }]} />
-      </GestureDetector>
-      <GestureDetector gesture={rightEdgeSwipe}>
-        <View style={[styles.edgeHitRight, { top: insets.top }]} />
-      </GestureDetector>
-      <Animated.View style={[styles.listWrap, contentAnimStyle]}>
       <FlatList
-          ref={listRef}
-          data={listData}
-          extraData={`${selectedCategoryId ?? 'all'}:${favoritesOnly ? 'fav' : 'all'}:${searchQuery}:${sort}:${onSaleOnly ? 'sale' : ''}:${cashbackBps ?? ''}:${[...favoriteIds].join(',')}`}
+          ref={variant === 'home' ? homeListRef : browseListRef}
+          data={variant === 'home' ? homeListData : browseListData}
           keyExtractor={(item) =>
             item.kind === 'section'
               ? item.section.category.id
               : item.products.map((product) => product.id).join('-') || 'empty'
           }
           contentInsetAdjustmentBehavior="never"
+          style={[styles.shopList, hidden && styles.hiddenList]}
+          pointerEvents={hidden ? 'none' : 'auto'}
+          accessibilityElementsHidden={hidden}
+          importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'}
+          initialNumToRender={variant === 'home' ? 3 : 6}
+          maxToRenderPerBatch={variant === 'home' ? 3 : 6}
+          windowSize={variant === 'home' ? 7 : 9}
+          removeClippedSubviews={false}
           contentContainerStyle={[
             styles.listContent,
             {
@@ -1363,7 +1422,7 @@ export default function ShopScreen() {
             },
           ]}
           keyboardShouldPersistTaps="handled"
-          onScroll={onShopScroll}
+          onScroll={variant === 'home' ? onHomeScroll : onBrowseScroll}
           scrollEventThrottle={16}
           refreshControl={
             <RefreshControl
@@ -1374,7 +1433,7 @@ export default function ShopScreen() {
           }
           ListHeaderComponentStyle={styles.listHeaderLayer}
           ListHeaderComponent={
-            <Animated.View entering={FadeInDown.duration(280)} style={styles.header}>
+            <View style={styles.header}>
               <View style={styles.brandRow}>
                 <Pressable
                   onPress={openProfile}
@@ -1407,32 +1466,13 @@ export default function ShopScreen() {
                     {headerName}
                   </ThemedText>
                   <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>
-                    Pick an aisle. Spot a deal. Add to your list.
+                    Find your groceries here
                   </ThemedText>
-                  <Pressable
-                    onPress={() => {
-                      if (isGuest || listTargets.length <= 1) return;
-                      const idx = listTargets.findIndex((t) => t.list.id === activeTarget?.list.id);
-                      const next = listTargets[(idx + 1) % listTargets.length];
-                      if (next) {
-                        setActiveTarget(next);
-                        void refreshQtyMap(next.list.id);
-                      }
-                    }}
-                    disabled={isGuest || listTargets.length <= 1}
-                    hitSlop={6}>
+                  {searchLocationLabel ? (
                     <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                      {isGuest
-                        ? `Near you · guest cart`
-                        : `Near ${formatLocation(location)}${
-                            activeTarget?.group.name
-                              ? ` · ${activeTarget.group.name}${
-                                  listTargets.length > 1 ? ' · tap to switch' : ''
-                                }`
-                              : ''
-                          }`}
+                      {searchLocationLabel}
                     </ThemedText>
-                  </Pressable>
+                  ) : null}
                 </View>
               </View>
 
@@ -1460,7 +1500,7 @@ export default function ShopScreen() {
                       onPress={() => {
                         setSelectedStoreIds(group.ids);
                         setSearch('');
-                        scrollListToTop(true);
+                        resetBrowseScroll();
                       }}
                     />
                   ))}
@@ -1516,10 +1556,10 @@ export default function ShopScreen() {
                   selected={favoritesOnly}
                   onPress={() => {
                     const next = !favoritesOnly;
-                    runBrowseTransition(() => {
-                      setFavoritesOnly(next);
-                      if (next) setSelectedCategoryId(null);
-                    });
+                    tapHaptic();
+                    if (next) resetBrowseScroll();
+                    setFavoritesOnly(next);
+                    if (next) setSelectedCategoryId(null);
                   }}
                   icon={
                     <SymbolView
@@ -1577,7 +1617,8 @@ export default function ShopScreen() {
                 ))}
               </ScrollView>
 
-              {sectionedHome &&
+              {variant === 'home' &&
+              sectionedHome &&
               staplesArePersonal &&
               displayStaples.length > 0 &&
               !favoritesOnly &&
@@ -1589,7 +1630,8 @@ export default function ShopScreen() {
                   </ThemedText>
                   {renderProductStrip(displayStaples.slice(0, AISLE_PREVIEW_COUNT))}
                 </View>
-              ) : sectionedHome &&
+              ) : variant === 'home' &&
+                sectionedHome &&
                 displayTrending.length > 0 &&
                 !favoritesOnly &&
                 !isSearching &&
@@ -1673,7 +1715,7 @@ export default function ShopScreen() {
                   ) : null}
                 </View>
               ) : null}
-            </Animated.View>
+            </View>
           }
           ListEmptyComponent={
             productsLoading || !shellReady ? (
@@ -1737,7 +1779,32 @@ export default function ShopScreen() {
             );
           }}
         />
-      </Animated.View>
+    );
+  };
+
+  if (isLoading && !shellReady && !initialCache) {
+    return (
+      <ThemedView style={styles.centered}>
+        <ActivityIndicator color={theme.text} />
+        <ThemedText type="small" themeColor="textSecondary">
+          Loading shop
+        </ThemedText>
+      </ThemedView>
+    );
+  }
+
+  return (
+    <ThemedView style={styles.root}>
+      <GestureDetector gesture={leftEdgeSwipe}>
+        <View style={[styles.edgeHitLeft, { top: insets.top }]} />
+      </GestureDetector>
+      <GestureDetector gesture={rightEdgeSwipe}>
+        <View style={[styles.edgeHitRight, { top: insets.top }]} />
+      </GestureDetector>
+      <View style={styles.listWrap}>
+        {renderShopList('home')}
+        {renderShopList('browse')}
+      </View>
 
       <Animated.View
         pointerEvents={searchPinned ? 'auto' : 'none'}
@@ -1759,7 +1826,7 @@ export default function ShopScreen() {
           exiting={FadeOut.duration(140)}
           style={[
             styles.scrollTopFabWrap,
-            { bottom: BottomTabInset + insets.bottom + Spacing.two, right: Spacing.three },
+            { bottom: BottomTabInset + insets.bottom - Spacing.three, right: Spacing.three },
           ]}>
           <Pressable
             onPress={() => {
@@ -1841,6 +1908,98 @@ export default function ShopScreen() {
           onDecrement={() => peekProduct && void handleDecrement(peekProduct)}
         />
 
+        {!isGuest && activeTarget ? (
+          <Pressable
+            onPress={() => setListPickerOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel={`Shopping for ${activeTarget.group.name}. Tap to change list`}
+            style={[
+              styles.listPill,
+              {
+                bottom: BottomTabInset + insets.bottom - Spacing.three,
+                backgroundColor: theme.primary,
+                borderColor: theme.borderInk,
+              },
+            ]}>
+            <SymbolView
+              name={{ ios: 'cart.fill', android: 'shopping_cart', web: 'shopping_cart' }}
+              size={16}
+              tintColor={theme.text}
+            />
+            <View style={styles.listPillText}>
+              <ThemedText type="small" style={styles.listPillLabel}>
+                Shopping for
+              </ThemedText>
+              <ThemedText type="smallBold" numberOfLines={1} style={styles.listPillName}>
+                {activeTarget.group.name}
+              </ThemedText>
+            </View>
+            {listTargets.length > 1 ? (
+              <SymbolView
+                name={{
+                  ios: 'chevron.up.chevron.down',
+                  android: 'unfold_more',
+                  web: 'unfold_more',
+                }}
+                size={14}
+                tintColor={theme.text}
+              />
+            ) : null}
+          </Pressable>
+        ) : null}
+
+        <Modal
+          visible={listPickerOpen}
+          animationType="fade"
+          transparent
+          onRequestClose={() => setListPickerOpen(false)}>
+          <Pressable style={styles.moreBackdrop} onPress={() => setListPickerOpen(false)} />
+          <View
+            style={[
+              styles.moreSheet,
+              { backgroundColor: theme.background, borderColor: theme.borderInk },
+            ]}>
+            <View style={[styles.moreHandle, { backgroundColor: theme.primary }]} />
+            <ThemedText type="smallBold" style={styles.moreTitle}>
+              Shop for which list?
+            </ThemedText>
+            <ScrollView>
+              {listTargets.map((target) => {
+                const selected = target.list.id === activeTarget?.list.id;
+                return (
+                  <Pressable
+                    key={target.list.id}
+                    onPress={() => {
+                      setListPickerOpen(false);
+                      if (selected) return;
+                      setActiveTarget(target);
+                      void refreshQtyMap(target.list.id);
+                    }}
+                    style={[styles.moreRow, { borderBottomColor: theme.border }]}>
+                    <View style={styles.flex}>
+                      <ThemedText type={selected ? 'smallBold' : 'default'}>
+                        {target.group.name}
+                      </ThemedText>
+                      {listTargets.filter((t) => t.group.id === target.group.id).length > 1 ? (
+                        <ThemedText type="small" themeColor="textSecondary">
+                          {target.list.name}
+                        </ThemedText>
+                      ) : null}
+                    </View>
+                    {selected ? (
+                      <SymbolView
+                        name={{ ios: 'checkmark', android: 'check', web: 'check' }}
+                        size={18}
+                        tintColor={theme.text}
+                      />
+                    ) : null}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </Modal>
+
         <Modal
           visible={moreCategoriesOpen}
           animationType="slide"
@@ -1881,21 +2040,54 @@ export default function ShopScreen() {
   );
 }
 
-function formatLocation(location: UserLocation | null) {
-  if (!location) return 'No default location saved';
+function formatLocation(location: UserLocation | null): string | null {
+  if (!location) return null;
   if (location.label) return location.label;
   const parts = [location.address_line1, location.city, location.region, location.postal_code].filter(
     Boolean,
   );
-  return parts.length ? parts.join(', ') : 'Saved location';
+  return parts.length ? parts.join(', ') : null;
 }
 
 const styles = StyleSheet.create({
   root: {
     flex: 1,
   },
+  listPill: {
+    position: 'absolute',
+    left: Spacing.three,
+    maxWidth: 240,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingVertical: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    borderRadius: 999,
+    borderWidth: 2,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+  },
+  listPillText: {
+    flexShrink: 1,
+  },
+  listPillLabel: {
+    fontSize: 11,
+    lineHeight: 13,
+  },
+  listPillName: {
+    lineHeight: 18,
+  },
   listWrap: {
     flex: 1,
+  },
+  shopList: {
+    ...StyleSheet.absoluteFill,
+  },
+  hiddenList: {
+    opacity: 0,
   },
   centered: {
     flex: 1,
