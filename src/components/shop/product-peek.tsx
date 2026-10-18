@@ -10,6 +10,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import Animated, {
+  Easing,
   Extrapolation,
   interpolate,
   runOnJS,
@@ -140,8 +141,10 @@ export function ProductPeek({
   const animateClose = useCallback(() => {
     if (closingRef.current) return;
     closingRef.current = true;
+    // Clamp any spring overshoot so the collapse starts from the settled frame (no jump).
+    if (progress.get() > 1) progress.set(1);
     progress.set(
-      withTiming(0, { duration: CLOSE_MS }, (finished) => {
+      withTiming(0, { duration: CLOSE_MS, easing: Easing.inOut(Easing.cubic) }, (finished) => {
         if (finished) {
           runOnJS(finishClose)();
         }
@@ -207,7 +210,10 @@ export function ProductPeek({
       width: interpolate(p, [0, 1], [from.width, toW.get()]),
       height: interpolate(p, [0, 1], [from.height, toH.get()]),
       borderRadius: interpolate(p, [0, 1], [Spacing.two, Radius.sheet], Extrapolation.CLAMP),
-      opacity: fadeOnly.get() ? interpolate(p, [0, 1], [0, 1], Extrapolation.CLAMP) : 1,
+      // The source card stays hidden until close finishes, so keep the panel opaque almost to the end.
+      opacity: fadeOnly.get()
+        ? interpolate(p, [0, 1], [0, 1], Extrapolation.CLAMP)
+        : interpolate(p, [0, 0.04], [0, 1], Extrapolation.CLAMP),
       overflow: 'hidden' as const,
     };
   });
@@ -223,7 +229,7 @@ export function ProductPeek({
   });
 
   const detailsStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(progress.get(), [0.55, 1], [0, 1], Extrapolation.CLAMP),
+    opacity: interpolate(progress.get(),     [0.4, 0.9], [0, 1], Extrapolation.CLAMP),
   }));
 
   const peekProduct = displayProduct;

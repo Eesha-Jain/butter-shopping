@@ -122,7 +122,7 @@ export default function StaplesScreen() {
             Foods you eat often
           </ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
-            Search a shopping category. Build list on the List tab uses these staples.
+            Search a shopping category. Plan schedules these on your grocery days.
           </ThemedText>
           <ButterSearchField
             value={query}

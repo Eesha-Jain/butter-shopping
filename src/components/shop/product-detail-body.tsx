@@ -47,6 +47,17 @@ type Props = {
   preferenceRules?: SessionFoodRule[];
 };
 
+type DetailCacheEntry = {
+  offers: ProductStoreOffer[];
+  visaOffers: VisaMerchantOffer[];
+  cashbackBps: number | null;
+  refreshedAt: number;
+};
+
+// Session-lifetime cache so reopening a product shows prices instantly while refreshing quietly.
+const detailCache = new Map<string, DetailCacheEntry>();
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
 function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(cents % 100 === 0 ? 0 : 2)}`;
 }
@@ -65,12 +76,12 @@ function isReportableOffer(offer: ProductStoreOffer): boolean {
 }
 
 const STORE_SEARCH_URLS: [RegExp, string][] = [
-  [/fred\s*meyer/i, 'https://www.fredmeyer.com/search?query='],
-  [/qfc/i, 'https://www.qfc.com/search?query='],
-  [/kroger/i, 'https://www.kroger.com/search?query='],
+  [/fred\s*meyer/i, 'https://www.fredmeyer.com/search?searchType=default_search&query='],
+  [/qfc/i, 'https://www.qfc.com/search?searchType=default_search&query='],
+  [/kroger/i, 'https://www.kroger.com/search?searchType=default_search&query='],
   [/safeway/i, 'https://www.safeway.com/shop/search-results.html?q='],
-  [/trader\s*joe/i, 'https://www.traderjoes.com/home/search?q='],
-  [/whole\s*foods/i, 'https://www.wholefoodsmarket.com/search?text='],
+  [/trader\s*joe/i, 'https://www.traderjoes.com/home/search?global=yes&q='],
+  [/whole\s*foods/i, 'https://www.wholefoodsmarket.com/grocery/search?k='],
 ];
 
 function storeSearchUrl(storeLabel: string, productName: string): string {
@@ -100,11 +111,14 @@ function formatGroupLabel(code: string): string {
 export function ProductDetailBody({ product, saleBadge, promotion, preferenceRules = [] }: Props) {
   const theme = useTheme();
   const { isGuest, requestSignIn } = useSession();
-  const [offers, setOffers] = useState<ProductStoreOffer[]>([]);
-  const [offersLoading, setOffersLoading] = useState(true);
-  const [visaOffers, setVisaOffers] = useState<VisaMerchantOffer[]>([]);
-  const [cashbackBps, setCashbackBps] = useState<number | null>(null);
-  const [checkingStores, setCheckingStores] = useState(true);
+  const cached = detailCache.get(product.id);
+  const [offers, setOffers] = useState<ProductStoreOffer[]>(cached?.offers ?? []);
+  const [offersLoading, setOffersLoading] = useState(!cached);
+  const [visaOffers, setVisaOffers] = useState<VisaMerchantOffer[]>(cached?.visaOffers ?? []);
+  const [cashbackBps, setCashbackBps] = useState<number | null>(cached?.cashbackBps ?? null);
+  const [checkingStores, setCheckingStores] = useState(
+    !cached || Date.now() - cached.refreshedAt > CACHE_TTL_MS,
+  );
   const [reportingStoreId, setReportingStoreId] = useState<string | null>(null);
   const [reportPriceText, setReportPriceText] = useState('');
   const [reportEvidence, setReportEvidence] = useState<PendingEvidence | null>(null);
@@ -127,6 +141,13 @@ export function ProductDetailBody({ product, saleBadge, promotion, preferenceRul
         setOffers(rows);
         setVisaOffers(visa.offers);
         setCashbackBps(bps);
+        const prev = detailCache.get(product.id);
+        detailCache.set(product.id, {
+          offers: rows,
+          visaOffers: visa.offers,
+          cashbackBps: bps,
+          refreshedAt: prev?.refreshedAt ?? 0,
+        });
       })
       .catch(() => {
         if (!cancelled) {
@@ -140,9 +161,19 @@ export function ProductDetailBody({ product, saleBadge, promotion, preferenceRul
 
     void (async () => {
       try {
+        const hit = detailCache.get(product.id);
+        // Fresh cache: skip the slow live store check entirely.
+        if (hit && Date.now() - hit.refreshedAt <= CACHE_TTL_MS) return;
         const zip = await resolveShopZip();
         if (cancelled) return;
         const rows = await refreshProductStoreOffers(product, zip);
+        const prev = detailCache.get(product.id);
+        detailCache.set(product.id, {
+          offers: rows,
+          visaOffers: prev?.visaOffers ?? [],
+          cashbackBps: prev?.cashbackBps ?? null,
+          refreshedAt: Date.now(),
+        });
         if (!cancelled) setOffers(rows);
       } catch {
         // Keep cached offers already shown.
@@ -322,6 +353,7 @@ export function ProductDetailBody({ product, saleBadge, promotion, preferenceRul
       cancelReport();
       const rows = await listProductStoreOffers(product.id);
       setOffers(rows);
+      detailCache.delete(product.id);
     } catch {
       // runAction already toasts
     } finally {

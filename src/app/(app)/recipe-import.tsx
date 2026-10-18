@@ -11,7 +11,6 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
   addRecipeToListWithCaution,
@@ -202,228 +201,233 @@ export default function RecipeImportScreen() {
     : 0;
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]} edges={['top']}>
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Pressable onPress={() => router.back()} hitSlop={8}>
-          <ThemedText type="linkPrimary">Back</ThemedText>
-        </Pressable>
-        <ThemedText type="subtitle">Import recipe</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          Paste text, drop a link, or photograph a recipe. Items you may still have are left off
-          until you add them.
-        </ThemedText>
+    <ScrollView
+      style={styles.safe}
+      contentInsetAdjustmentBehavior="automatic"
+      contentContainerStyle={styles.content}
+      keyboardShouldPersistTaps="handled">
+      <ThemedText type="small" themeColor="textSecondary">
+        Paste text, drop a link, or photograph a recipe. Items you may still have are left off until
+        you add them.
+      </ThemedText>
 
-        <View style={styles.modeRow}>
-          {(['text', 'url', 'photo'] as const).map((key) => (
-            <Pressable
-              key={key}
-              onPress={() => {
-                setMode(key);
-                resetPreview();
-              }}
-              style={[
-                styles.modeChip,
-                {
-                  borderColor: theme.border,
-                  backgroundColor: mode === key ? theme.backgroundSelected : theme.backgroundElement,
-                },
-              ]}>
-              <ThemedText type="smallBold">
-                {key === 'text' ? 'Paste text' : key === 'url' ? 'URL' : 'Photo'}
-              </ThemedText>
-            </Pressable>
-          ))}
-        </View>
-
-        {!preview ? (
-          <>
-            {mode === 'text' ? (
-              <>
-                <TextInput
-                  value={text}
-                  onChangeText={setText}
-                  placeholder="Paste ingredients or a full recipe…"
-                  placeholderTextColor={theme.textSecondary}
-                  multiline
-                  textAlignVertical="top"
-                  style={[
-                    styles.input,
-                    styles.textArea,
-                    {
-                      color: theme.text,
-                      borderColor: theme.border,
-                      backgroundColor: theme.backgroundElement,
-                    },
-                  ]}
-                  editable={!busy}
-                />
-                <Pressable
-                  onPress={() => void onImportText()}
-                  disabled={busy}
-                  style={[styles.primaryBtn, { backgroundColor: theme.primary, opacity: busy ? 0.7 : 1 }]}>
-                  {busy ? (
-                    <ActivityIndicator color={theme.primaryText} />
-                  ) : (
-                    <ThemedText type="smallBold" style={{ color: theme.primaryText }}>
-                      Parse recipe
-                    </ThemedText>
-                  )}
-                </Pressable>
-              </>
-            ) : null}
-
-            {mode === 'url' ? (
-              <>
-                <TextInput
-                  value={url}
-                  onChangeText={setUrl}
-                  placeholder="https://…"
-                  placeholderTextColor={theme.textSecondary}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  keyboardType="url"
-                  style={[
-                    styles.input,
-                    {
-                      color: theme.text,
-                      borderColor: theme.border,
-                      backgroundColor: theme.backgroundElement,
-                    },
-                  ]}
-                  editable={!busy}
-                />
-                <Pressable
-                  onPress={() => void onImportUrl()}
-                  disabled={busy}
-                  style={[styles.primaryBtn, { backgroundColor: theme.primary, opacity: busy ? 0.7 : 1 }]}>
-                  {busy ? (
-                    <ActivityIndicator color={theme.primaryText} />
-                  ) : (
-                    <ThemedText type="smallBold" style={{ color: theme.primaryText }}>
-                      Import from URL
-                    </ThemedText>
-                  )}
-                </Pressable>
-              </>
-            ) : null}
-
-            {mode === 'photo' ? (
-              <View style={styles.photoActions}>
-                <Pressable
-                  onPress={() => void pickAndImportImage('camera')}
-                  disabled={busy}
-                  style={[styles.secondaryBtn, { borderColor: theme.border }]}>
-                  <ThemedText type="smallBold">Take photo</ThemedText>
-                </Pressable>
-                <Pressable
-                  onPress={() => void pickAndImportImage('library')}
-                  disabled={busy}
-                  style={[styles.secondaryBtn, { borderColor: theme.border }]}>
-                  <ThemedText type="smallBold">Photo library</ThemedText>
-                </Pressable>
-                <Pressable
-                  onPress={() => void pickAndImportImage('document')}
-                  disabled={busy}
-                  style={[styles.secondaryBtn, { borderColor: theme.border }]}>
-                  <ThemedText type="smallBold">Choose image file</ThemedText>
-                </Pressable>
-                {busy ? <ActivityIndicator color={theme.primary} /> : null}
-              </View>
-            ) : null}
-          </>
-        ) : (
-          <View style={styles.preview}>
-            <ThemedText type="smallBold">{preview.title}</ThemedText>
-
-            <ThemedText type="smallBold" style={styles.sectionTitle}>
-              Adding to list ({preview.willAdd.length})
+      <View style={styles.modeRow}>
+        {(['text', 'url', 'photo'] as const).map((key) => (
+          <Pressable
+            key={key}
+            onPress={() => {
+              setMode(key);
+              resetPreview();
+            }}
+            style={[
+              styles.modeChip,
+              {
+                borderColor: theme.border,
+                backgroundColor: mode === key ? theme.backgroundSelected : theme.backgroundElement,
+              },
+            ]}>
+            <ThemedText type="smallBold">
+              {key === 'text' ? 'Paste text' : key === 'url' ? 'URL' : 'Photo'}
             </ThemedText>
-            {preview.willAdd.length === 0 ? (
-              <ThemedText type="small" themeColor="textSecondary">
-                Nothing new to add automatically.
-              </ThemedText>
-            ) : (
-              preview.willAdd.map((line) => (
-                <View
-                  key={line.ingredientId}
-                  style={[styles.lineRow, { backgroundColor: theme.backgroundElement }]}>
-                  <ThemedText type="small">{line.label}</ThemedText>
-                </View>
-              ))
-            )}
+          </Pressable>
+        ))}
+      </View>
 
-            {preview.skipped.length > 0 ? (
-              <View style={[styles.caution, { borderColor: theme.border }]}>
-                <ThemedText type="smallBold">Not added — you may still have these</ThemedText>
-                <ThemedText type="small" themeColor="textSecondary">
-                  Tap Add anyway if you already used them up.
-                </ThemedText>
-                {preview.skipped.map((line) => {
-                  const forced = forcedIds.includes(line.ingredientId);
-                  return (
-                    <View
-                      key={line.ingredientId}
-                      style={[styles.lineRow, { backgroundColor: theme.backgroundElement }]}>
-                      <View style={styles.lineMeta}>
-                        <ThemedText type="small">{line.label}</ThemedText>
-                        <ThemedText type="small" themeColor="textSecondary">
-                          {line.reason === 'already_on_list'
-                            ? 'Already on your open list'
-                            : [
-                                line.lastPurchasedAt
-                                  ? `Bought ${formatLocalDateTime(line.lastPurchasedAt)}`
-                                  : 'In recent purchases',
-                                line.expiresOn ? `· good until ${line.expiresOn}` : null,
-                              ]
-                                .filter(Boolean)
-                                .join(' ')}
-                        </ThemedText>
-                      </View>
-                      <Pressable onPress={() => toggleForce(line.ingredientId)} hitSlop={6}>
-                        <ThemedText type="small" themeColor="textSecondary">
-                          {forced ? 'Will add' : 'Add anyway'}
-                        </ThemedText>
-                      </Pressable>
-                    </View>
-                  );
-                })}
+      {!preview ? (
+        <>
+          {mode === 'text' ? (
+            <>
+              <TextInput
+                value={text}
+                onChangeText={setText}
+                placeholder="Paste ingredients or a full recipe…"
+                placeholderTextColor={theme.textSecondary}
+                multiline
+                textAlignVertical="top"
+                style={[
+                  styles.input,
+                  styles.textArea,
+                  {
+                    color: theme.text,
+                    borderColor: theme.border,
+                    backgroundColor: theme.backgroundElement,
+                  },
+                ]}
+                editable={!busy}
+              />
+              <Pressable
+                onPress={() => void onImportText()}
+                disabled={busy}
+                style={[
+                  styles.primaryBtn,
+                  { backgroundColor: theme.primary, opacity: busy ? 0.7 : 1 },
+                ]}>
+                {busy ? (
+                  <ActivityIndicator color={theme.primaryText} />
+                ) : (
+                  <ThemedText type="smallBold" style={{ color: theme.primaryText }}>
+                    Parse recipe
+                  </ThemedText>
+                )}
+              </Pressable>
+            </>
+          ) : null}
+
+          {mode === 'url' ? (
+            <>
+              <TextInput
+                value={url}
+                onChangeText={setUrl}
+                placeholder="https://…"
+                placeholderTextColor={theme.textSecondary}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+                style={[
+                  styles.input,
+                  {
+                    color: theme.text,
+                    borderColor: theme.border,
+                    backgroundColor: theme.backgroundElement,
+                  },
+                ]}
+                editable={!busy}
+              />
+              <Pressable
+                onPress={() => void onImportUrl()}
+                disabled={busy}
+                style={[
+                  styles.primaryBtn,
+                  { backgroundColor: theme.primary, opacity: busy ? 0.7 : 1 },
+                ]}>
+                {busy ? (
+                  <ActivityIndicator color={theme.primaryText} />
+                ) : (
+                  <ThemedText type="smallBold" style={{ color: theme.primaryText }}>
+                    Import from URL
+                  </ThemedText>
+                )}
+              </Pressable>
+            </>
+          ) : null}
+
+          {mode === 'photo' ? (
+            <View style={styles.photoActions}>
+              <Pressable
+                onPress={() => void pickAndImportImage('camera')}
+                disabled={busy}
+                style={[styles.secondaryBtn, { borderColor: theme.border }]}>
+                <ThemedText type="smallBold">Take photo</ThemedText>
+              </Pressable>
+              <Pressable
+                onPress={() => void pickAndImportImage('library')}
+                disabled={busy}
+                style={[styles.secondaryBtn, { borderColor: theme.border }]}>
+                <ThemedText type="smallBold">Photo library</ThemedText>
+              </Pressable>
+              <Pressable
+                onPress={() => void pickAndImportImage('document')}
+                disabled={busy}
+                style={[styles.secondaryBtn, { borderColor: theme.border }]}>
+                <ThemedText type="smallBold">Choose image file</ThemedText>
+              </Pressable>
+              {busy ? <ActivityIndicator color={theme.primary} /> : null}
+            </View>
+          ) : null}
+        </>
+      ) : (
+        <View style={styles.preview}>
+          <ThemedText type="smallBold">{preview.title}</ThemedText>
+
+          <ThemedText type="smallBold" style={styles.sectionTitle}>
+            Adding to list ({preview.willAdd.length})
+          </ThemedText>
+          {preview.willAdd.length === 0 ? (
+            <ThemedText type="small" themeColor="textSecondary">
+              Nothing new to add automatically.
+            </ThemedText>
+          ) : (
+            preview.willAdd.map((line) => (
+              <View
+                key={line.ingredientId}
+                style={[styles.lineRow, { backgroundColor: theme.backgroundElement }]}>
+                <ThemedText type="small">{line.label}</ThemedText>
               </View>
-            ) : null}
+            ))
+          )}
 
-            <Pressable
-              onPress={() => void onAddToList()}
-              disabled={busy || willAddCount === 0}
-              style={[
-                styles.primaryBtn,
-                {
-                  backgroundColor: theme.primary,
-                  opacity: busy || willAddCount === 0 ? 0.6 : 1,
-                },
-              ]}>
-              {busy ? (
-                <ActivityIndicator color={theme.primaryText} />
-              ) : (
-                <ThemedText type="smallBold" style={{ color: theme.primaryText }}>
-                  Add {willAddCount} item{willAddCount === 1 ? '' : 's'}
-                </ThemedText>
-              )}
-            </Pressable>
-            <Pressable onPress={resetPreview} disabled={busy}>
+          {preview.skipped.length > 0 ? (
+            <View style={[styles.caution, { borderColor: theme.border }]}>
+              <ThemedText type="smallBold">Not added — you may still have these</ThemedText>
               <ThemedText type="small" themeColor="textSecondary">
-                Import another recipe
+                Tap Add anyway if you already used them up.
               </ThemedText>
-            </Pressable>
-          </View>
-        )}
-      </ScrollView>
-    </SafeAreaView>
+              {preview.skipped.map((line) => {
+                const forced = forcedIds.includes(line.ingredientId);
+                return (
+                  <View
+                    key={line.ingredientId}
+                    style={[styles.lineRow, { backgroundColor: theme.backgroundElement }]}>
+                    <View style={styles.lineMeta}>
+                      <ThemedText type="small">{line.label}</ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {line.reason === 'already_on_list'
+                          ? 'Already on your open list'
+                          : [
+                              line.lastPurchasedAt
+                                ? `Bought ${formatLocalDateTime(line.lastPurchasedAt)}`
+                                : 'In recent purchases',
+                              line.expiresOn ? `· good until ${line.expiresOn}` : null,
+                            ]
+                              .filter(Boolean)
+                              .join(' ')}
+                      </ThemedText>
+                    </View>
+                    <Pressable onPress={() => toggleForce(line.ingredientId)} hitSlop={6}>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {forced ? 'Will add' : 'Add anyway'}
+                      </ThemedText>
+                    </Pressable>
+                  </View>
+                );
+              })}
+            </View>
+          ) : null}
+
+          <Pressable
+            onPress={() => void onAddToList()}
+            disabled={busy || willAddCount === 0}
+            style={[
+              styles.primaryBtn,
+              {
+                backgroundColor: theme.primary,
+                opacity: busy || willAddCount === 0 ? 0.6 : 1,
+              },
+            ]}>
+            {busy ? (
+              <ActivityIndicator color={theme.primaryText} />
+            ) : (
+              <ThemedText type="smallBold" style={{ color: theme.primaryText }}>
+                Add {willAddCount} item{willAddCount === 1 ? '' : 's'}
+              </ThemedText>
+            )}
+          </Pressable>
+          <Pressable onPress={resetPreview} disabled={busy}>
+            <ThemedText type="small" themeColor="textSecondary">
+              Import another recipe
+            </ThemedText>
+          </Pressable>
+        </View>
+      )}
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1 },
   content: {
-    padding: Spacing.four,
+    paddingHorizontal: Spacing.three,
+    paddingTop: Spacing.two,
     gap: Spacing.three,
     paddingBottom: Spacing.six,
   },

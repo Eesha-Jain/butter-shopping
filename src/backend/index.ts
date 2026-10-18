@@ -7,7 +7,7 @@
  */
 
 export { AppError, fail, runAction } from './errors';
-export { showErrorToast, showSuccessToast, messageFromUnknown } from './toast';
+export { showAddedToast, showErrorToast, showSuccessToast, messageFromUnknown } from './toast';
 export {
   clearGuest,
   clearLocalData,

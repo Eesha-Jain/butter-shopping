@@ -72,6 +72,7 @@ import {
   rulesFromUserFoodRules,
   setGuestFavorite,
   setProductFavorite,
+  showAddedToast,
   showErrorToast,
   showSuccessToast,
   updateListItem,
@@ -87,6 +88,7 @@ import {
 } from '@/backend';
 import { AppHeader } from '@/components/app/app-header';
 import { CategoryIcon } from '@/components/shop/category-icons';
+import { MiniCow } from '@/components/shop/mini-cow';
 import { ProductCard } from '@/components/shop/product-card';
 import { ProductPeek } from '@/components/shop/product-peek';
 import type { ProductPeekAnchor } from '@/components/shop/product-peek-layout';
@@ -98,6 +100,8 @@ import { ButterSearchField } from '@/components/ui/butter-search-field';
 import { NativeIconButton } from '@/components/ui/native-icon-button';
 import { BottomTabInset, Radius, SheetChrome, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+
+const PENDING_ITEM_ID = '__pending__';
 
 const VISIBLE_CATEGORIES = 8;
 
@@ -688,21 +692,28 @@ export default function ShopScreen() {
   };
 
   const handleAdd = async (product: Product) => {
+    const target = activeTarget;
+    if (!isGuest && !target) {
+      showErrorToast(new Error('No list selected.'));
+      return;
+    }
+    showAddedToast(product.name);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
     try {
       if (isGuest) {
         guestCart.addItem({ productId: product.id, quantity: 1 });
-      } else {
-        const target = activeTarget;
-        if (!target) {
-          showErrorToast(new Error('No list selected.'));
-          return;
-        }
+      } else if (target) {
+        // Optimistic: show it on the list immediately; the refresh reconciles ids.
+        setQtyMap((prev) => {
+          const next = new Map(prev);
+          next.set(product.id, { listItemId: PENDING_ITEM_ID, quantity: 1 });
+          return next;
+        });
         await addListItem({ listId: target.list.id, productId: product.id, quantity: 1 });
         await refreshQtyMap(target.list.id);
       }
-      await hapticSuccess();
-      showSuccessToast('Added', product.name);
     } catch (err) {
+      if (!isGuest && activeTarget) void refreshQtyMap(activeTarget.list.id).catch(() => {});
       showErrorToast(err, 'Could not add that item.');
     }
   };
@@ -713,30 +724,43 @@ export default function ShopScreen() {
       await handleAdd(product);
       return;
     }
+    if (entry.listItemId === PENDING_ITEM_ID) return;
+    const target = activeTarget;
+    if (!isGuest && !target) return;
+    void hapticSuccess();
     try {
       if (isGuest) {
         guestCart.setQuantity(entry.listItemId, entry.quantity + 1);
-      } else {
-        const target = activeTarget;
-        if (!target) return;
+      } else if (target) {
+        setQtyMap((prev) => {
+          const next = new Map(prev);
+          next.set(product.id, { ...entry, quantity: entry.quantity + 1 });
+          return next;
+        });
         await updateListItem(entry.listItemId, { quantity: entry.quantity + 1 });
         await refreshQtyMap(target.list.id);
       }
-      await hapticSuccess();
     } catch (err) {
+      if (!isGuest && target) void refreshQtyMap(target.list.id).catch(() => {});
       showErrorToast(err, 'Could not update quantity.');
     }
   };
 
   const handleDecrement = async (product: Product) => {
     const entry = effectiveQtyMap.get(product.id);
-    if (!entry) return;
+    if (!entry || entry.listItemId === PENDING_ITEM_ID) return;
     try {
       if (isGuest) {
         guestCart.setQuantity(entry.listItemId, entry.quantity - 1);
       } else {
         const target = activeTarget;
         if (!target) return;
+        setQtyMap((prev) => {
+          const next = new Map(prev);
+          if (entry.quantity <= 1) next.delete(product.id);
+          else next.set(product.id, { ...entry, quantity: entry.quantity - 1 });
+          return next;
+        });
         if (entry.quantity <= 1) {
           await removeListItem(entry.listItemId);
         } else {
@@ -941,8 +965,10 @@ export default function ShopScreen() {
         quantityOnList={effectiveQtyMap.get(product.id)?.quantity}
         priceCents={priceCents}
         isPeekSource={peekProduct?.id === product.id}
+        favorited={favoriteIds.has(product.id)}
         onPress={(anchor) => openPeek(product, anchor, compact, false)}
         onLongPress={(anchor) => openPeek(product, anchor, compact, true)}
+        onDoubleTap={() => void handleToggleFavorite(product.id)}
         onAdd={() => void handleAdd(product)}
         onIncrement={() => void handleIncrement(product)}
         onDecrement={() => void handleDecrement(product)}
@@ -1287,9 +1313,13 @@ export default function ShopScreen() {
                     },
                   ]}>
                   <View style={styles.trendingHeader}>
-                    <ThemedText type="smallBold" style={styles.trendingTitle}>
-                      Trending
-                    </ThemedText>
+                    <View style={styles.trendingTitleRow}>
+                      <MiniCow flipped />
+                      <ThemedText type="smallBold" style={styles.trendingTitle}>
+                        Trending
+                      </ThemedText>
+                      <MiniCow />
+                    </View>
                     <ThemedText type="small" themeColor="textSecondary">
                       Popular on campus · Sponsored labeled
                     </ThemedText>
@@ -1643,13 +1673,18 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
     marginHorizontal: -Spacing.three,
     marginTop: Spacing.two,
-    marginBottom: Spacing.two,
+    marginBottom: 0,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.four,
     borderTopWidth: 2,
     borderBottomWidth: 2,
   },
   trendingHeader: {
+    gap: Spacing.one,
+  },
+  trendingTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: Spacing.one,
   },
   trendingTitle: {

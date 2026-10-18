@@ -110,6 +110,19 @@ export async function addListItem(input: {
   if (!input.productId || input.categoryId || input.customName) {
     fail('A list item has to be a real product.');
   }
+  // Merge into an existing open row instead of creating a duplicate line.
+  const existing = await openProductOnList(input.listId, input.productId);
+  if (existing) {
+    return unwrapOne(
+      await supabase
+        .from('list_items')
+        .update({ quantity: existing.quantity + (input.quantity ?? 1) })
+        .eq('id', existing.id)
+        .select('*')
+        .maybeSingle(),
+      'List item update did not return a row.',
+    );
+  }
   const user = await supabase.auth.getUser();
   return unwrapOne(
     await supabase
