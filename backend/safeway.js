@@ -3,12 +3,28 @@ const PRODUCT_URL = "https://www.safeway.com/abs/pub/xapi/pgmsearch/v1/search/pr
 
 function headers() {
   const extra = {};
-  if (process.env.SAFEWAY_APIM_KEY) {
-    extra["Ocp-Apim-Subscription-Key"] = process.env.SAFEWAY_APIM_KEY;
+  const apim = process.env.SAFEWAY_APIM_KEY;
+  if (apim) {
+    extra["Ocp-Apim-Subscription-Key"] = apim;
+    extra["ocp-apim-subscription-key"] = apim;
+  }
+  if (process.env.SAFEWAY_COOKIE) {
+    extra.Cookie = process.env.SAFEWAY_COOKIE;
   }
   return {
     Accept: "application/json, text/plain, */*",
-    "User-Agent": "butter-shopping/1.0",
+    "Accept-Language": "en-US,en;q=0.9",
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    Origin: "https://www.safeway.com",
+    Referer: "https://www.safeway.com/shop/search-results.html",
+    "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
+    adrum: "isAjax:true",
     ...extra,
   };
 }

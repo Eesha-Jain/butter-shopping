@@ -775,7 +775,7 @@ export async function listCampusPopularProducts(input?: { limit?: number }): Pro
 
 /**
  * Stores within radiusKm of a coordinate, nearest first. Stores without
- * latitude and longitude are omitted.
+ * coordinates, or with no available priced item, are omitted.
  */
 export async function nearbyShops(input: {
   latitude: number;
