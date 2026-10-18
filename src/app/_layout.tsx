@@ -1,3 +1,5 @@
+import '@/backend/supabase/crypto-polyfill';
+
 import {
   ComicNeue_400Regular,
   ComicNeue_700Bold,

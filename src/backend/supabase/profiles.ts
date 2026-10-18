@@ -88,7 +88,10 @@ export async function removeMyAvatar(): Promise<void> {
  * Public URL for an avatar or public-assets path. Returns null when no path is stored.
  * Absolute http(s) URLs (retailer product images stored in image_path) pass through.
  */
-export function publicImageUrl(bucket: 'avatars' | 'public-assets', path: string | null): string | null {
+export function publicImageUrl(
+  bucket: 'avatars' | 'public-assets' | 'price-evidence',
+  path: string | null,
+): string | null {
   if (!path) return null;
   if (/^https?:\/\//i.test(path.trim())) return path.trim();
   return supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;

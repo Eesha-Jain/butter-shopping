@@ -1,3 +1,5 @@
+import * as Crypto from 'expo-crypto';
+
 import { BACKEND_URL, CAMPUS_DEFAULT_ZIP } from '../../api/config';
 import type {
   CurrentPrice,
@@ -13,8 +15,13 @@ import type {
 import { supabase } from './client';
 import { fail } from '../errors';
 import { isPriorLocalCalendarDay, todayLocalDateKey } from './localTime';
-import { fetchOpenPricesByUpc } from './open-prices';
-import { unwrap, unwrapOne } from './query';
+import {
+  contributeReportedPriceToOpenPrices,
+  getOpenPricesCentsByUpcs,
+  type OpenPriceRow,
+  type OpenPricesGeo,
+} from './open-prices';
+import { unwrap, unwrapOne, unwrapVoid } from './query';
 
 /** Search-path chains: Kroger APIs only (scrapes run via bootstrap ingest). */
 const SEARCH_CHAINS = 'qfc,fredMeyer';
@@ -269,6 +276,7 @@ export async function getProductTraitsForIds(productIds: string[]): Promise<Prod
  */
 export async function getCheapestPriceCentsByProductIds(
   productIds: string[],
+  geo?: OpenPricesGeo | null,
 ): Promise<Map<string, number>> {
   const unique = [...new Set(productIds.filter(Boolean))];
   const prices = new Map<string, number>();
@@ -281,23 +289,44 @@ export async function getCheapestPriceCentsByProductIds(
       .in('product_id', unique)
       .eq('is_available', true),
   );
-  if (listings.length === 0) return prices;
 
-  const storeProductIds = listings.map((row) => row.id);
-  const current = unwrap(
-    await supabase
-      .from('trusted_current_prices')
-      .select('store_product_id, price_cents')
-      .in('store_product_id', storeProductIds),
-  );
-  const priceByStoreProduct = new Map(current.map((row) => [row.store_product_id, row.price_cents]));
-  for (const listing of listings) {
-    const cents = priceByStoreProduct.get(listing.id);
-    if (cents == null) continue;
-    const prior = prices.get(listing.product_id);
-    if (prior == null || cents < prior) {
-      prices.set(listing.product_id, cents);
+  if (listings.length > 0) {
+    const storeProductIds = listings.map((row) => row.id);
+    const current = unwrap(
+      await supabase
+        .from('trusted_current_prices')
+        .select('store_product_id, price_cents')
+        .in('store_product_id', storeProductIds),
+    );
+    const priceByStoreProduct = new Map(current.map((row) => [row.store_product_id, row.price_cents]));
+    for (const listing of listings) {
+      const cents = priceByStoreProduct.get(listing.id);
+      if (cents == null) continue;
+      const prior = prices.get(listing.product_id);
+      if (prior == null || cents < prior) {
+        prices.set(listing.product_id, cents);
+      }
     }
+  }
+
+  // Fill gaps with Open Prices (cached, geo-preferring) when products have UPCs.
+  const missingIds = unique.filter((id) => !prices.has(id));
+  if (missingIds.length === 0) return prices;
+
+  const products = unwrap(
+    await supabase.from('products').select('id, upc').in('id', missingIds),
+  ) as { id: string; upc: string | null }[];
+  const upcByProduct = new Map<string, string>();
+  for (const row of products) {
+    const upc = String(row.upc ?? '').replace(/\D/g, '');
+    if (/^\d{8,14}$/.test(upc)) upcByProduct.set(row.id, upc);
+  }
+  if (upcByProduct.size === 0) return prices;
+
+  const openByUpc = await getOpenPricesCentsByUpcs([...upcByProduct.values()], geo);
+  for (const [productId, upc] of upcByProduct) {
+    const cents = openByUpc.get(upc);
+    if (cents != null) prices.set(productId, cents);
   }
   return prices;
 }
@@ -631,7 +660,7 @@ function offersNeedDayRefresh(offers: ProductStoreOffer[]): boolean {
   return offers.some((offer) => offer.observedAt && isPriorLocalCalendarDay(offer.observedAt));
 }
 
-function openPricesAsOffers(rows: Awaited<ReturnType<typeof fetchOpenPricesByUpc>>): ProductStoreOffer[] {
+function openPricesAsOffers(rows: OpenPriceRow[]): ProductStoreOffer[] {
   return rows
     .filter((row) => Number.isInteger(row.priceCents) && (row.priceCents ?? 0) > 0)
     .slice(0, 5)
@@ -680,7 +709,22 @@ export async function refreshProductStoreOffers(
   let offers = await listProductStoreOffers(product.id);
   const upc = String(product.upc ?? '').replace(/\D/g, '');
   if (offers.length < 2 && /^\d{8,14}$/.test(upc)) {
-    const crowd = openPricesAsOffers(await fetchOpenPricesByUpc(upc));
+    // Day-cache + live Open Prices (USD preferred) when retailer coverage is thin.
+    const openByUpc = await getOpenPricesCentsByUpcs([upc]);
+    const cents = openByUpc.get(upc);
+    const crowd =
+      cents != null
+        ? openPricesAsOffers([
+            {
+              priceCents: cents,
+              currency: 'USD',
+              date: null,
+              storeName: 'Community store',
+              city: null,
+              source: 'open_prices',
+            },
+          ])
+        : [];
     if (crowd.length > 0) {
       const retailerStores = new Set(offers.map((o) => o.storeId));
       offers = [
@@ -880,9 +924,33 @@ export async function listReportedOffers(term: string): Promise<ReportedOffer[]>
 }
 
 /**
+ * Uploads a shelf-tag photo to price-evidence/<user id>/<uuid>.ext.
+ * Pass the returned path to reportManualPrice as evidencePath.
+ */
+export async function uploadPriceEvidence(input: {
+  data: ArrayBuffer;
+  contentType: string;
+}): Promise<string> {
+  const user = await supabase.auth.getUser();
+  if (!user.data.user) fail('Sign in before uploading a price photo.');
+  const ext =
+    input.contentType.includes('png') ? 'png'
+    : input.contentType.includes('webp') ? 'webp'
+    : 'jpg';
+  const path = `${user.data.user.id}/${Crypto.randomUUID()}.${ext}`;
+  const uploaded = await supabase.storage.from('price-evidence').upload(path, input.data, {
+    contentType: input.contentType,
+    upsert: false,
+  });
+  if (uploaded.error) fail(uploaded.error, 'Could not upload the shelf photo.');
+  return path;
+}
+
+/**
  * Appends a student-reported shelf price in cents at any store.
  * Creates the product and the store listing when they do not exist yet.
  * Manual reports override automated api/scrape prices for that listing.
+ * Optional evidencePath is a price-evidence Storage object under the caller.
  */
 export async function reportManualPrice(input: {
   storeId: string;
@@ -890,14 +958,49 @@ export async function reportManualPrice(input: {
   priceCents: number;
   brand?: string;
   upc?: string;
+  evidencePath?: string;
 }): Promise<string> {
-  return unwrap(
+  const storeProductId = unwrap(
     await supabase.rpc('report_manual_price', {
       p_store_id: input.storeId,
       p_product_name: input.productName,
       p_price_cents: input.priceCents,
       p_brand: input.brand ?? null,
       p_upc: input.upc ?? null,
+      p_evidence_path: input.evidencePath ?? null,
+    }),
+  );
+
+  // Best-effort contribute to Open Prices when credentials are configured.
+  void (async () => {
+    try {
+      const store = await getStore(input.storeId).catch(() => null);
+      await contributeReportedPriceToOpenPrices({
+        upc: input.upc,
+        priceCents: input.priceCents,
+        storeName: store?.name ?? null,
+        latitude: store?.latitude ?? null,
+        longitude: store?.longitude ?? null,
+      });
+    } catch {
+      // ignore
+    }
+  })();
+
+  return storeProductId;
+}
+
+/**
+ * Marks a store listing in or out of stock. Signed-in students only.
+ */
+export async function reportStoreProductAvailability(input: {
+  storeProductId: string;
+  isAvailable: boolean;
+}): Promise<void> {
+  unwrapVoid(
+    await supabase.rpc('report_store_product_availability', {
+      p_store_product_id: input.storeProductId,
+      p_is_available: input.isAvailable,
     }),
   );
 }
@@ -914,7 +1017,7 @@ export async function reportPrice(input: {
 }): Promise<Price> {
   const user = await supabase.auth.getUser();
   if (!user.data.user) fail('Sign in before reporting a price.');
-  return unwrapOne(
+  const price = unwrapOne<Price>(
     await supabase
       .from('prices')
       .insert({
@@ -927,6 +1030,34 @@ export async function reportPrice(input: {
       .maybeSingle(),
     'Price report did not return a row.',
   );
+
+  void (async () => {
+    try {
+      const listing = unwrapOne<{ store_id: string; product_id: string }>(
+        await supabase
+          .from('store_products')
+          .select('store_id, product_id')
+          .eq('id', input.storeProductId)
+          .maybeSingle(),
+        'Listing missing.',
+      );
+      const [product, store] = await Promise.all([
+        supabase.from('products').select('upc').eq('id', listing.product_id).maybeSingle(),
+        getStore(listing.store_id).catch(() => null),
+      ]);
+      await contributeReportedPriceToOpenPrices({
+        upc: product.data?.upc,
+        priceCents: input.priceCents,
+        storeName: store?.name ?? null,
+        latitude: store?.latitude ?? null,
+        longitude: store?.longitude ?? null,
+      });
+    } catch {
+      // ignore
+    }
+  })();
+
+  return price;
 }
 
 /**
