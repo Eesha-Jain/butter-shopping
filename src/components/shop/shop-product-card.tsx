@@ -52,6 +52,10 @@ export const ShopProductCard = memo(function ShopProductCard({
   favorited,
 }: Props) {
   const hint = promotion ? promotionSavingsHint(promotion, priceCents) : null;
+  const savingsCents =
+    hint?.compareAtCents != null && priceCents != null && hint.compareAtCents > priceCents
+      ? hint.compareAtCents - priceCents
+      : null;
   return (
     <ProductCard
       product={product}
@@ -62,6 +66,7 @@ export const ShopProductCard = memo(function ShopProductCard({
       saleBadge={promotion ? formatPromotionBadge(promotion) : null}
       compareAtCents={hint?.compareAtCents}
       savingsLabel={hint?.savingsLabel}
+      savingsCents={savingsCents}
       priceNote={!promotion && cashbackActive && priceCents != null ? 'after cash back' : null}
       quantityOnList={quantityOnList}
       priceCents={priceCents}
