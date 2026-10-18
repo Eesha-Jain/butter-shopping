@@ -926,10 +926,8 @@ function VoiceAgent() {
       }
 
       setSplits(result.splits ?? []);
-      if (listed.length > 0) {
-        setCards(listed);
-        setSwapKey(null);
-      }
+      setCards(listed);
+      setSwapKey(null);
 
       const message =
         cleanReply ||
@@ -1327,7 +1325,7 @@ function VoiceAgent() {
         style={{ backgroundColor: theme.background }}>
         <Text style={[styles.title, { color: theme.text }]}>Butter AI</Text>
         <Text style={[styles.hint, { color: theme.textSecondary }]}>
-          {phase === 'idle' ? 'Tap the spot, say what to add.' : label}
+          {phase === 'idle' ? 'Tap the butter, search by speaking' : label}
         </Text>
 
         <Pressable
