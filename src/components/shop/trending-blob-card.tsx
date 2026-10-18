@@ -1,6 +1,5 @@
-import { Image } from 'expo-image';
 import { Pressable, StyleSheet, View } from 'react-native';
-import Svg, { Path } from 'react-native-svg';
+import Svg, { ClipPath, Defs, Image as SvgImage, Path } from 'react-native-svg';
 
 import type { Product } from '@/backend';
 import { publicImageUrl } from '@/backend';
@@ -11,7 +10,8 @@ import { useTheme } from '@/hooks/use-theme';
 type Props = {
   product: Product;
   index?: number;
-  priceLabel?: string | null;
+  saleBadge?: string | null;
+  priceCents?: number | null;
   sponsored?: boolean;
   quantityOnList?: number;
   favorited?: boolean;
@@ -30,9 +30,8 @@ type BlobShape = {
 };
 
 /**
- * Organic background silhouettes.
- * The product photo stays an independent rounded rectangle on top of the blob.
- * Each blob has its own size and vertical offset because its visual center varies.
+ * Organic silhouettes. Product photo is clipped to the same path so it fills
+ * the blob size/shape. A slightly larger colored underlay keeps the outline readable.
  */
 const BLOB_SHAPES: BlobShape[] = [
   {
@@ -109,10 +108,15 @@ const BLOB_SHAPES: BlobShape[] = [
   },
 ];
 
+const STAGE_SIZE = 148;
+const VIEWBOX = 128;
+const CLIP_ID_PREFIX = 'trending-blob-clip';
+
 export function TrendingBlobCard({
   product,
   index = 0,
-  priceLabel,
+  saleBadge,
+  priceCents,
   sponsored,
   quantityOnList,
   favorited,
@@ -126,16 +130,16 @@ export function TrendingBlobCard({
   const imageUrl = publicImageUrl('public-assets', product.image_path);
   const onList = quantityOnList != null && quantityOnList > 0;
   const shape = BLOB_SHAPES[index % BLOB_SHAPES.length];
+  const clipId = `${CLIP_ID_PREFIX}-${product.id}`;
 
   return (
     <View style={styles.wrap}>
       <Pressable onPress={onPress} style={styles.press}>
         <View style={styles.blobStage}>
-          {/* Decorative blob stays behind the product photo. */}
           <Svg
-            width={148}
-            height={148}
-            viewBox="0 0 128 128"
+            width={STAGE_SIZE}
+            height={STAGE_SIZE}
+            viewBox={`0 0 ${VIEWBOX} ${VIEWBOX}`}
             pointerEvents="none"
             style={[
               styles.blobSvg,
@@ -147,22 +151,39 @@ export function TrendingBlobCard({
                 ],
               },
             ]}>
-            <Path d={shape.path} fill={theme.secondary} />
+            <Defs>
+              <ClipPath id={clipId}>
+                <Path d={shape.path} />
+              </ClipPath>
+            </Defs>
+            {/* Slightly larger colored underlay so the silhouette stays readable. */}
+            <Path
+              d={shape.path}
+              fill={theme.secondary}
+              transform={`translate(${VIEWBOX / 2} ${VIEWBOX / 2}) scale(1.06) translate(${-VIEWBOX / 2} ${-VIEWBOX / 2})`}
+            />
+            {imageUrl ? (
+              <SvgImage
+                href={imageUrl}
+                x={0}
+                y={0}
+                width={VIEWBOX}
+                height={VIEWBOX}
+                preserveAspectRatio="xMidYMid slice"
+                clipPath={`url(#${clipId})`}
+              />
+            ) : (
+              <Path d={shape.path} fill={theme.backgroundSelected} />
+            )}
           </Svg>
 
-          {/* Photo is intentionally independent from the blob shape. */}
-          <View style={styles.photoClip}>
-            {imageUrl ? (
-              <Image source={{ uri: imageUrl }} style={styles.photo} contentFit="cover" />
-            ) : (
-              <View
-                style={[
-                  styles.photoPlaceholder,
-                  { backgroundColor: theme.backgroundSelected },
-                ]}
-              />
-            )}
-          </View>
+          {saleBadge ? (
+            <View style={[styles.badge, { backgroundColor: theme.primary }]}>
+              <ThemedText type="small" style={{ color: theme.primaryText }}>
+                {saleBadge}
+              </ThemedText>
+            </View>
+          ) : null}
 
           {onToggleFavorite ? (
             <Pressable
@@ -184,14 +205,14 @@ export function TrendingBlobCard({
           {product.name}
         </ThemedText>
 
-        {priceLabel ? (
-          <ThemedText type="small" themeColor="textSecondary">
-            {priceLabel}
+        {priceCents != null ? (
+          <ThemedText type="smallBold" style={styles.price}>
+            ${(priceCents / 100).toFixed(2)}
           </ThemedText>
         ) : null}
 
         {sponsored ? (
-          <ThemedText type="small" themeColor="textSecondary">
+          <ThemedText type="small" themeColor="textSecondary" style={styles.sponsored}>
             Sponsored
           </ThemedText>
         ) : null}
@@ -232,15 +253,15 @@ export function TrendingBlobCard({
 
 const styles = StyleSheet.create({
   wrap: {
-    width: 148,
+    width: STAGE_SIZE,
     gap: Spacing.two,
   },
   press: {
     gap: Spacing.one,
   },
   blobStage: {
-    width: 148,
-    height: 148,
+    width: STAGE_SIZE,
+    height: STAGE_SIZE,
     alignSelf: 'center',
     alignItems: 'center',
     justifyContent: 'center',
@@ -249,24 +270,18 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     top: 0,
-    width: 148,
-    height: 148,
+    width: STAGE_SIZE,
+    height: STAGE_SIZE,
     zIndex: 0,
   },
-  photoClip: {
-    width: 84,
-    height: 84,
-    borderRadius: 18,
-    overflow: 'hidden',
-    backgroundColor: '#fff',
-    zIndex: 1,
-  },
-  photo: {
-    width: '100%',
-    height: '100%',
-  },
-  photoPlaceholder: {
-    flex: 1,
+  badge: {
+    position: 'absolute',
+    top: Spacing.one,
+    left: Spacing.one,
+    zIndex: 2,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.half,
+    borderRadius: Spacing.one,
   },
   heartBtn: {
     position: 'absolute',
@@ -282,6 +297,12 @@ const styles = StyleSheet.create({
   name: {
     textAlign: 'center',
     minHeight: 36,
+  },
+  price: {
+    textAlign: 'center',
+  },
+  sponsored: {
+    textAlign: 'center',
   },
   actions: {
     alignItems: 'center',

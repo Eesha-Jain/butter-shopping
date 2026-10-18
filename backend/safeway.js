@@ -113,7 +113,7 @@ export function mapSafewayProduct(product) {
   };
 }
 
-export async function searchSafewayProducts(term, storeId) {
+export async function searchSafewayProducts(term, storeId, { rows = 15, start = 0 } = {}) {
   const query = String(term ?? "").trim();
   if (!query) throw new Error("A search term is required.");
   if (!storeId) throw new Error("A Safeway storeId is required.");
@@ -121,8 +121,8 @@ export async function searchSafewayProducts(term, storeId) {
   const url = new URL(PRODUCT_URL);
   url.searchParams.set("q", query);
   url.searchParams.set("storeid", String(storeId));
-  url.searchParams.set("rows", "15");
-  url.searchParams.set("start", "0");
+  url.searchParams.set("rows", String(Math.min(90, Math.max(1, rows))));
+  url.searchParams.set("start", String(Math.max(0, start)));
   url.searchParams.set("search-type", "keyword");
   url.searchParams.set("channel", "instore");
   url.searchParams.set("banner", "safeway");
@@ -132,4 +132,31 @@ export async function searchSafewayProducts(term, storeId) {
   const res = await fetch(url, { headers: headers() });
   const json = await readJson(res, "Safeway");
   return productLists(json).map(mapSafewayProduct);
+}
+
+/**
+ * Deep keyword search: paginate Safeway results for one term (deduped by product id/upc).
+ */
+export async function searchSafewayProductsDeep(
+  term,
+  storeId,
+  { rows = 50, maxPages = 8, delayMs = 250 } = {},
+) {
+  const byKey = new Map();
+  const pageSize = Math.min(90, Math.max(1, rows));
+  for (let page = 0; page < maxPages; page += 1) {
+    const batch = await searchSafewayProducts(term, storeId, {
+      rows: pageSize,
+      start: page * pageSize,
+    });
+    if (!batch.length) break;
+    for (const product of batch) {
+      if (product.priceCents == null) continue;
+      const key = product.upc || product.productId || product.name;
+      if (!byKey.has(key)) byKey.set(key, product);
+    }
+    if (batch.length < pageSize) break;
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  return [...byKey.values()];
 }

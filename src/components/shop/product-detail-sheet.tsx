@@ -6,8 +6,9 @@ import {
   type BottomSheetBackdropProps,
 } from '@gorhom/bottom-sheet';
 import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 import { forwardRef, useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, View } from 'react-native';
 
 import { useSession } from '@/auth/session';
 import {
@@ -19,10 +20,13 @@ import {
   publicImageUrl,
   refreshProductStoreOffers,
   reportManualPrice,
+  reportStoreProductAvailability,
   resolveShopZip,
   runAction,
   setGroceryCashbackBps,
+  showErrorToast,
   showSuccessToast,
+  uploadPriceEvidence,
   type Product,
   type ProductStoreOffer,
   type VisaMerchantOffer,
@@ -30,6 +34,12 @@ import {
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+
+type PendingEvidence = {
+  uri: string;
+  data: ArrayBuffer;
+  contentType: string;
+};
 
 type Props = {
   product: Product | null;
@@ -82,7 +92,9 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
   const [checkingStores, setCheckingStores] = useState(false);
   const [reportingStoreId, setReportingStoreId] = useState<string | null>(null);
   const [reportPriceText, setReportPriceText] = useState('');
+  const [reportEvidence, setReportEvidence] = useState<PendingEvidence | null>(null);
   const [reportSubmitting, setReportSubmitting] = useState(false);
+  const [stockBusyId, setStockBusyId] = useState<string | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -91,6 +103,7 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
       setCheckingStores(false);
       setReportingStoreId(null);
       setReportPriceText('');
+      setReportEvidence(null);
       setReportError(null);
       return;
     }
@@ -99,6 +112,7 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
     setCheckingStores(false);
     setReportingStoreId(null);
     setReportPriceText('');
+    setReportEvidence(null);
     setReportError(null);
 
     void Promise.all([
@@ -171,13 +185,63 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
     }
     setReportingStoreId(offer.storeId);
     setReportPriceText((offer.priceCents / 100).toFixed(2));
+    setReportEvidence(null);
     setReportError(null);
   };
 
   const cancelReport = () => {
     setReportingStoreId(null);
     setReportPriceText('');
+    setReportEvidence(null);
     setReportError(null);
+  };
+
+  const pickEvidence = async (source: 'library' | 'camera') => {
+    try {
+      if (source === 'library') {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) {
+          showErrorToast(new Error('Photo library access is required for shelf photos.'));
+          return;
+        }
+      } else {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) {
+          showErrorToast(new Error('Camera access is required for shelf photos.'));
+          return;
+        }
+      }
+
+      const options: ImagePicker.ImagePickerOptions = {
+        mediaTypes: ['images'],
+        quality: 0.75,
+      };
+      const result =
+        source === 'library'
+          ? await ImagePicker.launchImageLibraryAsync(options)
+          : await ImagePicker.launchCameraAsync(options);
+      if (result.canceled || !result.assets?.[0]?.uri) return;
+
+      const asset = result.assets[0];
+      const response = await fetch(asset.uri);
+      const data = await response.arrayBuffer();
+      setReportEvidence({
+        uri: asset.uri,
+        data,
+        contentType: asset.mimeType ?? 'image/jpeg',
+      });
+      setReportError(null);
+    } catch (err) {
+      showErrorToast(err, 'Could not attach that photo.');
+    }
+  };
+
+  const chooseEvidenceSource = () => {
+    Alert.alert('Shelf photo', 'Add a photo of the current shelf tag.', [
+      { text: 'Take photo', onPress: () => void pickEvidence('camera') },
+      { text: 'Photo library', onPress: () => void pickEvidence('library') },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   };
 
   const submitReport = async (offer: ProductStoreOffer) => {
@@ -194,18 +258,27 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
     setReportSubmitting(true);
     setReportError(null);
     try {
-      await runAction(
-        () =>
-          reportManualPrice({
-            storeId: offer.storeId,
-            productName: product.name,
-            priceCents,
-            brand: product.brand ?? undefined,
-            upc: product.upc ?? undefined,
-          }),
-        'Could not save that price.',
+      await runAction(async () => {
+        let evidencePath: string | undefined;
+        if (reportEvidence) {
+          evidencePath = await uploadPriceEvidence({
+            data: reportEvidence.data,
+            contentType: reportEvidence.contentType,
+          });
+        }
+        await reportManualPrice({
+          storeId: offer.storeId,
+          productName: product.name,
+          priceCents,
+          brand: product.brand ?? undefined,
+          upc: product.upc ?? undefined,
+          evidencePath,
+        });
+      }, 'Could not save that price.');
+      showSuccessToast(
+        reportEvidence ? 'Price + photo saved' : 'Price updated',
+        offer.chainName ?? offer.storeName,
       );
-      showSuccessToast('Price updated', offer.chainName ?? offer.storeName);
       cancelReport();
       const rows = await listProductStoreOffers(product.id);
       setOffers(rows);
@@ -213,6 +286,40 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
       // runAction already toasts
     } finally {
       setReportSubmitting(false);
+    }
+  };
+
+  const toggleStock = async (offer: ProductStoreOffer, isAvailable: boolean) => {
+    if (!product || stockBusyId) return;
+    if (isGuest) {
+      requestSignIn();
+      return;
+    }
+    if (!isReportableOffer(offer) || offer.storeProductId.startsWith('open-prices')) return;
+
+    setStockBusyId(offer.storeProductId);
+    try {
+      await runAction(
+        () =>
+          reportStoreProductAvailability({
+            storeProductId: offer.storeProductId,
+            isAvailable,
+          }),
+        'Could not update stock status.',
+      );
+      showSuccessToast(
+        isAvailable ? 'Marked in stock' : 'Marked out of stock',
+        offer.chainName ?? offer.storeName,
+      );
+      setOffers((prev) =>
+        prev.map((row) =>
+          row.storeProductId === offer.storeProductId ? { ...row, isAvailable } : row,
+        ),
+      );
+    } catch {
+      // runAction already toasts
+    } finally {
+      setStockBusyId(null);
     }
   };
 
@@ -333,7 +440,7 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
                         </ThemedText>
                         <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>
                           {offer.storeName}
-                          {!offer.isAvailable ? ' · may be unavailable' : ''}
+                          {!offer.isAvailable ? ' · out of stock' : ''}
                           {best ? ' · best after rewards' : ''}
                           {net.visaOffer ? ` · ${net.visaOffer.title}` : ''}
                         </ThemedText>
@@ -364,6 +471,32 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
                                 editable={!reportSubmitting}
                               />
                             </View>
+                            {reportEvidence ? (
+                              <View style={styles.evidenceRow}>
+                                <Image
+                                  source={{ uri: reportEvidence.uri }}
+                                  style={styles.evidenceThumb}
+                                  contentFit="cover"
+                                />
+                                <Pressable
+                                  onPress={() => setReportEvidence(null)}
+                                  disabled={reportSubmitting}
+                                  hitSlop={6}>
+                                  <ThemedText type="small" themeColor="textSecondary">
+                                    Remove photo
+                                  </ThemedText>
+                                </Pressable>
+                              </View>
+                            ) : (
+                              <Pressable
+                                onPress={chooseEvidenceSource}
+                                disabled={reportSubmitting}
+                                style={[styles.reportBtn, { borderColor: theme.border }]}>
+                                <ThemedText type="small" themeColor="textSecondary">
+                                  Add shelf photo
+                                </ThemedText>
+                              </Pressable>
+                            )}
                             {reportError ? (
                               <ThemedText type="small" themeColor="error">
                                 {reportError}
@@ -397,11 +530,28 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
                             </View>
                           </View>
                         ) : canReport ? (
-                          <Pressable onPress={() => startReport(offer)} hitSlop={6}>
+                          <View style={styles.contribActions}>
+                            <Pressable onPress={() => startReport(offer)} hitSlop={6}>
+                              <ThemedText type="small" themeColor="textSecondary">
+                                Report price
+                              </ThemedText>
+                            </Pressable>
                             <ThemedText type="small" themeColor="textSecondary">
-                              Report wrong price
+                              ·
                             </ThemedText>
-                          </Pressable>
+                            <Pressable
+                              onPress={() => void toggleStock(offer, !offer.isAvailable)}
+                              disabled={stockBusyId === offer.storeProductId}
+                              hitSlop={6}>
+                              {stockBusyId === offer.storeProductId ? (
+                                <ActivityIndicator color={theme.textSecondary} size="small" />
+                              ) : (
+                                <ThemedText type="small" themeColor="textSecondary">
+                                  {offer.isAvailable ? 'Out of stock' : 'Back in stock'}
+                                </ThemedText>
+                              )}
+                            </Pressable>
+                          </View>
                         ) : null}
                       </View>
                       {!reporting ? (
@@ -564,6 +714,23 @@ const styles = StyleSheet.create({
     fontSize: 16,
     minHeight: 40,
   },
+  evidenceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  evidenceThumb: {
+    width: 56,
+    height: 56,
+    borderRadius: Spacing.one,
+  },
+  contribActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: Spacing.one,
+    marginTop: 2,
+  },
   reportActions: {
     flexDirection: 'row',
     gap: Spacing.two,
@@ -576,6 +743,7 @@ const styles = StyleSheet.create({
     minWidth: 72,
     alignItems: 'center',
     justifyContent: 'center',
+    alignSelf: 'flex-start',
   },
   reportSubmit: {
     borderWidth: 0,

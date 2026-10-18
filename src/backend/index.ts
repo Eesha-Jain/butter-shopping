@@ -151,6 +151,7 @@ export {
   recordPurchase,
   registerReportableStore,
   reportManualPrice,
+  reportStoreProductAvailability,
   registerPushToken,
   removeListItem,
   removeMyAvatar,
@@ -183,12 +184,14 @@ export {
   updateListItem,
   updateMyProfile,
   uploadMyAvatar,
+  uploadPriceEvidence,
 } from './supabase';
 
 export type {
   ActiveListTarget,
   BestShopDay,
   CategoryProductSection,
+  OpenPricesGeo,
   ProductStoreOffer,
   RipenessResult,
   SearchCoords,

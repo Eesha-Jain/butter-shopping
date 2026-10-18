@@ -30,6 +30,7 @@ import {
   fetchNearbyShops,
   getCheapestPriceCentsByProductIds,
   getStorePriceCentsByProductIds,
+  type OpenPricesGeo,
   getEffectiveGroceryCashbackBps,
   getGuestFavoriteIds,
   getMyDefaultList,
@@ -52,6 +53,7 @@ import {
   listTrending,
   messageFromUnknown,
   removeListItem,
+  resolveSearchCoords,
   resolveShopZip,
   rulesFromUserFoodRules,
   setGuestFavorite,
@@ -114,6 +116,7 @@ export default function ShopScreen() {
   const guestCart = useGuestCart();
   const productSheetRef = useRef<BottomSheetModal>(null);
   const seededPrefsRef = useRef(false);
+  const openPricesGeoRef = useRef<OpenPricesGeo | null>(null);
 
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [avatarPath, setAvatarPath] = useState<string | null>(null);
@@ -135,6 +138,7 @@ export default function ShopScreen() {
   const [staples, setStaples] = useState<Product[]>([]);
   const [staplesArePersonal, setStaplesArePersonal] = useState(false);
   const [trending, setTrending] = useState<{ product: Product; sponsored: boolean }[]>([]);
+  const [trendingPrices, setTrendingPrices] = useState<Map<string, number>>(() => new Map());
   const [products, setProducts] = useState<Product[]>([]);
   const [categorySections, setCategorySections] = useState<CategoryProductSection[]>([]);
   const [expandedCategoryIds, setExpandedCategoryIds] = useState<Set<string>>(() => new Set());
@@ -280,6 +284,12 @@ export default function ShopScreen() {
       try {
         const collegeId = isGuest ? null : (await getMyProfile()).college_id;
         const groupId = activeTarget?.group.id;
+        const coords = await resolveSearchCoords().catch(() => null);
+        const openPricesGeo =
+          coords != null
+            ? { latitude: coords.latitude, longitude: coords.longitude, radiusKm: 80 }
+            : null;
+        openPricesGeoRef.current = openPricesGeo;
 
         const [promoMap, cats, stapleProductIds, trendingRows, popularCampus] = await Promise.all([
           getProductPromotionMap(),
@@ -330,6 +340,12 @@ export default function ShopScreen() {
           mergedTrending.push({ product, sponsored: false });
         }
         setTrending(mergedTrending);
+        const trendingPriceMap = await getCheapestPriceCentsByProductIds(
+          mergedTrending.map((row) => row.product.id),
+          openPricesGeo,
+        );
+        if (cancelled) return;
+        setTrendingPrices(trendingPriceMap);
 
         const browseHome = !favoritesOnly && selectedCategoryId == null && selectedStore == null;
         const stapleIds = new Set(stapleProductIds);
@@ -389,7 +405,7 @@ export default function ShopScreen() {
           const allIds = [...new Set([...sectionIds, ...catalogIds])];
           const [traitsForProducts, priceMap, cashbackBps] = await Promise.all([
             getProductTraitsForIds(allIds),
-            getCheapestPriceCentsByProductIds(allIds),
+            getCheapestPriceCentsByProductIds(allIds, openPricesGeo),
             getEffectiveGroceryCashbackBps(isGuest),
           ]);
           if (cancelled) return;
@@ -443,7 +459,7 @@ export default function ShopScreen() {
 
           const [traitsForProducts, priceMap, cashbackBps] = await Promise.all([
             getProductTraitsForIds(rawProducts.map((row) => row.id)),
-            getCheapestPriceCentsByProductIds(rawProducts.map((row) => row.id)),
+            getCheapestPriceCentsByProductIds(rawProducts.map((row) => row.id), openPricesGeo),
             getEffectiveGroceryCashbackBps(isGuest),
           ]);
           if (cancelled) return;
@@ -531,7 +547,10 @@ export default function ShopScreen() {
             selectedStore.id,
             rawProducts.map((row) => row.id),
           )
-        : getCheapestPriceCentsByProductIds(rawProducts.map((row) => row.id)));
+        : getCheapestPriceCentsByProductIds(
+            rawProducts.map((row) => row.id),
+            openPricesGeoRef.current,
+          ));
       if (selectedStore) {
         rawProducts = rawProducts.filter((row) => priceMap.has(row.id));
       }
@@ -748,7 +767,10 @@ export default function ShopScreen() {
         : await listActiveProducts({ categoryId, limit: 40 });
       const priceMap = shelf
         ? new Map(shelf.map((row) => [row.product.id, row.priceCents]))
-        : await getCheapestPriceCentsByProductIds(rawProducts.map((row) => row.id));
+        : await getCheapestPriceCentsByProductIds(
+            rawProducts.map((row) => row.id),
+            openPricesGeoRef.current,
+          );
       const [traitsForProducts, cashbackBps] = await Promise.all([
         getProductTraitsForIds(rawProducts.map((row) => row.id)),
         getEffectiveGroceryCashbackBps(isGuest),
@@ -1130,11 +1152,12 @@ export default function ShopScreen() {
                         product={item.product}
                         index={index}
                         sponsored={item.sponsored}
-                        priceLabel={
+                        saleBadge={
                           promotions.has(item.product.id)
                             ? formatPromotionBadge(promotions.get(item.product.id)!)
                             : null
                         }
+                        priceCents={trendingPrices.get(item.product.id) ?? null}
                         quantityOnList={effectiveQtyMap.get(item.product.id)?.quantity}
                         favorited={favoriteIds.has(item.product.id)}
                         onPress={() => openProduct(item.product)}

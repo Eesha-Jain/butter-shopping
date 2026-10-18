@@ -58,7 +58,7 @@ export default function GroceryListScreen() {
       setItems(rows);
       setRecipes(visibleRecipes);
       try {
-        setBestShopDay(await suggestBestShopDate({ postalCode: zip }));
+        setBestShopDay(await suggestBestShopDate({ postalCode: zip, listId: list.id }));
       } catch {
         setBestShopDay(null);
       }

@@ -166,7 +166,9 @@ images live in `public-assets`. The database stores the file path only.
 | Open Instacart | `requestCheckoutLink` | A URL saved on the order. |
 | Record a store receipt | `recordPurchase` | The purchase id. Pass `expiresOn` if known; otherwise shelf life fills it. |
 | Add a Trader Joe's or campus store | `registerReportableStore` | The store id. Campus stores need `collegeName`. Scraped chain stores already exist from the price proxy. |
-| Report a shelf price at any store | `reportManualPrice` | The price id. Pass cents. Manual reports override api/scrape prices for that listing. |
+| Report a shelf price at any store | `reportManualPrice` | The price id. Pass cents. Optional `evidencePath` from `uploadPriceEvidence`. Manual reports override api/scrape prices for that listing. |
+| Upload a shelf-tag photo | `uploadPriceEvidence` | Storage path under `price-evidence/<user id>/…`. |
+| Mark a listing in / out of stock | `reportStoreProductAvailability` | Updates `store_products.is_available`. |
 | List stores that accept reports | `listReportableStores` | Every store. |
 | Resolve ZIP for price ingest | `resolveShopZip` | Saved postal code, GPS reverse geocode, or campus `98195`. |
 | Fill / refresh catalog on search | `ensureCatalogForTerm` | Hits the multi-store price proxy (cooldown; skips cooldown on retailer errors), then re-reads products. |

@@ -1,7 +1,21 @@
 -- Last 7 Pacific days of shelf prices, plus a removable demo week.
 -- Wednesday (dow 3) in the demo is 5% cheaper so the next Wednesday is the day to shop.
 
-alter table public.prices drop constraint if exists prices_source_check;
+do $$
+declare
+  constraint_name text;
+begin
+  for constraint_name in
+    select con.conname
+    from pg_constraint con
+    where con.conrelid = 'public.prices'::regclass
+      and con.contype = 'c'
+      and pg_get_constraintdef(con.oid) ilike '%source%'
+  loop
+    execute format('alter table public.prices drop constraint %I', constraint_name);
+  end loop;
+end $$;
+
 alter table public.prices
   add constraint prices_source_check
   check (source in ('api', 'scrape', 'user_report', 'demo'));
@@ -46,7 +60,7 @@ create or replace function public.best_week_price_day(
 returns jsonb
 language plpgsql
 stable
-security definer
+security invoker
 set search_path = public
 as $$
 declare
@@ -133,7 +147,7 @@ end;
 $$;
 
 comment on function public.best_week_price_day(uuid, text) is
-  'Cheapest Pacific date in the last 7 days from carried shelf prices, and the next date with that weekday. A list total is used when every compared item has a price all week; otherwise the median shelf price near the ZIP.';
+  'Cheapest Pacific date in the last 7 days, and the next date with that weekday. A list total is used when every compared item has a price all week. Otherwise the median is the demo week while those rows exist, then shelf prices at the ZIP.';
 
 revoke all on function public.best_week_price_day(uuid, text) from public;
 grant execute on function public.best_week_price_day(uuid, text) to authenticated, anon;

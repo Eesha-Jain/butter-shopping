@@ -33,12 +33,20 @@ export {
   registerReportableStore,
   reportManualPrice,
   reportPrice,
+  reportStoreProductAvailability,
   searchCategories,
-  searchProducts
+  searchProducts,
+  uploadPriceEvidence,
 } from './catalog';
 export type { CategoryProductSection, ProductStoreOffer } from './catalog';
-export { fetchOpenPricesByUpc } from './open-prices';
-export type { OpenPriceRow } from './open-prices';
+export {
+  contributeReportedPriceToOpenPrices,
+  fetchOpenPricesByUpc,
+  fetchOpenPricesByUpcs,
+  getOpenPricesCentsByUpcs,
+  openPricesGeoKey,
+} from './open-prices';
+export type { OpenPriceRow, OpenPricesGeo } from './open-prices';
 export { nextPreferredGroceryDate } from './dates';
 export { listMyFavoriteProductIds, setProductFavorite } from './favorites';
 export {

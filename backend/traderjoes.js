@@ -35,12 +35,19 @@ query SearchProducts($pageSize: Int, $currentPage: Int, $storeCode: String, $pub
 
 function headers() {
   return {
-    Accept: "*/*",
+    Accept: "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
     "Content-Type": "application/json",
     "User-Agent":
-      "Mozilla/5.0 (compatible; butter-shopping/1.0; +https://github.com/Eesha-Jain/butter-shopping)",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     Origin: "https://www.traderjoes.com",
-    Referer: "https://www.traderjoes.com/home",
+    Referer: "https://www.traderjoes.com/home/products/category/food-8",
+    "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
   };
 }
 
@@ -186,4 +193,39 @@ export async function searchTraderJoesProducts(term, storeCode) {
   }
 
   return matches.map(mapTraderJoesProduct).filter((product) => product.priceCents != null);
+}
+
+/**
+ * Pages the full published Trader Joe's catalog for one store code.
+ * Optional onPage(page, items, totalPages) for progress.
+ */
+export async function listAllTraderJoesProducts(storeCode, { onPage, pageSize = 50 } = {}) {
+  if (!storeCode) throw new Error("A Trader Joe's store code is required.");
+  const size = Math.min(100, Math.max(1, Number(pageSize) || 50));
+  const bySku = new Map();
+  let page = 1;
+  let totalPages = 1;
+
+  while (page <= totalPages) {
+    const data = await graphql("SearchProducts", SEARCH_PRODUCTS_QUERY, {
+      storeCode: String(storeCode),
+      published: "1",
+      currentPage: page,
+      pageSize: size,
+    });
+    const items = data?.products?.items ?? [];
+    totalPages = Number(data?.products?.page_info?.total_pages) || page;
+    if (typeof onPage === "function") onPage(page, items, totalPages);
+    if (!Array.isArray(items) || items.length === 0) break;
+    for (const item of items) {
+      const mapped = mapTraderJoesProduct(item);
+      if (mapped.priceCents == null) continue;
+      const key = mapped.productId ?? mapped.name;
+      if (!bySku.has(key)) bySku.set(key, mapped);
+    }
+    if (page >= totalPages) break;
+    page += 1;
+  }
+
+  return [...bySku.values()];
 }

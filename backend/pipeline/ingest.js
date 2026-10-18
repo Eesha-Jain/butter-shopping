@@ -8,6 +8,19 @@ import { nullOnlyProductPatch, shouldAppendAutomatedPrice } from "./refreshPrior
 
 const MAX_SHELF_CENTS_WITHOUT_UPC = 50_000; // $500
 const KNOWN_GROUPS = new Set(["senior", "veteran", "student"]);
+const pacificDay = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Los_Angeles",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+function isPacificToday(iso) {
+  if (!iso) return false;
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) return false;
+  return pacificDay.format(when) === pacificDay.format(new Date());
+}
 
 function supabaseConfig() {
   const url = process.env.SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL;
@@ -326,14 +339,15 @@ export async function ingestShelf(raw) {
     return true;
   }
 
-  if (trusted?.price_cents === offer.priceCents && trusted?.source === offer.source) {
+  const latest = await rest(
+    `prices?store_product_id=eq.${storeProductId}&select=price_cents,created_at&order=created_at.desc&limit=1`,
+  );
+  if (
+    latest?.[0]?.price_cents === offer.priceCents &&
+    isPacificToday(latest[0].created_at)
+  ) {
     return true;
   }
-
-  const latest = await rest(
-    `prices?store_product_id=eq.${storeProductId}&select=price_cents&order=created_at.desc&limit=1`,
-  );
-  if (latest?.[0]?.price_cents === offer.priceCents) return true;
 
   const row = {
     store_product_id: storeProductId,
