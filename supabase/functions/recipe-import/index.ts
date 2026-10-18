@@ -163,23 +163,31 @@ async function grokParseRecipe(input: {
     });
   }
   const payload = (await completion.json()) as {
-    choices?: { message?: { tool_calls?: { function?: { name?: string; arguments?: string } }[] } }[];
+    choices?: {
+      message?: {
+        content?: string | null;
+        tool_calls?: { function?: { name?: string; arguments?: string } }[];
+      };
+    }[];
   };
-  const call = payload.choices?.[0]?.message?.tool_calls?.find(
-    (t) => t.function?.name === 'set_ingredients',
-  );
-  let parsed: ParsedRecipe = { title: 'Imported recipe', ingredients: [] };
-  try {
-    const args = JSON.parse(call?.function?.arguments ?? '{}') as {
-      title?: string;
-      ingredients?: {
-        rawText?: string;
-        canonicalName?: string;
-        amountBase?: number;
-        unit?: string;
-      }[];
-    };
-    parsed = {
+  const message = payload.choices?.[0]?.message;
+  const call = message?.tool_calls?.find((t) => t.function?.name === 'set_ingredients');
+  if (!call?.function?.arguments) {
+    console.warn(
+      '[recipe-import] Missing set_ingredients tool_calls; trying message.content fallback',
+    );
+  }
+
+  function normalizeArgs(args: {
+    title?: string;
+    ingredients?: {
+      rawText?: string;
+      canonicalName?: string;
+      amountBase?: number;
+      unit?: string;
+    }[];
+  }): ParsedRecipe {
+    return {
       title: (args.title ?? 'Imported recipe').trim() || 'Imported recipe',
       ingredients: (args.ingredients ?? [])
         .map((row) => ({
@@ -190,9 +198,33 @@ async function grokParseRecipe(input: {
         }))
         .filter((row) => row.rawText && row.canonicalName),
     };
+  }
+
+  let parsed: ParsedRecipe = { title: 'Imported recipe', ingredients: [] };
+  try {
+    if (call?.function?.arguments) {
+      parsed = normalizeArgs(JSON.parse(call.function.arguments) as Parameters<typeof normalizeArgs>[0]);
+    }
   } catch {
     parsed = { title: 'Imported recipe', ingredients: [] };
   }
+
+  // Some Grok responses put JSON in content instead of tool_calls.
+  if (parsed.ingredients.length === 0 && typeof message?.content === 'string') {
+    const raw = message.content.trim();
+    const jsonSlice = raw.startsWith('{')
+      ? raw
+      : (raw.match(/\{[\s\S]*"ingredients"[\s\S]*\}/)?.[0] ?? '');
+    if (jsonSlice) {
+      try {
+        const fromContent = normalizeArgs(JSON.parse(jsonSlice) as Parameters<typeof normalizeArgs>[0]);
+        if (fromContent.ingredients.length > 0) parsed = fromContent;
+      } catch {
+        // keep empty / tool-call parse
+      }
+    }
+  }
+
   return parsed;
 }
 

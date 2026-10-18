@@ -21,10 +21,27 @@ export type ImportedRecipe = {
 type RecipeImportResponse = ImportedRecipe & { error?: string };
 
 async function invokeRecipeImport(body: Record<string, unknown>): Promise<ImportedRecipe> {
-  const result = await supabase.functions.invoke('recipe-import', { body });
-  if (result.error) fail(result.error, 'Could not import that recipe.');
-  const data = result.data as RecipeImportResponse | null;
-  if (!data || data.error) fail(data?.error ?? 'Recipe import returned no data.');
+  const baseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL?.replace(/\/$/, '');
+  const anonKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  if (!baseUrl || !anonKey) fail('Could not import that recipe.');
+
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError || !sessionData.session) fail('Sign in required.');
+
+  // Raw fetch so 4xx/5xx JSON `{ error }` reaches the toast (invoke often masks it).
+  const response = await fetch(`${baseUrl}/functions/v1/recipe-import`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${sessionData.session.access_token}`,
+      apikey: anonKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  const data = (await response.json().catch(() => null)) as RecipeImportResponse | null;
+  if (!response.ok || !data || data.error) {
+    fail(data?.error ?? 'Could not import that recipe.');
+  }
   if (!data.recipeId) fail('Recipe import did not return a recipe id.');
   return {
     recipeId: data.recipeId,
