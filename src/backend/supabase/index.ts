@@ -76,6 +76,7 @@ export {
   listReportableStores,
   nearbyShops,
   productWarnings,
+  refreshProductStoreOffers,
   registerReportableStore,
   reportManualPrice,
   reportPrice,
@@ -90,6 +91,13 @@ export {
   rulesFromUserFoodRules,
 } from './foodFilters';
 export type { SessionFoodRule, ShopSort } from './foodFilters';
+export {
+  formatLocalDateTime,
+  getDeviceTimeZone,
+  isPriorLocalCalendarDay,
+  toLocalDateKey,
+  todayLocalDateKey,
+} from './localTime';
 export {
   fetchNearbyShops,
   getUserCoords,
