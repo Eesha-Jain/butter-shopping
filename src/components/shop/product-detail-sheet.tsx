@@ -2,6 +2,7 @@ import {
   BottomSheetBackdrop,
   BottomSheetModal,
   BottomSheetScrollView,
+  BottomSheetTextInput,
   type BottomSheetBackdropProps,
 } from '@gorhom/bottom-sheet';
 import { Image } from 'expo-image';
@@ -17,8 +18,11 @@ import {
   listProductStoreOffers,
   publicImageUrl,
   refreshProductStoreOffers,
+  reportManualPrice,
   resolveShopZip,
+  runAction,
   setGroceryCashbackBps,
+  showSuccessToast,
   type Product,
   type ProductStoreOffer,
   type VisaMerchantOffer,
@@ -42,6 +46,19 @@ function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(cents % 100 === 0 ? 0 : 2)}`;
 }
 
+/** Parses "$x.xx" / "x.xx" into positive cents under $500. */
+function parseDollarsToCents(raw: string): number | null {
+  const cleaned = raw.trim().replace(/^\$/, '').replace(/,/g, '');
+  if (!cleaned || !/^\d+(\.\d{0,2})?$/.test(cleaned)) return null;
+  const dollars = Number(cleaned);
+  if (!Number.isFinite(dollars) || dollars <= 0 || dollars >= 500) return null;
+  return Math.round(dollars * 100);
+}
+
+function isReportableOffer(offer: ProductStoreOffer): boolean {
+  return Boolean(offer.storeId) && offer.storeId !== 'open-prices';
+}
+
 const CASHBACK_CHIPS = [
   { bps: 100, label: '1%' },
   { bps: 200, label: '2%' },
@@ -53,7 +70,7 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
   ref,
 ) {
   const theme = useTheme();
-  const { isGuest } = useSession();
+  const { isGuest, requestSignIn } = useSession();
   const snapPoints = useMemo(() => ['55%', '78%'], []);
   const imageUrl = product ? publicImageUrl('public-assets', product.image_path) : null;
   const onList = quantityOnList != null && quantityOnList > 0;
@@ -63,16 +80,26 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
   const [cashbackBps, setCashbackBps] = useState<number | null>(null);
   const [showCashbackPrompt, setShowCashbackPrompt] = useState(false);
   const [checkingStores, setCheckingStores] = useState(false);
+  const [reportingStoreId, setReportingStoreId] = useState<string | null>(null);
+  const [reportPriceText, setReportPriceText] = useState('');
+  const [reportSubmitting, setReportSubmitting] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!product?.id) {
       setOffers([]);
       setCheckingStores(false);
+      setReportingStoreId(null);
+      setReportPriceText('');
+      setReportError(null);
       return;
     }
     let cancelled = false;
     setOffersLoading(true);
     setCheckingStores(false);
+    setReportingStoreId(null);
+    setReportPriceText('');
+    setReportError(null);
 
     void Promise.all([
       listProductStoreOffers(product.id),
@@ -134,6 +161,58 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
       await setGroceryCashbackBps(bps, isGuest);
     } catch {
       // Local state still updates the comparison.
+    }
+  };
+
+  const startReport = (offer: ProductStoreOffer) => {
+    if (isGuest) {
+      requestSignIn();
+      return;
+    }
+    setReportingStoreId(offer.storeId);
+    setReportPriceText((offer.priceCents / 100).toFixed(2));
+    setReportError(null);
+  };
+
+  const cancelReport = () => {
+    setReportingStoreId(null);
+    setReportPriceText('');
+    setReportError(null);
+  };
+
+  const submitReport = async (offer: ProductStoreOffer) => {
+    if (!product || reportSubmitting) return;
+    if (isGuest) {
+      requestSignIn();
+      return;
+    }
+    const priceCents = parseDollarsToCents(reportPriceText);
+    if (priceCents == null) {
+      setReportError('Enter a price between $0.01 and $499.99');
+      return;
+    }
+    setReportSubmitting(true);
+    setReportError(null);
+    try {
+      await runAction(
+        () =>
+          reportManualPrice({
+            storeId: offer.storeId,
+            productName: product.name,
+            priceCents,
+            brand: product.brand ?? undefined,
+            upc: product.upc ?? undefined,
+          }),
+        'Could not save that price.',
+      );
+      showSuccessToast('Price updated', offer.chainName ?? offer.storeName);
+      cancelReport();
+      const rows = await listProductStoreOffers(product.id);
+      setOffers(rows);
+    } catch {
+      // runAction already toasts
+    } finally {
+      setReportSubmitting(false);
     }
   };
 
@@ -235,6 +314,8 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
                 ranked.map(({ offer, net }) => {
                   const best = offer.storeProductId === bestId;
                   const showNet = net.netCents < net.shelfCents;
+                  const reporting = reportingStoreId === offer.storeId;
+                  const canReport = isReportableOffer(offer);
                   return (
                     <View
                       key={offer.storeProductId}
@@ -256,22 +337,93 @@ export const ProductDetailSheet = forwardRef<BottomSheetModal, Props>(function P
                           {best ? ' · best after rewards' : ''}
                           {net.visaOffer ? ` · ${net.visaOffer.title}` : ''}
                         </ThemedText>
-                      </View>
-                      <View style={styles.priceCol}>
-                        {showNet ? (
-                          <ThemedText type="small" themeColor="textSecondary" style={styles.shelfStrike}>
-                            {formatCents(net.shelfCents)}
-                          </ThemedText>
+                        {reporting ? (
+                          <View style={styles.reportForm}>
+                            <ThemedText type="small" themeColor="textSecondary">
+                              Correct shelf price
+                            </ThemedText>
+                            <View style={styles.reportInputRow}>
+                              <ThemedText type="smallBold">$</ThemedText>
+                              <BottomSheetTextInput
+                                value={reportPriceText}
+                                onChangeText={(text) => {
+                                  setReportPriceText(text);
+                                  setReportError(null);
+                                }}
+                                keyboardType="decimal-pad"
+                                placeholder="0.00"
+                                placeholderTextColor={theme.textSecondary}
+                                style={[
+                                  styles.reportInput,
+                                  {
+                                    color: theme.text,
+                                    borderColor: theme.border,
+                                    backgroundColor: theme.background,
+                                  },
+                                ]}
+                                editable={!reportSubmitting}
+                              />
+                            </View>
+                            {reportError ? (
+                              <ThemedText type="small" themeColor="error">
+                                {reportError}
+                              </ThemedText>
+                            ) : null}
+                            <View style={styles.reportActions}>
+                              <Pressable
+                                onPress={cancelReport}
+                                disabled={reportSubmitting}
+                                style={[styles.reportBtn, { borderColor: theme.border }]}>
+                                <ThemedText type="small" themeColor="textSecondary">
+                                  Cancel
+                                </ThemedText>
+                              </Pressable>
+                              <Pressable
+                                onPress={() => void submitReport(offer)}
+                                disabled={reportSubmitting}
+                                style={[
+                                  styles.reportBtn,
+                                  styles.reportSubmit,
+                                  { backgroundColor: theme.primary },
+                                ]}>
+                                {reportSubmitting ? (
+                                  <ActivityIndicator color={theme.primaryText} size="small" />
+                                ) : (
+                                  <ThemedText type="smallBold" style={{ color: theme.primaryText }}>
+                                    Submit
+                                  </ThemedText>
+                                )}
+                              </Pressable>
+                            </View>
+                          </View>
+                        ) : canReport ? (
+                          <Pressable onPress={() => startReport(offer)} hitSlop={6}>
+                            <ThemedText type="small" themeColor="textSecondary">
+                              Report wrong price
+                            </ThemedText>
+                          </Pressable>
                         ) : null}
-                        <ThemedText type="smallBold">
-                          {formatCents(showNet ? net.netCents : net.shelfCents)}
-                        </ThemedText>
-                        {offer.observedAt ? (
-                          <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                            Updated {formatLocalDateTime(offer.observedAt)}
-                          </ThemedText>
-                        ) : null}
                       </View>
+                      {!reporting ? (
+                        <View style={styles.priceCol}>
+                          {showNet ? (
+                            <ThemedText
+                              type="small"
+                              themeColor="textSecondary"
+                              style={styles.shelfStrike}>
+                              {formatCents(net.shelfCents)}
+                            </ThemedText>
+                          ) : null}
+                          <ThemedText type="smallBold">
+                            {formatCents(showNet ? net.netCents : net.shelfCents)}
+                          </ThemedText>
+                          {offer.observedAt ? (
+                            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                              Updated {formatLocalDateTime(offer.observedAt)}
+                            </ThemedText>
+                          ) : null}
+                        </View>
+                      ) : null}
                     </View>
                   );
                 })
@@ -376,7 +528,7 @@ const styles = StyleSheet.create({
   },
   offerRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: Spacing.two,
     paddingHorizontal: Spacing.three,
@@ -393,6 +545,40 @@ const styles = StyleSheet.create({
   },
   shelfStrike: {
     textDecorationLine: 'line-through',
+  },
+  reportForm: {
+    marginTop: Spacing.two,
+    gap: Spacing.two,
+  },
+  reportInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
+  },
+  reportInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: Spacing.two,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.two,
+    fontSize: 16,
+    minHeight: 40,
+  },
+  reportActions: {
+    flexDirection: 'row',
+    gap: Spacing.two,
+  },
+  reportBtn: {
+    borderWidth: 1,
+    borderRadius: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    minWidth: 72,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reportSubmit: {
+    borderWidth: 0,
   },
   addBtn: {
     alignItems: 'center',

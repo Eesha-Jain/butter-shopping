@@ -1,14 +1,19 @@
-import { Pressable, StyleSheet, View } from 'react-native';
+import * as Haptics from 'expo-haptics';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated, { FadeInDown, FadeOutLeft } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
+import { OnboardingCow } from '@/components/onboarding/onboarding-cow';
+import { Fonts, Spacing } from '@/constants/theme';
+
+export const ONBOARDING_YELLOW = '#ffd700';
+const INK = '#000000';
+const BUBBLE = '#ffffff';
 
 type Props = {
   step: 1 | 2 | 3;
   title: string;
-  subtitle: string;
+  subtitle?: string;
   children: React.ReactNode;
   onSkip: () => void;
   onContinue: () => void;
@@ -24,41 +29,63 @@ export function OnboardingShell({
   onContinue,
   continueLabel = 'Continue',
 }: Props) {
-  const theme = useTheme();
   const insets = useSafeAreaInsets();
+
+  const handleContinue = () => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    onContinue();
+  };
 
   return (
     <View
       style={[
         styles.root,
         {
-          backgroundColor: theme.background,
-          paddingTop: insets.top + Spacing.four,
-          paddingBottom: insets.bottom + Spacing.four,
+          backgroundColor: ONBOARDING_YELLOW,
+          paddingTop: insets.top + Spacing.three,
+          paddingBottom: insets.bottom + Spacing.three,
         },
       ]}>
-      <ThemedText type="small" themeColor="textSecondary">
-        Step {step} of 3
-      </ThemedText>
-      <ThemedText type="subtitle" style={styles.title}>
-        {title}
-      </ThemedText>
-      <ThemedText type="small" themeColor="textSecondary" style={styles.subtitle}>
-        {subtitle}
-      </ThemedText>
-      <View style={styles.body}>{children}</View>
+      <OnboardingCow />
+
+      <Animated.View
+        key={`bubble-${step}`}
+        entering={FadeInDown.duration(320)}
+        exiting={FadeOutLeft.duration(180)}
+        style={styles.bubbleBlock}>
+        <View style={styles.tail} />
+        <View style={styles.bubble}>
+          <Text style={styles.bubbleTitle}>{title}</Text>
+          {subtitle ? <Text style={styles.bubbleSubtitle}>{subtitle}</Text> : null}
+        </View>
+        <View style={styles.dots}>
+          {([1, 2, 3] as const).map((n) => (
+            <View
+              key={n}
+              style={[styles.dot, n === step ? styles.dotActive : styles.dotIdle]}
+            />
+          ))}
+        </View>
+      </Animated.View>
+
+      <Animated.View
+        key={`body-${step}`}
+        entering={FadeInDown.delay(80).duration(360)}
+        exiting={FadeOutLeft.duration(180)}
+        style={styles.body}>
+        {children}
+      </Animated.View>
+
       <View style={styles.footer}>
-        <Pressable onPress={onSkip} hitSlop={8} style={styles.skipBtn}>
-          <ThemedText type="smallBold" themeColor="textSecondary">
-            Skip
-          </ThemedText>
-        </Pressable>
         <Pressable
-          onPress={onContinue}
-          style={[styles.continueBtn, { backgroundColor: theme.primary }]}>
-          <ThemedText type="smallBold" style={{ color: theme.primaryText }}>
-            {continueLabel}
-          </ThemedText>
+          onPress={handleContinue}
+          style={styles.continueBtn}
+          accessibilityRole="button"
+          accessibilityLabel={continueLabel}>
+          <Text style={styles.continueLabel}>{continueLabel}</Text>
+        </Pressable>
+        <Pressable onPress={onSkip} hitSlop={10} accessibilityRole="button">
+          <Text style={styles.skipLabel}>Skip</Text>
         </Pressable>
       </View>
     </View>
@@ -74,20 +101,20 @@ export function Chip({
   selected: boolean;
   onPress: () => void;
 }) {
-  const theme = useTheme();
   return (
     <Pressable
       onPress={onPress}
-      style={[
-        styles.chip,
-        {
-          backgroundColor: selected ? theme.backgroundSelected : theme.backgroundElement,
-          borderColor: selected ? theme.primaryDark : theme.border,
-        },
-      ]}>
-      <ThemedText type="smallBold">{label}</ThemedText>
+      style={[styles.chip, selected ? styles.chipSelected : styles.chipIdle]}
+      accessibilityRole="button"
+      accessibilityState={{ selected }}>
+      <Text style={[styles.chipText, selected ? styles.chipTextSelected : null]}>{label}</Text>
     </Pressable>
   );
+}
+
+/** Small section label on the yellow canvas (Avoid / Prefer / etc.). */
+export function OnboardingLabel({ children }: { children: string }) {
+  return <Text style={styles.sectionLabel}>{children}</Text>;
 }
 
 const styles = StyleSheet.create({
@@ -96,36 +123,115 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     gap: Spacing.two,
   },
-  title: {
+  bubbleBlock: {
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  tail: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 12,
+    borderRightWidth: 12,
+    borderBottomWidth: 14,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: BUBBLE,
+    marginBottom: -2,
+  },
+  bubble: {
+    backgroundColor: BUBBLE,
+    borderRadius: 22,
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.three,
+    width: '100%',
+    gap: Spacing.one,
+    borderWidth: 3,
+    borderColor: INK,
+  },
+  bubbleTitle: {
+    fontFamily: Fonts.sansBold,
+    fontSize: 22,
+    lineHeight: 28,
+    color: INK,
+    textAlign: 'center',
+  },
+  bubbleSubtitle: {
+    fontFamily: Fonts.sans,
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#333333',
+    textAlign: 'center',
+  },
+  dots: {
+    flexDirection: 'row',
+    gap: Spacing.two,
     marginTop: Spacing.one,
   },
-  subtitle: {
-    marginBottom: Spacing.two,
+  dot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  dotActive: {
+    backgroundColor: INK,
+    width: 22,
+  },
+  dotIdle: {
+    backgroundColor: 'rgba(0,0,0,0.25)',
   },
   body: {
     flex: 1,
-    gap: Spacing.three,
+    gap: Spacing.two,
+    minHeight: 0,
   },
   footer: {
-    flexDirection: 'row',
+    gap: Spacing.two,
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: Spacing.three,
-  },
-  skipBtn: {
-    paddingVertical: Spacing.three,
-    paddingHorizontal: Spacing.two,
   },
   continueBtn: {
-    flex: 1,
+    width: '100%',
+    backgroundColor: INK,
     alignItems: 'center',
-    paddingVertical: Spacing.three,
-    borderRadius: Spacing.three,
+    paddingVertical: Spacing.three + 2,
+    borderRadius: 16,
+  },
+  continueLabel: {
+    fontFamily: Fonts.sansBold,
+    fontSize: 18,
+    color: ONBOARDING_YELLOW,
+  },
+  skipLabel: {
+    fontFamily: Fonts.sansBold,
+    fontSize: 15,
+    color: INK,
+    textDecorationLine: 'underline',
+    paddingVertical: Spacing.two,
   },
   chip: {
     paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-    borderRadius: Spacing.three,
-    borderWidth: 1,
+    paddingVertical: Spacing.two + 2,
+    borderRadius: 999,
+    borderWidth: 2,
+    borderColor: INK,
+  },
+  chipIdle: {
+    backgroundColor: BUBBLE,
+  },
+  chipSelected: {
+    backgroundColor: INK,
+  },
+  chipText: {
+    fontFamily: Fonts.sansBold,
+    fontSize: 14,
+    color: INK,
+  },
+  chipTextSelected: {
+    color: ONBOARDING_YELLOW,
+  },
+  sectionLabel: {
+    fontFamily: Fonts.sansBold,
+    fontSize: 14,
+    color: INK,
+    marginTop: Spacing.one,
   },
 });

@@ -3,8 +3,11 @@ import { StyleSheet, View } from 'react-native';
 import { persistOnboardingDraft } from '@/auth/finish-onboarding';
 import { useOnboardingDraft, type TransportMode } from '@/auth/onboarding-draft';
 import { useSession } from '@/auth/session';
-import { Chip, OnboardingShell } from '@/components/onboarding/onboarding-shell';
-import { ThemedText } from '@/components/themed-text';
+import {
+  Chip,
+  OnboardingLabel,
+  OnboardingShell,
+} from '@/components/onboarding/onboarding-shell';
 import { Spacing } from '@/constants/theme';
 
 const TRANSPORT: { id: TransportMode; label: string }[] = [
@@ -44,12 +47,12 @@ export default function OnboardingShopScreen() {
   return (
     <OnboardingShell
       step={3}
-      title="How do you shop?"
-      subtitle="Helps Butter prefer nearby stores that fit how you get around."
+      title="How do you usually get groceries?"
+      subtitle="So I can prefer stores that fit your trip."
       continueLabel="Start shopping"
       onSkip={() => void persistAndFinish()}
       onContinue={() => void persistAndFinish()}>
-      <ThemedText type="smallBold">Getting groceries</ThemedText>
+      <OnboardingLabel>I usually</OnboardingLabel>
       <View style={styles.chips}>
         {TRANSPORT.map((row) => (
           <Chip
@@ -63,9 +66,7 @@ export default function OnboardingShopScreen() {
         ))}
       </View>
 
-      <ThemedText type="smallBold" style={styles.section}>
-        Stores per trip
-      </ThemedText>
+      <OnboardingLabel>Stores per trip</OnboardingLabel>
       <View style={styles.chips}>
         {STORE_CAPS.map((row) => (
           <Chip
@@ -85,8 +86,5 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.two,
-  },
-  section: {
-    marginTop: Spacing.three,
   },
 });

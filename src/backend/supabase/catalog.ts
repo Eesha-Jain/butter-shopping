@@ -13,7 +13,11 @@ import type {
 import { supabase } from './client';
 import { fail } from '../errors';
 import { isPriorLocalCalendarDay, todayLocalDateKey } from './localTime';
+import { fetchOpenPricesByUpc } from './open-prices';
 import { unwrap, unwrapOne } from './query';
+
+/** Search-path chains: Kroger APIs only (scrapes run via bootstrap ingest). */
+const SEARCH_CHAINS = 'qfc,fredMeyer';
 
 const CLIENT_INGEST_COOLDOWN_MS = 10 * 60 * 1000;
 const ingestCooldown = new Map<string, number>();
@@ -281,7 +285,10 @@ export async function getCheapestPriceCentsByProductIds(
 
   const storeProductIds = listings.map((row) => row.id);
   const current = unwrap(
-    await supabase.from('current_prices').select('store_product_id, price_cents').in('store_product_id', storeProductIds),
+    await supabase
+      .from('trusted_current_prices')
+      .select('store_product_id, price_cents')
+      .in('store_product_id', storeProductIds),
   );
   const priceByStoreProduct = new Map(current.map((row) => [row.store_product_id, row.price_cents]));
   for (const listing of listings) {
@@ -375,6 +382,7 @@ export async function findOrIngestProductByUpc(
 }
 
 type PricesProxyBody = {
+  offers?: unknown[];
   safewayError?: string | null;
   fredMeyerError?: string | null;
   traderJoesError?: string | null;
@@ -383,13 +391,18 @@ type PricesProxyBody = {
 
 function proxyHadRetailerError(body: PricesProxyBody | null): boolean {
   if (!body) return true;
-  return Boolean(body.safewayError || body.fredMeyerError || body.traderJoesError || body.qfcError);
+  // Kroger-only search: ignore scrape-chain fields; allow cooldown when QFC succeeded
+  // even if Fred Meyer has no nearby store for this ZIP.
+  if (body.qfcError) return true;
+  if (Array.isArray(body.offers) && body.offers.length > 0) return false;
+  return Boolean(body.fredMeyerError || body.safewayError || body.traderJoesError);
 }
 
 /**
  * Hits the multi-store price proxy for a search term, then re-reads products.
- * Skips when on client cooldown. Does not mark cooldown if any retailer errored,
- * so partial (e.g. QFC-only) failures can retry. Never call on bare Shop open.
+ * Uses QFC + Fred Meyer only so search stays snappy; Safeway/TJ come from
+ * scheduled bootstrap ingest. Skips when on client cooldown. Does not mark
+ * cooldown if any retailer errored. Never call on bare Shop open.
  */
 export async function ensureCatalogForTerm(term: string, zip: string): Promise<Product[]> {
   const query = term.trim();
@@ -399,7 +412,7 @@ export async function ensureCatalogForTerm(term: string, zip: string): Promise<P
   if (ingestOnCooldown(query, zip)) return products;
 
   try {
-    const params = new URLSearchParams({ term: query, zip });
+    const params = new URLSearchParams({ term: query, zip, chains: SEARCH_CHAINS });
     const res = await fetch(`${BACKEND_URL}/api/prices?${params}`);
     const body = (await res.json().catch(() => null)) as PricesProxyBody | null;
     if (!proxyHadRetailerError(body)) {
@@ -419,21 +432,50 @@ export type ProductStoreOffer = {
   chainName: string | null;
   priceCents: number;
   isAvailable: boolean;
-  /** ISO timestamptz from current_prices.created_at */
+  /** ISO timestamptz from trusted_current_prices.created_at */
   observedAt: string;
 };
 
+/** UPC digit variants so split product rows across chains still merge on PDP. */
+function upcLookupValues(value: string | null | undefined): string[] {
+  const digits = String(value ?? '').replace(/\D/g, '');
+  if (!digits) return [];
+  const stripped = digits.replace(/^0+/, '') || '0';
+  return [...new Set([digits, stripped, stripped.padStart(12, '0'), stripped.padStart(13, '0')])];
+}
+
 /**
  * Shelf offers for one catalog product across stores (for PDP comparisons).
- * Cheapest first. Empty when no listings/prices exist yet.
+ * When the product has a UPC, also includes listings from sibling product rows
+ * that share that barcode (common when scrapes created separate products).
+ * Cheapest first; one offer per store (keeps lowest price).
  */
 export async function listProductStoreOffers(productId: string): Promise<ProductStoreOffer[]> {
   if (!productId) return [];
+
+  const productResult = await supabase
+    .from('products')
+    .select('id, upc')
+    .eq('id', productId)
+    .maybeSingle();
+  const product = productResult.error ? null : productResult.data;
+
+  let productIds = [productId];
+  const upcValues = upcLookupValues(product?.upc ?? null);
+  if (upcValues.length > 0) {
+    const siblings = unwrap(
+      await supabase.from('products').select('id').in('upc', upcValues),
+    ) as { id: string }[];
+    if (siblings.length > 0) {
+      productIds = [...new Set(siblings.map((row) => row.id))];
+    }
+  }
+
   const listings = unwrap(
     await supabase
       .from('store_products')
-      .select('id, store_id, is_available')
-      .eq('product_id', productId),
+      .select('id, store_id, is_available, product_id')
+      .in('product_id', productIds),
   );
   if (listings.length === 0) return [];
 
@@ -451,7 +493,7 @@ export async function listProductStoreOffers(productId: string): Promise<Product
 
   const prices = unwrap(
     await supabase
-      .from('current_prices')
+      .from('trusted_current_prices')
       .select('store_product_id, price_cents, created_at')
       .in(
         'store_product_id',
@@ -465,24 +507,27 @@ export async function listProductStoreOffers(productId: string): Promise<Product
     ]),
   );
 
-  const offers = listings.flatMap((listing) => {
+  const byStore = new Map<string, ProductStoreOffer>();
+  for (const listing of listings) {
     const price = priceByListing.get(listing.id);
-    if (price == null) return [];
+    if (price == null) continue;
     const store = storeById.get(listing.store_id);
-    return [
-      {
-        storeProductId: listing.id,
-        storeId: listing.store_id,
-        storeName: store?.name ?? 'Store',
-        chainName: store?.chain_id ? (chainById.get(store.chain_id) ?? null) : null,
-        priceCents: price.priceCents,
-        isAvailable: listing.is_available,
-        observedAt: price.observedAt,
-      },
-    ];
-  });
+    const offer: ProductStoreOffer = {
+      storeProductId: listing.id,
+      storeId: listing.store_id,
+      storeName: store?.name ?? 'Store',
+      chainName: store?.chain_id ? (chainById.get(store.chain_id) ?? null) : null,
+      priceCents: price.priceCents,
+      isAvailable: listing.is_available,
+      observedAt: price.observedAt,
+    };
+    const existing = byStore.get(listing.store_id);
+    if (!existing || offer.priceCents < existing.priceCents) {
+      byStore.set(listing.store_id, offer);
+    }
+  }
 
-  return offers.sort((a, b) => a.priceCents - b.priceCents);
+  return [...byStore.values()].sort((a, b) => a.priceCents - b.priceCents);
 }
 
 function offersNeedDayRefresh(offers: ProductStoreOffer[]): boolean {
@@ -490,10 +535,26 @@ function offersNeedDayRefresh(offers: ProductStoreOffer[]): boolean {
   return offers.some((offer) => offer.observedAt && isPriorLocalCalendarDay(offer.observedAt));
 }
 
+function openPricesAsOffers(rows: Awaited<ReturnType<typeof fetchOpenPricesByUpc>>): ProductStoreOffer[] {
+  return rows
+    .filter((row) => Number.isInteger(row.priceCents) && (row.priceCents ?? 0) > 0)
+    .slice(0, 5)
+    .map((row, index) => ({
+      storeProductId: `open-prices:${index}`,
+      storeId: 'open-prices',
+      storeName: [row.storeName, row.city].filter(Boolean).join(' · ') || 'Community store',
+      chainName: 'Community (Open Prices)',
+      priceCents: row.priceCents as number,
+      isAvailable: true,
+      observedAt: row.date ? new Date(row.date).toISOString() : new Date().toISOString(),
+    }));
+}
+
 /**
  * Refreshes multi-store shelf prices for one product, then returns updated offers.
  * Uses UPC as the search term when present so chains can match the same SKU.
  * Bypasses the short cooldown when any offer is from a prior local calendar day.
+ * When retailer coverage is thin, appends Open Prices rows by UPC (display-only).
  */
 export async function refreshProductStoreOffers(
   product: Pick<Product, 'id' | 'name' | 'upc'>,
@@ -508,7 +569,8 @@ export async function refreshProductStoreOffers(
 
   if (shouldFetch) {
     try {
-      const params = new URLSearchParams({ term, zip });
+      // PDP: Kroger APIs first for speed; scrapes already in catalog from bootstrap.
+      const params = new URLSearchParams({ term, zip, chains: SEARCH_CHAINS });
       const res = await fetch(`${BACKEND_URL}/api/prices?${params}`);
       const body = (await res.json().catch(() => null)) as PricesProxyBody | null;
       if (!proxyHadRetailerError(body)) {
@@ -518,7 +580,20 @@ export async function refreshProductStoreOffers(
       // Return whatever is already persisted for this product.
     }
   }
-  return listProductStoreOffers(product.id);
+
+  let offers = await listProductStoreOffers(product.id);
+  const upc = String(product.upc ?? '').replace(/\D/g, '');
+  if (offers.length < 2 && /^\d{8,14}$/.test(upc)) {
+    const crowd = openPricesAsOffers(await fetchOpenPricesByUpc(upc));
+    if (crowd.length > 0) {
+      const retailerStores = new Set(offers.map((o) => o.storeId));
+      offers = [
+        ...offers,
+        ...crowd.filter((row) => !retailerStores.has(row.storeId)),
+      ].sort((a, b) => a.priceCents - b.priceCents);
+    }
+  }
+  return offers;
 }
 
 /**

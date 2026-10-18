@@ -8,6 +8,7 @@ export type {
   College,
   CurrentPrice,
   CurrentUnitPrice,
+  TrustedCurrentPrice,
   Database,
   DiningPlan,
   DiscountEligibility,

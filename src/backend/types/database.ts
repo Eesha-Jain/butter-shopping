@@ -64,7 +64,10 @@ export type Database = {
     };
     Views: {
       current_prices: View<CurrentPrice>;
+      /** Latest user_report wins over newer api/scrape. */
+      trusted_current_prices: View<TrustedCurrentPrice>;
       current_unit_prices: View<CurrentUnitPrice>;
+      product_price_health: View<ProductPriceHealth>;
       v_list_items: View<ResolvedListItem>;
       v_order_summary: View<OrderSummary>;
       v_group_balances: View<GroupBalance>;
@@ -549,6 +552,9 @@ export type CurrentPrice = {
   created_at: string;
   is_stale: boolean;
 };
+
+/** Same columns as current_prices; ordering prefers user_report. */
+export type TrustedCurrentPrice = CurrentPrice;
 
 /** Completeness + trust flags per store listing (product_price_health view). */
 export type ProductPriceHealth = {

@@ -5,6 +5,7 @@
  * Usage:
  *   node bootstrap-staples.js
  *   node bootstrap-staples.js --zip=98195 --concurrency=2
+ *   node bootstrap-staples.js --chains=qfc,fredMeyer   # Kroger-only scheduled refresh
  *   node bootstrap-staples.js --base=http://127.0.0.1:3000 --terms=./staple-terms.json
  */
 import fs from 'fs';
@@ -25,6 +26,8 @@ const zip = arg('zip', '98195');
 const base = arg('base', 'http://127.0.0.1:3000').replace(/\/$/, '');
 const concurrency = Math.max(1, Number(arg('concurrency', '2')) || 2);
 const delayMs = Math.max(0, Number(arg('delay', '300')) || 300);
+/** Optional: qfc,fredMeyer,safeway,traderJoes — omit for all chains (full staple ingest). */
+const chains = arg('chains', '');
 const termsPath = path.resolve(__dirname, arg('terms', './staple-terms.json'));
 
 function sleep(ms) {
@@ -70,6 +73,7 @@ async function main() {
 
   console.log(`Bootstrapping ${terms.length} terms for ZIP ${zip} via ${base}`);
   console.log(`Concurrency ${concurrency}, delay ${delayMs}ms`);
+  if (chains) console.log(`Chains: ${chains}`);
 
   let index = 0;
   let ok = 0;
@@ -79,7 +83,9 @@ async function main() {
     while (index < terms.length) {
       const term = terms[index++];
       // refresh=1 bypasses the proxy cooldown so re-runs update prices/photos.
-      const url = `${base}/api/prices?term=${encodeURIComponent(term)}&zip=${zip}&refresh=1`;
+      const params = new URLSearchParams({ term, zip, refresh: '1' });
+      if (chains) params.set('chains', chains);
+      const url = `${base}/api/prices?${params}`;
       try {
         const res = await fetch(url);
         const json = await res.json().catch(() => ({}));

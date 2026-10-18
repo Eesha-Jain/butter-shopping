@@ -4,8 +4,11 @@ import { StyleSheet, View } from 'react-native';
 import { persistOnboardingDraft } from '@/auth/finish-onboarding';
 import { useOnboardingDraft } from '@/auth/onboarding-draft';
 import { useSession } from '@/auth/session';
-import { Chip, OnboardingShell } from '@/components/onboarding/onboarding-shell';
-import { ThemedText } from '@/components/themed-text';
+import {
+  Chip,
+  OnboardingLabel,
+  OnboardingShell,
+} from '@/components/onboarding/onboarding-shell';
 import { Spacing } from '@/constants/theme';
 
 const DISCOUNTS = [
@@ -43,11 +46,11 @@ export default function OnboardingSaveScreen() {
   return (
     <OnboardingShell
       step={2}
-      title="Any savings we should use?"
-      subtitle="Optional discounts and a rough grocery cash-back rate. No card numbers — just a percentage."
+      title="Any savings I should use?"
+      subtitle="Discounts + cash back. No card numbers — just a tap."
       onSkip={() => void skipRest()}
       onContinue={() => router.push('/(onboarding)/shop')}>
-      <ThemedText type="smallBold">Discount eligibility</ThemedText>
+      <OnboardingLabel>Discounts</OnboardingLabel>
       <View style={styles.chips}>
         {DISCOUNTS.map((row) => (
           <Chip
@@ -59,12 +62,7 @@ export default function OnboardingSaveScreen() {
         ))}
       </View>
 
-      <ThemedText type="smallBold" style={styles.section}>
-        Grocery cash back
-      </ThemedText>
-      <ThemedText type="small" themeColor="textSecondary">
-        Factor this into store comparisons. Visa merchant offers still apply either way.
-      </ThemedText>
+      <OnboardingLabel>Grocery cash back</OnboardingLabel>
       <View style={styles.chips}>
         {CASHBACK.map((row) => (
           <Chip
@@ -91,8 +89,5 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.two,
-  },
-  section: {
-    marginTop: Spacing.three,
   },
 });
