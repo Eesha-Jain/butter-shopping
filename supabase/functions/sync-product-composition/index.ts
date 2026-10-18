@@ -1,3 +1,4 @@
+import { categoryFromOffProduct } from '../_shared/offCategoryMap.ts';
 import { adminClient, json, requireServiceRole, sendExpoPush } from '../_shared/supabase.ts';
 
 type OffIngredient = { id?: string; text?: string };
@@ -8,6 +9,14 @@ type OffProduct = {
   allergens_tags?: string[];
   traces_tags?: string[];
   labels_tags?: string[];
+  categories_tags?: string[];
+  food_groups_tags?: string[];
+  pnns_groups_1?: string;
+  pnns_groups_2?: string;
+  pnns_groups_1_tags?: string[];
+  pnns_groups_2_tags?: string[];
+  food_groups?: string;
+  food_group?: string;
 };
 
 const LABEL_TRAITS: Record<string, { code: string; relation: 'suitable' | 'certified' }> = {
@@ -20,10 +29,9 @@ const LABEL_TRAITS: Record<string, { code: string; relation: 'suitable' | 'certi
 };
 
 /**
- * Reads Open Food Facts for one barcode, replaces that product's traits, and
- * updates ingredients_text only when the text changed. When a newly observed
- * avoid-rule conflict appears, it sends a best-effort push to recent purchasers.
- * Call this with the service role. It does not store the raw API response.
+ * Reads Open Food Facts for one barcode, replaces that product's traits,
+ * updates ingredients_text when changed, and sets category_id from OFF taxonomy
+ * when category_source is null or keyword (never overwrites manual).
  */
 Deno.serve(async (req) => {
   try {
@@ -33,22 +41,36 @@ Deno.serve(async (req) => {
     if (!upc) return json({ error: 'upc is required.' }, 400);
 
     const supabase = adminClient();
-    const productResult = await supabase.from('products').select('id, ingredients_text').eq('upc', upc).maybeSingle();
-    if (productResult.error || !productResult.data) return json({ error: 'Product not found for that barcode.' }, 404);
+    const productResult = await supabase
+      .from('products')
+      .select('id, ingredients_text, category_id, category_source')
+      .eq('upc', upc)
+      .maybeSingle();
+    if (productResult.error || !productResult.data) {
+      return json({ error: 'Product not found for that barcode.' }, 404);
+    }
     const product = productResult.data;
 
-    const response = await fetch(`https://world.openfoodfacts.org/api/v3/product/${encodeURIComponent(upc)}.json`);
+    const response = await fetch(
+      `https://world.openfoodfacts.org/api/v3/product/${encodeURIComponent(upc)}.json`,
+    );
     if (!response.ok) return json({ error: 'Open Food Facts did not return this product.' }, 502);
     const body = await response.json() as { product?: OffProduct };
     const off = body.product;
     if (!off) return json({ error: 'Open Food Facts has no product payload.' }, 404);
 
-    const previous = await supabase.from('product_traits').select('trait_id, relation').eq('product_id', product.id);
+    const previous = await supabase.from('product_traits').select('trait_id, relation').eq(
+      'product_id',
+      product.id,
+    );
     await supabase.from('product_traits').delete().eq('product_id', product.id);
 
     const traits = await supabase.from('food_traits').select('id, code, kind');
     const byCode = new Map((traits.data ?? []).map((trait) => [trait.code, trait]));
-    const rowsByKey = new Map<string, { product_id: string; trait_id: string; relation: string; source: string }>();
+    const rowsByKey = new Map<
+      string,
+      { product_id: string; trait_id: string; relation: string; source: string }
+    >();
     const addRow = (traitId: string, relation: string) => {
       rowsByKey.set(`${traitId}:${relation}`, {
         product_id: product.id,
@@ -79,20 +101,50 @@ Deno.serve(async (req) => {
     const rows = [...rowsByKey.values()];
     if (rows.length > 0) await supabase.from('product_traits').insert(rows);
 
+    const productPatch: Record<string, unknown> = {};
     const nextText = off.ingredients_text ?? null;
     if (nextText !== product.ingredients_text) {
-      await supabase.from('products').update({
-        ingredients_text: nextText,
-        ingredients_updated_at: new Date().toISOString(),
-      }).eq('id', product.id);
+      productPatch.ingredients_text = nextText;
+      productPatch.ingredients_updated_at = new Date().toISOString();
+    }
+
+    let categoryName: string | null = null;
+    const source = product.category_source as string | null;
+    if (source !== 'manual') {
+      categoryName = categoryFromOffProduct(off as Record<string, unknown>);
+      if (categoryName) {
+        const cat = await supabase
+          .from('product_categories')
+          .select('id')
+          .ilike('name', categoryName)
+          .limit(1)
+          .maybeSingle();
+        if (cat.data?.id && (product.category_id !== cat.data.id || source !== 'off')) {
+          productPatch.category_id = cat.data.id;
+          productPatch.category_source = 'off';
+        }
+      }
+    }
+
+    if (Object.keys(productPatch).length > 0) {
+      await supabase.from('products').update(productPatch).eq('id', product.id);
     }
 
     const oldKeys = new Set((previous.data ?? []).map((row) => `${row.trait_id}:${row.relation}`));
     const added = rows.filter((row) => !oldKeys.has(`${row.trait_id}:${row.relation}`));
     if (added.length > 0) {
-      await notifyPurchasers(supabase, product.id, 'A product you buy has updated ingredient information.');
+      await notifyPurchasers(
+        supabase,
+        product.id,
+        'A product you buy has updated ingredient information.',
+      );
     }
-    return json({ productId: product.id, traitsWritten: rows.length });
+    return json({
+      productId: product.id,
+      traitsWritten: rows.length,
+      categoryName,
+      categoryUpdated: Boolean(productPatch.category_id),
+    });
   } catch (error) {
     if (error instanceof Response) return error;
     return json({ error: error instanceof Error ? error.message : 'Composition sync failed.' }, 500);
@@ -107,7 +159,10 @@ async function notifyPurchasers(
   const listings = await supabase.from('store_products').select('id').eq('product_id', productId);
   const listingIds = (listings.data ?? []).map((row) => row.id);
   if (listingIds.length === 0) return;
-  const purchases = await supabase.from('purchases').select('user_id').in('store_product_id', listingIds);
+  const purchases = await supabase.from('purchases').select('user_id').in(
+    'store_product_id',
+    listingIds,
+  );
   const userIds = [...new Set((purchases.data ?? []).map((row) => row.user_id))];
   if (userIds.length === 0) return;
   const tokens = await supabase.from('push_tokens').select('token').in('user_id', userIds);

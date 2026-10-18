@@ -67,7 +67,7 @@ import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Fonts, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
-const VISIBLE_CATEGORIES = 4;
+const VISIBLE_CATEGORIES = 10;
 const SEARCH_DEBOUNCE_MS = 300;
 
 export default function ShopScreen() {

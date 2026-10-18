@@ -20,6 +20,27 @@ export function canIngest() {
   return supabaseConfig() !== null;
 }
 
+/** Best-effort OFF sync (traits + category). Avoids importing persist.js (cycle). */
+async function enrichComposition(upc) {
+  const config = supabaseConfig();
+  const code = String(upc ?? "").trim();
+  if (!config || !code) return false;
+  try {
+    const res = await fetch(`${config.url}/functions/v1/sync-product-composition`, {
+      method: "POST",
+      headers: {
+        apikey: config.key,
+        Authorization: `Bearer ${config.key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ upc: code }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 async function rest(path, options = {}) {
   const config = supabaseConfig();
   if (!config) return null;
@@ -104,7 +125,7 @@ async function categoryIdForProductName(productName) {
   const categoryName = categoryForProductName(productName);
   if (!categoryName) return null;
   const rows = await rest(
-    `product_categories?name=eq.${encodeURIComponent(categoryName)}&parent_id=is.null&select=id&limit=1`,
+    `product_categories?name=eq.${encodeURIComponent(categoryName)}&select=id&limit=1`,
   );
   return rows?.[0]?.id ?? null;
 }
@@ -220,6 +241,7 @@ export async function ingestShelf(raw) {
   if (!storeId) throw new Error("Store save did not return a row.");
 
   let productId = await findProduct(offer);
+  let createdFresh = false;
   if (!productId) {
     const categoryId = await categoryIdForProductName(offer.productName);
     const created = await rest("products", {
@@ -229,15 +251,18 @@ export async function ingestShelf(raw) {
         name: offer.productName,
         brand: offer.brand,
         upc: offer.upc,
-        ...(categoryId ? { category_id: categoryId } : {}),
+        ...(categoryId
+          ? { category_id: categoryId, category_source: "keyword" }
+          : {}),
       }),
     });
     productId = created?.[0]?.id;
+    createdFresh = Boolean(productId);
   }
   if (!productId) throw new Error("Product save did not return a row.");
 
   const existingProducts = await rest(
-    `products?id=eq.${productId}&select=id,upc,brand,size_base_amount,size_base_unit&limit=1`,
+    `products?id=eq.${productId}&select=id,upc,brand,size_base_amount,size_base_unit,category_id,category_source&limit=1`,
   );
   const existing = existingProducts?.[0];
   if (existing) {
@@ -247,6 +272,13 @@ export async function ingestShelf(raw) {
       sizeBaseAmount: offer.sizeBaseAmount ?? null,
       sizeBaseUnit: offer.sizeBaseUnit ?? null,
     });
+    if (!existing.category_id) {
+      const categoryId = await categoryIdForProductName(offer.productName);
+      if (categoryId) {
+        patch.category_id = categoryId;
+        patch.category_source = "keyword";
+      }
+    }
     if (Object.keys(patch).length > 0) {
       await rest(`products?id=eq.${productId}`, {
         method: "PATCH",
@@ -254,6 +286,15 @@ export async function ingestShelf(raw) {
         body: JSON.stringify(patch),
       });
     }
+  }
+
+  // OFF taxonomy can upgrade keyword categories when a UPC is known.
+  const upcForEnrich = offer.upc ?? existing?.upc;
+  if (
+    upcForEnrich &&
+    (createdFresh || !existing?.category_source || existing.category_source === "keyword")
+  ) {
+    await enrichComposition(upcForEnrich);
   }
 
   const listings = await rest("store_products?on_conflict=store_id,product_id", {
