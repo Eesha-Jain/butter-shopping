@@ -15,8 +15,11 @@ import {
   listListItems,
   listVisibleRecipes,
   removeListItem,
+  resolveShopZip,
   setListItemDone,
   showSuccessToast,
+  suggestBestShopDate,
+  type BestShopDay,
   type ListItem,
   type Recipe,
 } from '@/backend';
@@ -35,6 +38,7 @@ export default function GroceryListScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isBuilding, setIsBuilding] = useState(false);
+  const [bestShopDay, setBestShopDay] = useState<BestShopDay | null>(null);
 
   const load = useCallback(async (refresh = false) => {
     if (refresh) {
@@ -46,12 +50,18 @@ export default function GroceryListScreen() {
     try {
       const { list } = await getDefaultGroceryList();
       setListId(list.id);
-      const [rows, visibleRecipes] = await Promise.all([
+      const [rows, visibleRecipes, zip] = await Promise.all([
         listListItems(list.id),
         listVisibleRecipes(),
+        resolveShopZip().catch(() => '98195'),
       ]);
       setItems(rows);
       setRecipes(visibleRecipes);
+      try {
+        setBestShopDay(await suggestBestShopDate({ postalCode: zip }));
+      } catch {
+        setBestShopDay(null);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load your grocery list.');
       if (!refresh) {
@@ -142,6 +152,11 @@ export default function GroceryListScreen() {
           <ThemedText type="small" themeColor="textSecondary">
             Built from staples you eat and recipes you pick. Cart is for checkout later.
           </ThemedText>
+          {bestShopDay ? (
+            <ThemedText type="small" themeColor="textSecondary">
+              Suggested shop day {bestShopDay.shopOn}: {bestShopDay.reasonLabel}
+            </ThemedText>
+          ) : null}
           <View style={styles.actions}>
             <Pressable
               onPress={() => void onBuild()}

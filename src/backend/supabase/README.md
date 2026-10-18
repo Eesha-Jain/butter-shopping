@@ -29,6 +29,30 @@ await runAction(async () => {
 `runAction` is optional when you already `await` a helper: those helpers toast
 on their own. Use it when you want a custom fallback message around several calls.
 
+## Google sign-in and Auth redirect URLs
+
+In the Supabase Dashboard → **Authentication → URL Configuration → Additional
+Redirect URLs**, keep both:
+
+- `exp://**` — Expo Go (iOS usually works; Android Custom Tabs handoff is flaky)
+- `buttershopping://**` — development builds and store builds
+
+`signInWithGoogle` uses `makeRedirectUri({ scheme: 'buttershopping', path: 'auth/callback' })`.
+Expo Go remaps that to `exp://…`; a development build uses
+`buttershopping://auth/callback`.
+
+### Android team workflow (install once, hot-reload daily)
+
+Google login on Android is reliable in a **development build**, not Expo Go.
+
+1. One person builds and shares an APK: `npm run build:dev:android`
+   (uses `npx eas-cli@latest`; or `npx expo run:android` locally).
+2. Teammates install that APK once, then daily: `npm run start:dev` and open the
+   Butter app (not Expo Go). JS hot-reloads; rebuild only when native config or
+   native libraries change.
+3. Email/password on the auth screen works everywhere, including Android Expo Go,
+   when you only need a quick test account.
+
 ## How the data fits together
 
 A person signs up through Supabase Auth. A database trigger creates a profile,
@@ -120,7 +144,8 @@ images live in `public-assets`. The database stores the file path only.
 | Screen action | Function | What you get back |
 | --- | --- | --- |
 | Create an account | `signUp` | A user id. The profile and personal list already exist. |
-| Sign in or out | `signIn`, `signOut`, `getSession` | The device session. |
+| Sign in or out | `signIn`, `signInWithGoogle`, `signOut`, `getSession` | The device session. |
+
 | Read or edit settings | `getMyProfile`, `updateMyProfile` | The caller's profile, including the weekly budget. |
 | Set a food filter | `setMyFoodRules` | Nothing. The database rejects an illegal mode. |
 | Save a dorm or home address | `saveMyLocation` | The saved address. |
@@ -131,6 +156,8 @@ images live in `public-assets`. The database stores the file path only.
 | Add a recipe to the list | `addRecipeToList` | How many ingredient lines were added. |
 | Show the list | `listResolvedItems` | Names and the cheapest shelf price, before coupons and food rules. |
 | Choose the grocery day | `suggestGroceryDate` | The next preferred calendar date. |
+| Best day from price history | `suggestBestShopDate` | Uses append-only `prices` day-of-week stats near a ZIP, plus promotions and preferred days. Returns `shopOn` + `reasonLabel`. |
+| Weekly Shopping board | `getWeeklyShoppingBoard` | Days tab columns: Shop Today, Recommended Shop Date, Best Deal Day (eligibilities + optional time window). |
 | Compare stores for one food | `priceOptions` | Offers that already follow the group's strictest rules, with waste-adjusted `effective_cents_per_base`. |
 | Plan the whole list | `recommendShoppingPlan` | One line per item, the store (picked by effective cost), and whether the estimate is over budget. |
 | Turn the plan into drafts | `createTripFromList` | The trip id. Pass `fulfillmentMethod` (`self_pickup`, `store_pickup`, or `delivery`) and, for delivery, `deliveryLocationId`. One draft order is created per store. |

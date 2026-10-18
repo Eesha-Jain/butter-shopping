@@ -20,12 +20,24 @@
       "bundleIdentifier": "com.pigggsteam.buttershopping"
     },
     "android": {
+      "package": "com.pigggsteam.buttershopping",
       "adaptiveIcon": {
         "backgroundColor": "#000000",
         "foregroundImage": "./assets/images/icon.png"
       },
       "permissions": [
-        "android.permission.RECORD_AUDIO"
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.CAMERA",
+        "android.permission.INTERNET",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.WAKE_LOCK",
+        "android.permission.BLUETOOTH",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
       ],
       "predictiveBackGestureEnabled": false
     },
@@ -64,7 +76,9 @@
           "cameraPermission": "Butter uses your camera so you can take a profile picture.",
           "microphonePermission": false
         }
-      ]
+      ],
+      "@livekit/react-native-expo-plugin",
+      "@config-plugins/react-native-webrtc"
     ],
     "experiments": {
       "typedRoutes": true,
@@ -77,8 +91,9 @@
         }
       },
       "eas": {
-        "projectId": "1f3cfd4f-b36a-4b1d-b2a7-418245dbb387"
+        "projectId": "cb46eb72-8f01-4acb-a815-b34b0e867358"
       }
-    }
+    },
+    "owner": "livenessrose"
   }
 }

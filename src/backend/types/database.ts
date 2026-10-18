@@ -140,6 +140,24 @@ export type Database = {
         };
         Returns: string | null;
       };
+      recommend_shop_day: {
+        Args: {
+          p_near_postal_code?: string | null;
+          p_from?: string | null;
+        };
+        Returns: {
+          shop_on: string;
+          reason: string;
+          score: number;
+          stores: {
+            store_id: string;
+            name: string;
+            best_dow: number;
+            relative_index: number;
+            obs_count: number;
+          }[];
+        } | null;
+      };
       list_reportable_stores: { Args: Record<string, never>; Returns: ReportableStore[] };
       register_reportable_store: {
         Args: {
