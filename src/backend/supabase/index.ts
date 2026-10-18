@@ -161,6 +161,7 @@ export {
   listMyDiscountEligibilities,
   listMyFoodRules,
   listMyLocations,
+  listPreferredStoreIds,
   preferStore,
   publicImageUrl,
   removeMyAvatar,
