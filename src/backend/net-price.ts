@@ -31,6 +31,15 @@ function normalizeName(value: string | null | undefined): string {
     .replace(/['’]/g, '');
 }
 
+/** Chains where a shopper's grocery-category rate applies. Visa offers stay separate. */
+const GROCERY_CASHBACK_KEYS = ['qfc', 'safeway', 'fred meyer', 'trader joe', 'whole foods'];
+
+export function isGroceryCashbackChain(name: string | null | undefined): boolean {
+  const hay = normalizeName(name);
+  if (!hay) return false;
+  return GROCERY_CASHBACK_KEYS.some((key) => hay.includes(key));
+}
+
 /** Whether a Visa offer applies to this chain/store display name. */
 export function visaOfferMatchesChain(
   offer: VisaMerchantOffer,
@@ -65,9 +74,6 @@ export function visaOfferValueCents(offer: VisaMerchantOffer, shelfCents: number
   return Math.floor((shelfCents * bps) / 10000);
 }
 
-/**
- * net = shelf − grocery cashback − Visa merchant offer (floored at 0).
- */
 /** Apply a flat grocery cashback rate to a product→price map (shop “Cheapest” sort). */
 export function applyCashbackToPriceMap(
   priceCentsByProduct: Map<string, number>,
@@ -81,6 +87,10 @@ export function applyCashbackToPriceMap(
   return next;
 }
 
+/**
+ * net = shelf − grocery cashback − Visa merchant offer (floored at 0).
+ * The shopper rate applies only at grocery chains. A Visa offer applies only when the chain matches.
+ */
 export function computeNetPrice(
   shelfCents: number,
   groceryRateBps: number | null | undefined,
@@ -92,7 +102,8 @@ export function computeNetPrice(
     groceryRateBps != null && Number.isInteger(groceryRateBps) && groceryRateBps > 0
       ? groceryRateBps
       : null;
-  const cashbackCents = bps != null ? Math.floor((shelf * bps) / 10000) : 0;
+  const rateApplies = bps != null && isGroceryCashbackChain(chainOrStoreName);
+  const cashbackCents = rateApplies ? Math.floor((shelf * (bps ?? 0)) / 10000) : 0;
   const visaOffer = pickBestVisaOffer(visaOffers, chainOrStoreName, shelf);
   const visaOfferCents = visaOffer ? visaOfferValueCents(visaOffer, shelf) : 0;
   const netCents = Math.max(0, shelf - cashbackCents - visaOfferCents);
@@ -101,7 +112,7 @@ export function computeNetPrice(
     cashbackCents,
     visaOfferCents,
     netCents,
-    groceryRateBps: bps,
+    groceryRateBps: rateApplies ? bps : null,
     visaOffer,
   };
 }

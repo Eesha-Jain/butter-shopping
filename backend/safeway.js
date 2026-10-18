@@ -105,23 +105,48 @@ function pickSafewayImageUrl(product) {
   return null;
 }
 
-export function mapSafewayProduct(product) {
-  const price =
+function pickSafewayPricePair(product) {
+  const regularRaw =
     product.price?.regular ??
-    product.price?.price ??
+    product.price?.basePrice ??
     product.basePrice ??
+    product.price?.price ??
     product.price ??
     null;
-  const cents = dollarsToCents(price);
+  const promoRaw =
+    product.price?.promo ??
+    product.price?.sale ??
+    product.price?.offerPrice ??
+    product.promoPrice ??
+    product.salePrice ??
+    product.price?.discount?.price ??
+    null;
+  const regularCents = dollarsToCents(regularRaw);
+  const promoCents = dollarsToCents(promoRaw);
+  if (promoCents != null && regularCents != null && promoCents < regularCents) {
+    return { priceCents: promoCents, regularPriceCents: regularCents, promoPriceCents: promoCents };
+  }
+  if (promoCents != null && regularCents == null) {
+    return { priceCents: promoCents, regularPriceCents: null, promoPriceCents: promoCents };
+  }
+  return {
+    priceCents: regularCents,
+    regularPriceCents: regularCents,
+    promoPriceCents: null,
+  };
+}
+
+export function mapSafewayProduct(product) {
+  const prices = pickSafewayPricePair(product);
   return {
     productId: product.pid ?? product.id ?? product.productId ?? null,
     upc: product.upc ?? product.gtin ?? null,
     name: product.name ?? product.description ?? product.title ?? "Unknown product",
     brand: product.brand ?? null,
     size: product.size ?? product.unitOfMeasure ?? null,
-    priceCents: cents,
-    regularPriceCents: cents,
-    promoPriceCents: null,
+    priceCents: prices.priceCents,
+    regularPriceCents: prices.regularPriceCents,
+    promoPriceCents: prices.promoPriceCents,
     imageUrl: pickSafewayImageUrl(product),
     store: "Safeway",
     source: "scrape",

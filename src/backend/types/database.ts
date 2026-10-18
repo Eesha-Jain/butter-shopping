@@ -257,6 +257,8 @@ export type ProductCategory = {
   base_unit: 'g' | 'ml' | 'ct';
   /** Days after purchase before a typical item spoils; null = non-perishable/unknown. */
   typical_shelf_life_days: number | null;
+  /** Typical items in this category can be purchased with SNAP/EBT. */
+  snap_eligible?: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -266,6 +268,12 @@ export type Product = {
   name: string;
   brand: string | null;
   upc: string | null;
+  /** GTIN-14 canonical barcode for cross-store match. */
+  canonical_upc?: string | null;
+  /** brand|name|size soft key when UPC is missing. */
+  fingerprint?: string | null;
+  /** Short card title; prefer over name in UI. */
+  display_name?: string | null;
   category_id: string | null;
   /** off | keyword | manual — how category_id was assigned */
   category_source: 'off' | 'keyword' | 'manual' | null;
@@ -351,6 +359,12 @@ export type Promotion = {
   product_id: string | null;
   discount_type: 'percent_off' | 'amount_off' | 'bogo';
   discount_value: number;
+  /** Paid units per BOGO cycle (e.g. 3 for buy-3-get-1). */
+  buy_quantity?: number | null;
+  /** Free units per BOGO cycle. */
+  get_quantity?: number | null;
+  /** Optional badge/terms override. */
+  label?: string | null;
   requires_group: string | null;
   weekdays: number[] | null;
   month_days: number[] | null;
@@ -615,8 +629,10 @@ export type CurrentPrice = {
   is_stale: boolean;
 };
 
-/** Same columns as current_prices; ordering prefers user_report. */
-export type TrustedCurrentPrice = CurrentPrice;
+/** Trusted shelf price; includes regular when the observation recorded a promo. */
+export type TrustedCurrentPrice = CurrentPrice & {
+  regular_price_cents: number | null;
+};
 
 /** Completeness + trust flags per store listing (product_price_health view). */
 export type ProductPriceHealth = {
@@ -741,6 +757,8 @@ export type NearbyStore = {
   latitude: number | null;
   longitude: number | null;
   distance_km: number | null;
+  /** USDA SNAP retailer list includes this store. Absent until nearby_shops migration is applied. */
+  accepts_snap?: boolean;
 };
 
 export type PriceOption = {

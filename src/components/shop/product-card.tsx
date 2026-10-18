@@ -13,11 +13,16 @@ import Animated, {
     type SharedValue,
 } from 'react-native-reanimated';
 
-import type { Product } from '@/backend';
+import { productCardName, type Product } from '@/backend';
 import type { ProductPeekAnchor } from '@/components/shop/product-peek-layout';
 import { ProductPhoto } from '@/components/shop/product-photo';
+import { SnapBadge } from '@/components/shop/snap-badge';
 import { ThemedText } from '@/components/themed-text';
 import { ButterBlock } from '@/components/ui/butter-block';
+import {
+  parseSavingsLabelCents,
+  SavingsChip,
+} from '@/components/ui/savings-chip';
 import { Fonts, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -26,10 +31,14 @@ type Props = {
   saleBadge?: string | null;
   /** Struck-through compare-at price when a promo implies one. */
   compareAtCents?: number | null;
-  /** e.g. "Save $1" under the price. */
+  /** e.g. "Save $1" under the price — rendered as a green chip. */
   savingsLabel?: string | null;
+  /** Explicit cents saved; preferred over parsing savingsLabel. */
+  savingsCents?: number | null;
   /** Quiet note when net price includes cash back (no promo). */
   priceNote?: string | null;
+  /** Show SNAP badge when the shopper opted in and this food is eligible. */
+  showSnap?: boolean;
   quantityOnList?: number;
   /** @deprecated Prefer metaLabel — still maps to “Sponsored”. */
   sponsored?: boolean;
@@ -75,7 +84,9 @@ export function ProductCard({
   saleBadge,
   compareAtCents,
   savingsLabel,
+  savingsCents,
   priceNote,
+  showSnap,
   quantityOnList,
   sponsored,
   metaLabel,
@@ -207,8 +218,15 @@ export function ProductCard({
     butterColor ?? (onList ? theme.backgroundSelected : theme.accentSoft);
   const blockSize = compact ? 112 : 128;
   const photoSize = Math.round(blockSize * 0.7);
+  const title = productCardName(product);
   const showCompare =
     compareAtCents != null && priceCents != null && compareAtCents > priceCents;
+  const resolvedSavingsCents =
+    savingsCents ??
+    (showCompare && compareAtCents != null && priceCents != null
+      ? compareAtCents - priceCents
+      : null) ??
+    parseSavingsLabelCents(savingsLabel);
 
   const handlePress = () => {
     if (!onDoubleTap) {
@@ -252,12 +270,12 @@ export function ProductCard({
       ]}
       pointerEvents={isPeekSource ? 'none' : 'auto'}
       accessibilityRole="button"
-      accessibilityLabel={product.name}>
+      accessibilityLabel={title}>
       <View style={styles.blockStage}>
         <ButterBlock size={blockSize} color={blockColor}>
           <ProductPhoto
             imagePath={product.image_path}
-            placeholderLetter={product.name}
+            placeholderLetter={title}
             size={photoSize}
           />
         </ButterBlock>
@@ -296,7 +314,7 @@ export function ProductCard({
         </Animated.View>
         {saleBadge ? (
           <View style={[styles.saleMark, { backgroundColor: theme.primary }]}>
-            <ThemedText type="smallBold" style={{ color: theme.primaryText, fontSize: 12 }}>
+            <ThemedText type="smallBold" style={{ color: theme.primaryText, fontSize: 11 }}>
               {saleBadge}
             </ThemedText>
           </View>
@@ -304,9 +322,12 @@ export function ProductCard({
       </View>
 
       <View style={styles.body}>
-        <ThemedText type="smallBold" numberOfLines={2} style={styles.name}>
-          {product.name}
-        </ThemedText>
+        <View style={styles.nameRow}>
+          <ThemedText type="smallBold" numberOfLines={2} style={styles.name}>
+            {title}
+          </ThemedText>
+          {showSnap ? <SnapBadge size="sm" /> : null}
+        </View>
         {resolvedMeta === 'Sponsored' ? (
           <View style={[styles.sponsoredPill, { borderColor: theme.text }]}>
             <ThemedText type="smallBold" style={styles.sponsoredText}>
@@ -365,11 +386,10 @@ export function ProductCard({
                 </Pressable>
               </View>
             </View>
-            {savingsLabel ? (
-              <ThemedText type="smallBold" style={[styles.savings, { color: theme.primaryDark }]}>
-                {savingsLabel}
-              </ThemedText>
-            ) : priceNote ? (
+            {resolvedSavingsCents != null ? (
+              <SavingsChip cents={resolvedSavingsCents} />
+            ) : null}
+            {priceNote ? (
               <ThemedText type="small" themeColor="textSecondary" style={styles.priceNote}>
                 {priceNote}
               </ThemedText>
@@ -406,11 +426,10 @@ export function ProductCard({
                 </ThemedText>
               </Pressable>
             </View>
-            {savingsLabel ? (
-              <ThemedText type="smallBold" style={[styles.savings, { color: theme.primaryDark }]}>
-                {savingsLabel}
-              </ThemedText>
-            ) : priceNote ? (
+            {resolvedSavingsCents != null ? (
+              <SavingsChip cents={resolvedSavingsCents} />
+            ) : null}
+            {priceNote ? (
               <ThemedText type="small" themeColor="textSecondary" style={styles.priceNote}>
                 {priceNote}
               </ThemedText>
@@ -474,9 +493,10 @@ const styles = StyleSheet.create({
   saleMark: {
     position: 'absolute',
     top: Spacing.one,
-    left: Spacing.two,
+    right: Spacing.two,
     zIndex: 2,
-    paddingHorizontal: Spacing.two + 2,
+    maxWidth: '88%',
+    paddingHorizontal: Spacing.two,
     paddingVertical: Spacing.one,
     borderRadius: Spacing.one,
   },
@@ -486,7 +506,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.one,
     justifyContent: 'space-between',
   },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.one,
+  },
   name: {
+    flex: 1,
     lineHeight: 18,
   },
   meta: {
@@ -522,9 +548,6 @@ const styles = StyleSheet.create({
   compareAt: {
     fontSize: 12,
     textDecorationLine: 'line-through',
-  },
-  savings: {
-    fontSize: 12,
   },
   priceNote: {
     fontSize: 11,

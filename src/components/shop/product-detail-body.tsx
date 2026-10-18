@@ -31,6 +31,7 @@ import {
 } from '@/backend';
 import type { FoodTrait, Promotion } from '@/backend/types';
 import { ThemedText } from '@/components/themed-text';
+import { SavingsChip } from '@/components/ui/savings-chip';
 import { Fonts, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -604,21 +605,27 @@ export function ProductDetailBody({ product, saleBadge, promotion, preferenceRul
     <View style={styles.root}>
       {best ? (
         <View style={styles.heroPrice}>
-          <ThemedText style={[styles.heroPriceValue, { color: theme.text }]}>
-            {formatCents(
-              best.net.netCents < best.net.shelfCents ? best.net.netCents : best.net.shelfCents,
-            )}
-          </ThemedText>
+          <View style={styles.heroPriceRow}>
+            <ThemedText style={[styles.heroPriceValue, { color: theme.text }]}>
+              {formatCents(
+                best.net.netCents < best.net.shelfCents ? best.net.netCents : best.net.shelfCents,
+              )}
+            </ThemedText>
+            {savingsVsNext > 0 ? (
+              <SavingsChip
+                cents={savingsVsNext}
+                label={`Save ${formatCents(savingsVsNext)} vs next`}
+                compact={false}
+              />
+            ) : null}
+          </View>
           <ThemedText type="smallBold">
             at {best.offer.chainName ?? best.offer.storeName}
             {best.net.netCents < best.net.shelfCents ? ' · best after rewards' : ''}
           </ThemedText>
-          {(savingsVsNext > 0 || best.net.cashbackCents > 0 || best.net.visaOfferCents > 0) && (
+          {(best.net.cashbackCents > 0 || best.net.visaOfferCents > 0) && (
             <ThemedText type="small" themeColor="textSecondary">
               {[
-                savingsVsNext > 0
-                  ? `Save ${formatCents(savingsVsNext)} vs ${runnerUp?.offer.chainName ?? runnerUp?.offer.storeName ?? 'next'}`
-                  : null,
                 best.net.cashbackCents > 0
                   ? `−${formatCents(best.net.cashbackCents)} cash back`
                   : null,
@@ -696,6 +703,12 @@ const styles = StyleSheet.create({
   },
   heroPrice: {
     gap: Spacing.one,
+  },
+  heroPriceRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: Spacing.two,
   },
   heroPriceValue: {
     fontFamily: Fonts.sansBold,

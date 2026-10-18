@@ -8,6 +8,7 @@ import Animated, { LinearTransition } from 'react-native-reanimated';
 
 import { ProductPhoto } from '@/components/shop/product-photo';
 import { ThemedText } from '@/components/themed-text';
+import { SavingsChip } from '@/components/ui/savings-chip';
 import { Fonts, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -26,6 +27,8 @@ type Props = {
   title: string;
   quantity?: number;
   priceCents?: number | null;
+  /** Cents saved vs regular / baseline for this line. */
+  savingsCents?: number | null;
   imagePath?: string | null;
   cadenceTag?: string | null;
   recipeTag?: boolean;
@@ -44,6 +47,7 @@ export function ListItemRow({
   title,
   quantity,
   priceCents,
+  savingsCents,
   imagePath,
   cadenceTag,
   recipeTag,
@@ -155,6 +159,12 @@ export function ListItemRow({
               <ThemedText type="small" themeColor="textSecondary">
                 {formatMoney(priceCents)}
               </ThemedText>
+            ) : null}
+            {savingsCents != null && savingsCents > 0 ? (
+              <SavingsChip
+                cents={savingsCents}
+                label={`−${formatMoney(savingsCents)}`}
+              />
             ) : null}
             {dueLabel ? (
               <ThemedText type="small" themeColor="textSecondary">

@@ -21,8 +21,15 @@ export {
   findOrIngestProductByUpc,
   findProductByUpc,
   formatPromotionBadge,
+  formatPromotionTerms,
   promotionSavingsHint,
+  shelfSaleHint,
+  productCardName,
+  dedupeProductsByGroup,
+  resolveProductGroupIds,
   getCheapestPriceCentsByProductIds,
+  getCheapestShelfByProductIds,
+  getCheapestShelfSaleByProductIds,
   getStorePriceCentsByProductIds,
   getCurrentPrice,
   getProductPromotionMap, getProductsByIds, getProductTraitsForIds, getStore,
@@ -40,7 +47,7 @@ export {
   searchProducts,
   uploadPriceEvidence,
 } from './catalog';
-export type { CategoryProductSection, ProductStoreOffer } from './catalog';
+export type { CategoryProductSection, CheapestShelf, ProductStoreOffer } from './catalog';
 export {
   contributeReportedPriceToOpenPrices,
   fetchOpenPricesByUpc,

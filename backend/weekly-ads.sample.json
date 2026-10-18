@@ -1,0 +1,26 @@
+{
+  "chainName": "Safeway",
+  "startsAt": "2026-10-15T07:00:00.000Z",
+  "endsAt": "2026-10-22T06:59:59.000Z",
+  "deals": [
+    {
+      "productUpc": "0041113001015",
+      "productName": "Lucerne Whole Milk 1 Gallon",
+      "productBrand": "Lucerne",
+      "discountType": "amount_off",
+      "discountValue": 100,
+      "label": "$1 off",
+      "externalRef": "weekly-ad:safeway:2026-10-15:0041113001015"
+    },
+    {
+      "productUpc": "0021111000000",
+      "productName": "Store Brand Yogurt 6oz",
+      "discountType": "bogo",
+      "discountValue": 0,
+      "buyQuantity": 3,
+      "getQuantity": 1,
+      "label": "Buy 3 get 1 free",
+      "externalRef": "weekly-ad:safeway:2026-10-15:yogurt-bogo"
+    }
+  ]
+}

@@ -33,13 +33,18 @@ import { useGuestCart } from '@/auth/guest-cart-context';
 import { useSession } from '@/auth/session';
 import {
   addListItem,
-  applyCashbackToPriceMap,
   applyFoodFilters,
   ensureCatalogForTerm,
-  fetchNearbyShops,
   formatPromotionBadge,
+  shelfSaleHint,
   getActiveListProductQtyMap,
-  getCheapestPriceCentsByProductIds,
+  fetchNearbyShops,
+  computeNetPrice,
+  fetchVisaMerchantOffers,
+  getCheapestShelfByProductIds,
+  getCheapestShelfSaleByProductIds,
+  type CheapestShelf,
+  type VisaMerchantOffer,
   getEffectiveGroceryCashbackBps,
   getGuestFavoriteIds,
   getGuestFoodRules,
@@ -90,13 +95,21 @@ import { ProductCard } from '@/components/shop/product-card';
 import { ProductPeek } from '@/components/shop/product-peek';
 import type { ProductPeekAnchor } from '@/components/shop/product-peek-layout';
 import { ShopFiltersDrawer } from '@/components/shop/shop-filters-drawer';
+import { SnapBadge } from '@/components/shop/snap-badge';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { ButterChip } from '@/components/ui/butter-chip';
 import { ButterSearchField } from '@/components/ui/butter-search-field';
 import { NativeIconButton } from '@/components/ui/native-icon-button';
 import { BottomTabInset, Radius, SheetChrome, Spacing, Type } from '@/constants/theme';
+import { useSnapOptedIn } from '@/hooks/use-snap-opted-in';
 import { useTheme } from '@/hooks/use-theme';
+
+function categoryIsSnapEligible(category: ProductCategory | undefined): boolean {
+  if (!category) return false;
+  if (typeof category.snap_eligible === 'boolean') return category.snap_eligible;
+  return category.name.toLowerCase() !== 'other';
+}
 
 const VISIBLE_CATEGORIES = 8;
 
@@ -135,10 +148,39 @@ function searchResultToast(count: number, term: string): void {
   showSuccessToast(`Found ${count} products`, `for “${term}”`);
 }
 
+function stickerCents(shelves: Map<string, CheapestShelf>): Map<string, number> {
+  return new Map([...shelves].map(([id, row]) => [id, row.priceCents]));
+}
+
+function chainNames(shelves: Map<string, CheapestShelf>): Map<string, string | null> {
+  return new Map([...shelves].map(([id, row]) => [id, row.chainName]));
+}
+
+function mergeShelves(maps: Map<string, CheapestShelf>[]): Map<string, CheapestShelf> {
+  const next = new Map<string, CheapestShelf>();
+  for (const map of maps) {
+    for (const [id, row] of map) next.set(id, row);
+  }
+  return next;
+}
+
+function netCentsByProduct(
+  shelves: Map<string, CheapestShelf>,
+  groceryRateBps: number | null,
+  offers: VisaMerchantOffer[],
+): Map<string, number> {
+  const next = new Map<string, number>();
+  for (const [id, row] of shelves) {
+    next.set(id, computeNetPrice(row.priceCents, groceryRateBps, row.chainName, offers).netCents);
+  }
+  return next;
+}
+
 export default function ShopScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { isGuest, requestSignIn } = useSession();
+  const snapOptedIn = useSnapOptedIn();
   const { headerName, avatarPath, avatarVersion, openProfile, closeProfile, refreshProfile } =
     useAppProfile();
   const avatarBaseUrl = publicImageUrl('avatars', avatarPath);
@@ -176,11 +218,37 @@ export default function ShopScreen() {
   const [products, setProducts] = useState<Product[]>([]);
   const [categorySections, setCategorySections] = useState<CategoryProductSection[]>([]);
   const [promotions, setPromotions] = useState<Map<string, Promotion>>(new Map());
+  const [shelfSales, setShelfSales] = useState<
+    Map<string, NonNullable<ReturnType<typeof shelfSaleHint>>>
+  >(() => new Map());
   const [checkingStores, setCheckingStores] = useState(false);
   const [nearbyStores, setNearbyStores] = useState<NearbyStore[]>([]);
   const [selectedStore, setSelectedStore] = useState<NearbyStore | null>(null);
   const [shelfPrices, setShelfPrices] = useState<Map<string, number>>(() => new Map());
+  const [shelfChains, setShelfChains] = useState<Map<string, string | null>>(() => new Map());
+  const [visaOffers, setVisaOffers] = useState<VisaMerchantOffer[]>([]);
   const [cashbackBps, setCashbackBps] = useState<number | null>(null);
+
+  const refreshShelfSales = useCallback(async (ids: string[]) => {
+    const unique = [...new Set(ids.filter(Boolean))];
+    if (unique.length === 0) {
+      setShelfSales(new Map());
+      return new Set<string>();
+    }
+    try {
+      const rows = await getCheapestShelfSaleByProductIds(unique);
+      const next = new Map<string, NonNullable<ReturnType<typeof shelfSaleHint>>>();
+      for (const [id, row] of rows) {
+        const hint = shelfSaleHint(row.priceCents, row.regularPriceCents);
+        if (hint) next.set(id, hint);
+      }
+      setShelfSales(next);
+      return new Set(next.keys());
+    } catch {
+      setShelfSales(new Map());
+      return new Set<string>();
+    }
+  }, []);
 
   const [traits, setTraits] = useState<FoodTrait[]>([]);
   const [preferenceRules, setPreferenceRules] = useState<SessionFoodRule[]>([]);
@@ -203,6 +271,15 @@ export default function ShopScreen() {
   const isSearching = searchQuery.length > 0;
 
   const traitsById = useMemo(() => new Map(traits.map((trait) => [trait.id, trait])), [traits]);
+  const categoryById = useMemo(
+    () => new Map(categories.map((category) => [category.id, category])),
+    [categories],
+  );
+  const productShowsSnap = useCallback(
+    (product: Product) =>
+      snapOptedIn && categoryIsSnapEligible(categoryById.get(product.category_id ?? '')),
+    [snapOptedIn, categoryById],
+  );
 
   const activeFilterChips = useMemo(() => {
     const chips: { key: string; label: string; onRemove: () => void }[] = [];
@@ -410,19 +487,31 @@ export default function ShopScreen() {
         }
         setTrending(mergedTrending);
         // Carousel prices (staples + trending) merge into every grid price map below.
-        const stripPriceMap = await getCheapestPriceCentsByProductIds(
+        const stripShelves = await getCheapestShelfByProductIds(
           [...stapleProductIds, ...mergedTrending.map((row) => row.product.id)],
           openPricesGeo,
         );
         if (cancelled) return;
-        setTrendingPrices(stripPriceMap);
+        const visa = await fetchVisaMerchantOffers();
+        if (cancelled) return;
+        setVisaOffers(visa.offers);
+        setTrendingPrices(stickerCents(stripShelves));
         setShelfPrices((prev) => {
           const next = new Map(prev);
-          for (const [id, cents] of stripPriceMap) next.set(id, cents);
+          for (const [id, cents] of stickerCents(stripShelves)) next.set(id, cents);
           return next;
         });
-        const withStripPrices = (gridPrices: Map<string, number>, bps: number | null) =>
-          applyCashbackToPriceMap(new Map([...stripPriceMap, ...gridPrices]), bps);
+        setShelfChains((prev) => {
+          const next = new Map(prev);
+          for (const [id, name] of chainNames(stripShelves)) next.set(id, name);
+          return next;
+        });
+        const publishShelves = (grid: Map<string, CheapestShelf>, bps: number | null) => {
+          const merged = mergeShelves([stripShelves, grid]);
+          setShelfPrices(stickerCents(merged));
+          setShelfChains(chainNames(merged));
+          return netCentsByProduct(merged, bps, visa.offers);
+        };
 
         const browseHome = !favoritesOnly && selectedCategoryId == null && selectedStore == null;
         const stapleIds = new Set(stapleProductIds);
@@ -457,15 +546,22 @@ export default function ShopScreen() {
             getEffectiveGroceryCashbackBps(isGuest),
           ]);
           if (cancelled) return;
-          const netPriceMap = applyCashbackToPriceMap(priceMap, nextCashbackBps);
+          const storeShelves = new Map(
+            [...priceMap].map(
+              ([id, cents]) =>
+                [id, { priceCents: cents, chainName: selectedStore.name }] as const,
+            ),
+          );
+          const netPriceMap = publishShelves(storeShelves, nextCashbackBps);
           setCashbackBps(nextCashbackBps);
-          setShelfPrices(withStripPrices(priceMap, nextCashbackBps));
+          const shelfSaleIds = await refreshShelfSales(rawProducts.map((row) => row.id));
+          const saleIds = new Set([...promotionProductIds, ...shelfSaleIds]);
           setProducts(
             applyFoodFilters(rawProducts, sessionRules, indexTraitsByProduct(traitsForProducts), {
               sort,
               stapleIds,
               onSaleOnly,
-              promotionProductIds,
+              promotionProductIds: saleIds,
               priceCentsByProduct: netPriceMap,
             }),
           );
@@ -480,22 +576,27 @@ export default function ShopScreen() {
           const sectionIds = grouped.flatMap((section) => section.products.map((row) => row.id));
           const catalogIds = catalogProducts.map((row) => row.id);
           const allIds = [...new Set([...sectionIds, ...catalogIds])];
-          const [traitsForProducts, priceMap, nextCashbackBps] = await Promise.all([
+          const [traitsForProducts, priceShelves, nextCashbackBps] = await Promise.all([
             getProductTraitsForIds(allIds),
-            getCheapestPriceCentsByProductIds(allIds, openPricesGeo),
+            getCheapestShelfByProductIds(allIds, openPricesGeo),
             getEffectiveGroceryCashbackBps(isGuest),
           ]);
           if (cancelled) return;
-          const netPriceMap = applyCashbackToPriceMap(priceMap, nextCashbackBps);
+          const netPriceMap = publishShelves(priceShelves, nextCashbackBps);
           setCashbackBps(nextCashbackBps);
-          setShelfPrices(withStripPrices(priceMap, nextCashbackBps));
+          const [shelfSaleIds, enrichedPromo] = await Promise.all([
+            refreshShelfSales(allIds),
+            getProductPromotionMap(allIds),
+          ]);
+          if (!cancelled) setPromotions(enrichedPromo);
+          const saleIds = new Set([...enrichedPromo.keys(), ...shelfSaleIds]);
 
           const traitsByProduct = indexTraitsByProduct(traitsForProducts);
           const filterOpts = {
             sort,
             stapleIds,
             onSaleOnly,
-            promotionProductIds,
+            promotionProductIds: saleIds,
             priceCentsByProduct: netPriceMap,
           };
           setCategorySections(
@@ -533,22 +634,27 @@ export default function ShopScreen() {
           }
           if (cancelled) return;
 
-          const [traitsForProducts, priceMap, nextCashbackBps] = await Promise.all([
+          const [traitsForProducts, priceShelves, nextCashbackBps] = await Promise.all([
             getProductTraitsForIds(rawProducts.map((row) => row.id)),
-            getCheapestPriceCentsByProductIds(rawProducts.map((row) => row.id), openPricesGeo),
+            getCheapestShelfByProductIds(rawProducts.map((row) => row.id), openPricesGeo),
             getEffectiveGroceryCashbackBps(isGuest),
           ]);
           if (cancelled) return;
-          const netPriceMap = applyCashbackToPriceMap(priceMap, nextCashbackBps);
+          const netPriceMap = publishShelves(priceShelves, nextCashbackBps);
           setCashbackBps(nextCashbackBps);
-          setShelfPrices(withStripPrices(priceMap, nextCashbackBps));
+          const productIds = rawProducts.map((row) => row.id);
+          const [shelfSaleIds, enrichedPromo] = await Promise.all([
+            refreshShelfSales(productIds),
+            getProductPromotionMap(productIds),
+          ]);
+          if (!cancelled) setPromotions(enrichedPromo);
 
           setProducts(
             applyFoodFilters(rawProducts, sessionRules, indexTraitsByProduct(traitsForProducts), {
               sort,
               stapleIds,
               onSaleOnly,
-              promotionProductIds,
+              promotionProductIds: new Set([...enrichedPromo.keys(), ...shelfSaleIds]),
               priceCentsByProduct: netPriceMap,
             }),
           );
@@ -576,6 +682,7 @@ export default function ShopScreen() {
     isGuest,
     onSaleOnly,
     refreshQtyMap,
+    refreshShelfSales,
     selectedCategoryId,
     selectedStore,
     sessionRules,
@@ -614,24 +721,37 @@ export default function ShopScreen() {
       if (selectedCategoryId) {
         rawProducts = rawProducts.filter((row) => row.category_id === selectedCategoryId);
       }
-      let priceMap = await (selectedStore
-        ? getStorePriceCentsByProductIds(
-            selectedStore.id,
-            rawProducts.map((row) => row.id),
+      const searchShelves = selectedStore
+        ? new Map(
+            [
+              ...(
+                await getStorePriceCentsByProductIds(
+                  selectedStore.id,
+                  rawProducts.map((row) => row.id),
+                )
+              ),
+            ].map(
+              ([id, cents]) =>
+                [id, { priceCents: cents, chainName: selectedStore.name }] as const,
+            ),
           )
-        : getCheapestPriceCentsByProductIds(
+        : await getCheapestShelfByProductIds(
             rawProducts.map((row) => row.id),
             openPricesGeoRef.current,
-          ));
+          );
       if (selectedStore) {
-        rawProducts = rawProducts.filter((row) => priceMap.has(row.id));
+        rawProducts = rawProducts.filter((row) => searchShelves.has(row.id));
       }
-      const [traitsForProducts, cashbackBps] = await Promise.all([
+      const [traitsForProducts, searchCashbackBps, visa] = await Promise.all([
         getProductTraitsForIds(rawProducts.map((row) => row.id)),
         getEffectiveGroceryCashbackBps(isGuest),
+        fetchVisaMerchantOffers(),
       ]);
-      const netPriceMap = applyCashbackToPriceMap(priceMap, cashbackBps);
-      setShelfPrices((prev) => new Map([...prev, ...netPriceMap]));
+      setVisaOffers(visa.offers);
+      setCashbackBps(searchCashbackBps);
+      const netPriceMap = netCentsByProduct(searchShelves, searchCashbackBps, visa.offers);
+      setShelfPrices((prev) => new Map([...prev, ...stickerCents(searchShelves)]));
+      setShelfChains((prev) => new Map([...prev, ...chainNames(searchShelves)]));
       const filtered = applyFoodFilters(
         rawProducts,
         sessionRules,
@@ -919,12 +1039,22 @@ export default function ShopScreen() {
     butterColor?: string,
   ) => {
     const promo = promotions.get(product.id) ?? null;
-    const priceCents = shelfPrices.get(product.id) ?? null;
-    const hint = promo ? promotionSavingsHint(promo, priceCents) : null;
-    const priceNote =
-      !promo && cashbackBps != null && cashbackBps > 0 && priceCents != null
-        ? 'after cash back'
-        : null;
+    const shelf = shelfPrices.get(product.id) ?? null;
+    const chainName = shelfChains.get(product.id) ?? null;
+    const net = shelf != null ? computeNetPrice(shelf, cashbackBps, chainName, visaOffers) : null;
+    const shown = net?.netCents ?? null;
+    const shelfHint = !promo ? (shelfSales.get(product.id) ?? null) : null;
+    const hint = promo ? promotionSavingsHint(promo, shelf) : shelfHint;
+    const promoSave =
+      hint?.compareAtCents != null && shelf != null && hint.compareAtCents > shelf
+        ? hint.compareAtCents - shelf
+        : 0;
+    const rewardSave = (net?.cashbackCents ?? 0) + (net?.visaOfferCents ?? 0);
+    const endSave = promoSave + rewardSave;
+    const saleBadge = promo
+      ? formatPromotionBadge(promo)
+      : (shelfHint?.badge ?? null);
+    const priceNote = rewardSave > 0 ? 'cash back' : null;
     return (
       <ProductCard
         key={product.id}
@@ -933,12 +1063,14 @@ export default function ShopScreen() {
         compact={compact}
         metaLabel={metaLabel}
         butterColor={butterColor}
-        saleBadge={promo ? formatPromotionBadge(promo) : null}
-        compareAtCents={hint?.compareAtCents}
-        savingsLabel={hint?.savingsLabel}
+        saleBadge={saleBadge}
+        compareAtCents={shown != null && endSave > 0 ? shown + endSave : (hint?.compareAtCents ?? null)}
+        savingsLabel={endSave > 0 ? null : (hint?.savingsLabel ?? null)}
+        savingsCents={endSave > 0 ? endSave : null}
         priceNote={priceNote}
+        showSnap={productShowsSnap(product)}
         quantityOnList={effectiveQtyMap.get(product.id)?.quantity}
-        priceCents={priceCents}
+        priceCents={shown}
         isPeekSource={peekProduct?.id === product.id}
         favorited={favoriteIds.has(product.id)}
         onDoubleTap={() => void handleToggleFavorite(product.id)}
@@ -990,7 +1122,7 @@ export default function ShopScreen() {
       parts.push(`${promotions.size} deal${promotions.size === 1 ? '' : 's'} near you`);
     }
     if (cashbackBps != null && cashbackBps > 0) {
-      parts.push(`Prices include ${cashbackBps / 100}% cash back`);
+      parts.push(`Cash back at grocery stores`);
     }
     return parts.join(' · ');
   })();
@@ -1029,7 +1161,7 @@ export default function ShopScreen() {
       <FlatList
           ref={listRef}
           data={listData}
-          extraData={`${selectedCategoryId ?? 'all'}:${favoritesOnly ? 'fav' : 'all'}:${searchQuery}:${sort}:${onSaleOnly ? 'sale' : ''}:${cashbackBps ?? ''}:${[...favoriteIds].join(',')}`}
+          extraData={`${selectedCategoryId ?? 'all'}:${favoritesOnly ? 'fav' : 'all'}:${searchQuery}:${sort}:${onSaleOnly ? 'sale' : ''}:${cashbackBps ?? ''}:${visaOffers.length}:${[...favoriteIds].join(',')}`}
           keyExtractor={(item) =>
             item.kind === 'section'
               ? item.section.category.id
@@ -1250,6 +1382,9 @@ export default function ShopScreen() {
                     label={`${selectedStore.name} ×`}
                     selected
                     onPress={() => setSelectedStore(null)}
+                    icon={
+                      snapOptedIn && selectedStore.accepts_snap ? <SnapBadge size="sm" /> : undefined
+                    }
                   />
                 ) : null}
                 {activeFilterChips.map((chip) => (
@@ -1452,6 +1587,7 @@ export default function ShopScreen() {
             draftOnSaleOnly={onSaleOnly}
             nearbyStores={nearbyStores}
             selectedStoreId={selectedStore?.id ?? null}
+            showSnapBadges={snapOptedIn}
             onSelectStore={(store) => setSelectedStore(store)}
             onClose={() => setFiltersOpen(false)}
             onResetToPreferences={() => preferenceRules}

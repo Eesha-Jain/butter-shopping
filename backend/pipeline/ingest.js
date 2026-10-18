@@ -3,6 +3,11 @@
  */
 
 import { categoryForProductName } from "../category-map.js";
+import {
+  canonicalizeUpc,
+  productIdentityFields,
+  upcLookupValues,
+} from "../lib/product-identity.js";
 import { promotionOffer, shelfOffer } from "./envelope.js";
 import { nullOnlyProductPatch, shouldAppendAutomatedPrice } from "./refreshPriority.js";
 
@@ -79,20 +84,34 @@ async function chainId(name) {
   return rows?.[0]?.id ?? null;
 }
 
-/** Digits-only UPC variants (leading-zero / UPC-A vs EAN-13) for cross-chain match. */
-function upcLookupValues(value) {
-  const digits = String(value ?? "").replace(/\D/g, "");
-  if (!digits) return [];
-  const stripped = digits.replace(/^0+/, "") || "0";
-  return [...new Set([digits, stripped, stripped.padStart(12, "0"), stripped.padStart(13, "0")])];
-}
+async function findProduct({ upc, productName, brand, sizeBaseAmount, sizeBaseUnit }) {
+  const canon = canonicalizeUpc(upc);
+  if (canon) {
+    const byCanon = await rest(
+      `products?canonical_upc=eq.${encodeURIComponent(canon)}&is_active=eq.true&select=id&limit=1`,
+    );
+    if (byCanon?.[0]?.id) return byCanon[0].id;
+  }
 
-async function findProduct({ upc, productName, brand }) {
   const upcValues = upcLookupValues(upc);
   if (upcValues.length > 0) {
     const list = upcValues.map(encodeURIComponent).join(",");
     const rows = await rest(`products?upc=in.(${list})&select=id&limit=1`);
     if (rows?.[0]?.id) return rows[0].id;
+  }
+
+  const identity = productIdentityFields({
+    upc,
+    brand,
+    name: productName,
+    sizeAmount: sizeBaseAmount,
+    sizeUnit: sizeBaseUnit,
+  });
+  if (identity.fingerprint) {
+    const byFp = await rest(
+      `products?fingerprint=eq.${encodeURIComponent(identity.fingerprint)}&is_active=eq.true&select=id&limit=1`,
+    );
+    if (byFp?.[0]?.id) return byFp[0].id;
   }
 
   if (!productName) return null;
@@ -258,8 +277,21 @@ export async function ingestShelf(raw) {
   const storeId = stores?.[0]?.id;
   if (!storeId) throw new Error("Store save did not return a row.");
 
-  let productId = await findProduct(offer);
+  let productId = await findProduct({
+    upc: offer.upc,
+    productName: offer.productName,
+    brand: offer.brand,
+    sizeBaseAmount: offer.sizeBaseAmount,
+    sizeBaseUnit: offer.sizeBaseUnit,
+  });
   let createdFresh = false;
+  const identity = productIdentityFields({
+    upc: offer.upc,
+    brand: offer.brand,
+    name: offer.productName,
+    sizeAmount: offer.sizeBaseAmount,
+    sizeUnit: offer.sizeBaseUnit,
+  });
   if (!productId) {
     const categoryId = await categoryIdForProductName(offer.productName);
     const imagePath = absoluteImageUrl(offer.imageUrl);
@@ -270,9 +302,18 @@ export async function ingestShelf(raw) {
         name: offer.productName,
         brand: offer.brand,
         upc: offer.upc,
+        canonical_upc: identity.canonical_upc,
+        fingerprint: identity.fingerprint,
+        display_name: identity.display_name,
         ...(imagePath ? { image_path: imagePath } : {}),
         ...(categoryId
           ? { category_id: categoryId, category_source: "keyword" }
+          : {}),
+        ...(offer.sizeBaseAmount != null && offer.sizeBaseUnit
+          ? {
+              size_base_amount: offer.sizeBaseAmount,
+              size_base_unit: offer.sizeBaseUnit,
+            }
           : {}),
       }),
     });
@@ -282,7 +323,7 @@ export async function ingestShelf(raw) {
   if (!productId) throw new Error("Product save did not return a row.");
 
   const existingProducts = await rest(
-    `products?id=eq.${productId}&select=id,upc,brand,size_base_amount,size_base_unit,image_path,category_id,category_source&limit=1`,
+    `products?id=eq.${productId}&select=id,upc,brand,size_base_amount,size_base_unit,image_path,category_id,category_source,canonical_upc,fingerprint,display_name&limit=1`,
   );
   const existing = existingProducts?.[0];
   if (existing) {
@@ -292,6 +333,9 @@ export async function ingestShelf(raw) {
       sizeBaseAmount: offer.sizeBaseAmount ?? null,
       sizeBaseUnit: offer.sizeBaseUnit ?? null,
       imageUrl: offer.imageUrl ?? null,
+      canonicalUpc: identity.canonical_upc,
+      fingerprint: identity.fingerprint,
+      displayName: identity.display_name,
     });
     if (!existing.category_id) {
       const categoryId = await categoryIdForProductName(offer.productName);
@@ -383,7 +427,9 @@ export async function ingestPromotion(raw) {
     productId = await findProduct({
       upc: offer.productUpc,
       productName: offer.productName,
-      brand: null,
+      brand: offer.productBrand ?? null,
+      sizeBaseAmount: offer.sizeBaseAmount ?? null,
+      sizeBaseUnit: offer.sizeBaseUnit ?? null,
     });
   }
 
@@ -391,11 +437,17 @@ export async function ingestPromotion(raw) {
     offer.externalRef ??
     `chain:${offer.chainName}|group:${offer.requiresGroup ?? "any"}|${offer.startsAt}|${offer.endsAt}`;
 
+  const buyQty = offer.buyQuantity ?? (offer.discountType === "bogo" ? 1 : null);
+  const getQty = offer.getQuantity ?? (offer.discountType === "bogo" ? 1 : null);
+
   const row = {
     chain_id: chain,
     product_id: productId,
     discount_type: offer.discountType,
     discount_value: offer.discountValue,
+    buy_quantity: buyQty,
+    get_quantity: getQty,
+    label: offer.label ?? null,
     requires_group: offer.requiresGroup,
     weekdays: offer.weekdays,
     month_days: offer.monthDays,

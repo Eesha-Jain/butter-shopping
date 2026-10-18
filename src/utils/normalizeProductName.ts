@@ -1,7 +1,8 @@
-export function normalizeProductName(name: string): string {
-  return name
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\s]/g, "")
-    .replace(/\s+/g, " ");
-}
+export {
+  normalizeProductName,
+  simplifyDisplayName,
+  buildProductFingerprint,
+  canonicalizeUpc,
+  upcLookupValues,
+  productIdentityFields,
+} from '@/utils/product-identity';
