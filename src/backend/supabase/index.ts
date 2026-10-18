@@ -65,8 +65,12 @@ export {
   listActiveProducts,
   listCategories,
   listCurrentPromotions,
+  listReportedOffers,
+  listReportableStores,
   nearbyShops,
   productWarnings,
+  registerReportableStore,
+  reportManualPrice,
   reportPrice,
   searchCategories,
   searchProducts,
@@ -81,8 +85,10 @@ export type { SessionFoodRule, ShopSort } from './foodFilters';
 export { fetchNearbyShops, getUserCoords } from './locationService';
 export {
   getWeeklyBudgetCents,
+  planLowestTrip,
   priceOptions,
   recommendShoppingPlan,
+  suggestDiscountDate,
   suggestGroceryDate,
 } from './planning';
 export {

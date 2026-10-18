@@ -112,6 +112,9 @@ images live in `public-assets`. The database stores the file path only.
 | Place the confirmed order | `finalizeOrder` | Nothing. Purchases and shares are written. |
 | Open Instacart | `requestCheckoutLink` | A URL saved on the order. |
 | Record a store receipt | `recordPurchase` | The purchase id. Pass `expiresOn` if known; otherwise shelf life fills it. |
+| Add a Trader Joe's or campus store | `registerReportableStore` | The store id. Campus stores need `collegeName`. |
+| Report a shelf price there | `reportManualPrice` | The price id. Pass cents. QFC and Safeway prices are not reported this way. |
+| List stores that accept reports | `listReportableStores` | Trader Joe's and campus stores. |
 | Remember that eggs last two weeks | `saveHabit` | The group habit. |
 | Add due foods to the list | `addDueHabitItems` | How many new list rows were created. |
 | Show the trending tab | `listTrending` | Organic and sponsored rows. Label the sponsored ones. |
