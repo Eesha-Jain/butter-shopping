@@ -38,7 +38,12 @@ export function weeklyAdPromotionOffers(input) {
   const endsAt = input.endsAt;
   const weekKey = String(startsAt ?? "").slice(0, 10);
   return (input.deals ?? [])
-    .filter((deal) => deal.productUpc || deal.productName)
+    // Prefer UPC-linked deals for reliable product_id matching; name+brand is a fallback.
+    .filter(
+      (deal) =>
+        Boolean(deal.productUpc) ||
+        (Boolean(deal.productName) && Boolean(deal.productBrand)),
+    )
     .map((deal, index) =>
       promotionOffer({
         chainName,

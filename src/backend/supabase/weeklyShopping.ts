@@ -24,12 +24,16 @@ export type WeeklyBoardChip = {
   name: string;
   brand: string | null;
   imagePath: string | null;
+  /** True when chip came from a product-linked promotion (weekly ad / coupon). */
+  fromPromo?: boolean;
 };
 
 export type WeeklyBoardColumn = {
   id: 'today' | 'recommended' | 'bestDeal';
   title: string;
   dateLabel: string;
+  /** Local YMD for navigation (Plan calendar / deal day). */
+  ymd: string;
   headline: string;
   detail: string;
   timeWindowLabel: string | null;
@@ -42,6 +46,8 @@ export type WeeklyShoppingBoard = {
   foodPrefNote: string | null;
   columns: WeeklyBoardColumn[];
   recommended: BestShopDay | null;
+  /** False when promo coverage is too thin — Shop should hide the board. */
+  showBoard: boolean;
 };
 
 function parseYmd(ymd: string): Date {
@@ -152,13 +158,60 @@ function eligiblePromos(
   });
 }
 
-function toChips(products: Product[]): WeeklyBoardChip[] {
+function toChips(products: Product[], fromPromo = false): WeeklyBoardChip[] {
   return products.slice(0, 4).map((product) => ({
     productId: product.id,
     name: product.name,
     brand: product.brand,
     imagePath: product.image_path,
+    fromPromo,
   }));
+}
+
+/** Product-linked promos only — skip orphan basket-wide rows for thumbs. */
+function productLinkedPromos(promos: Promotion[]): Promotion[] {
+  return promos.filter((p) => Boolean(p.product_id));
+}
+
+async function chipsFromPromoProducts(
+  promos: Promotion[],
+  rules: ReturnType<typeof rulesFromUserFoodRules>,
+): Promise<WeeklyBoardChip[]> {
+  const ids = [
+    ...new Set(productLinkedPromos(promos).map((p) => p.product_id!).filter(Boolean)),
+  ].slice(0, 12);
+  if (ids.length === 0) return [];
+  const products = await getProductsByIds(ids).catch(() => [] as Product[]);
+  const filtered = await filterProducts(products, rules);
+  // Prefer items with images so the board does not look broken.
+  const ordered = [
+    ...filtered.filter((p) => p.image_path),
+    ...filtered.filter((p) => !p.image_path),
+  ];
+  return toChips(ordered, true);
+}
+
+/**
+ * Show the board only when deal data is trustworthy enough:
+ * - Today or Best deal has ≥2 promo-backed chips with images, or
+ * - Recommended day exists and ≥1 product-linked promo applies that day.
+ */
+export function weeklyBoardPassesQualityGate(board: WeeklyShoppingBoard): boolean {
+  if (!board.showBoard || board.columns.length === 0) return false;
+  const today = board.columns.find((c) => c.id === 'today');
+  const bestDeal = board.columns.find((c) => c.id === 'bestDeal');
+  const recommended = board.columns.find((c) => c.id === 'recommended');
+
+  const promoChipsWithImage = (col: WeeklyBoardColumn | undefined) =>
+    (col?.chips ?? []).filter((c) => c.fromPromo && c.imagePath).length;
+
+  if (promoChipsWithImage(today) >= 2 || promoChipsWithImage(bestDeal) >= 2) return true;
+
+  if (recommended && board.recommended?.shopOn) {
+    const promoOnRec = (recommended.chips ?? []).filter((c) => c.fromPromo).length;
+    if (promoOnRec >= 1) return true;
+  }
+  return false;
 }
 
 async function filterProducts(
@@ -243,30 +296,59 @@ export async function getWeeklyShoppingBoard(input?: {
     stapleProducts = [...stapleProducts, ...filtered].slice(0, 8);
   }
 
-  const todayPromos = eligiblePromos(allPromos, today, groupCodes).filter(
-    (p) => p.product_id == null || p.discount_type === 'percent_off',
+  const todayEligible = eligiblePromos(allPromos, today, groupCodes);
+  const todayLinked = productLinkedPromos(todayEligible);
+  const todayBasket = todayEligible.filter(
+    (p) => p.product_id == null && p.discount_type === 'percent_off',
   );
-  const todayBasket = todayPromos.filter((p) => p.product_id == null);
+  const todayPromoChips = await chipsFromPromoProducts(todayLinked, rules);
+  const todayFallbackChips = toChips(dueProducts.length > 0 ? dueProducts : stapleProducts);
+  const todayChips =
+    todayPromoChips.length > 0
+      ? todayPromoChips
+      : // Never show non-promo thumbs as "deals" — empty chips if no linked promos.
+        todayBasket.length > 0
+        ? []
+        : todayFallbackChips;
+
   const todayHeadline =
-    todayBasket.length > 0
-      ? todayBasket
-          .slice(0, 2)
-          .map((p) => formatPromotionBadge(p))
-          .join(' · ')
-      : dueProducts.length > 0
-        ? `${dueProducts.length} staple${dueProducts.length === 1 ? '' : 's'} due`
-        : 'Stock up on frequent items';
+    todayLinked.length > 0
+      ? `${todayLinked.length} weekly ad deal${todayLinked.length === 1 ? '' : 's'}`
+      : todayBasket.length > 0
+        ? todayBasket
+            .slice(0, 2)
+            .map((p) => formatPromotionBadge(p))
+            .join(' · ')
+        : dueProducts.length > 0
+          ? `${dueProducts.length} staple${dueProducts.length === 1 ? '' : 's'} due`
+          : 'Stock up on frequent items';
   const todayDetail =
-    todayBasket.length > 0
-      ? 'Discounts you qualify for are active today.'
-      : dueProducts.length > 0
-        ? 'Based on how often you buy these staples.'
-        : 'No staples due — shop your usuals when ready.';
+    todayLinked.length > 0
+      ? 'Product deals from this week’s circular.'
+      : todayBasket.length > 0
+        ? 'Discounts you qualify for are active today.'
+        : dueProducts.length > 0
+          ? 'Based on how often you buy these staples.'
+          : 'No staples due — shop your usuals when ready.';
   const todayWindow =
-    todayBasket.map((p) => promoTimeWindowLabel(p, today)).find(Boolean) ?? null;
+    todayEligible.map((p) => promoTimeWindowLabel(p, today)).find(Boolean) ?? null;
 
   const recDate = recommended?.shopOn ?? today;
-  const recChips = await filterProducts(stapleProducts, rules);
+  const recEligible = eligiblePromos(allPromos, recDate, groupCodes);
+  const recPromoChips = await chipsFromPromoProducts(productLinkedPromos(recEligible), rules);
+  const recStapleChips = toChips(await filterProducts(stapleProducts, rules));
+  const recChips = recPromoChips.length > 0 ? recPromoChips : recStapleChips;
+
+  const dealYmd = isGuest ? today : (discountDate ?? recDate);
+  const dealEligible = eligiblePromos(allPromos, dealYmd, groupCodes);
+  const dealLinked = productLinkedPromos(dealEligible);
+  const dealPromoChips = await chipsFromPromoProducts(dealLinked, rules);
+  const dealBasket = dealEligible.filter(
+    (p) => p.product_id == null && p.discount_type === 'percent_off',
+  );
+  const topBasket = dealBasket[0];
+  const dealWindow =
+    dealEligible.map((p) => promoTimeWindowLabel(p, dealYmd)).find(Boolean) ?? null;
 
   let bestDealColumn: WeeklyBoardColumn;
   if (isGuest) {
@@ -274,36 +356,37 @@ export async function getWeeklyShoppingBoard(input?: {
       id: 'bestDeal',
       title: 'Best Deal Day',
       dateLabel: '—',
+      ymd: today,
       headline: 'Sign in for deals',
       detail: 'See senior, student, and other discounts you qualify for.',
       timeWindowLabel: null,
-      chips: toChips(recChips),
+      chips: dealPromoChips,
       needsSignIn: true,
     };
   } else {
-    const dealYmd = discountDate ?? recDate;
-    const dealPromos = eligiblePromos(allPromos, dealYmd, groupCodes).filter(
-      (p) => p.product_id == null && p.discount_type === 'percent_off',
-    );
-    const top = dealPromos[0];
-    const window =
-      dealPromos.map((p) => promoTimeWindowLabel(p, dealYmd)).find(Boolean) ?? null;
     bestDealColumn = {
       id: 'bestDeal',
       title: 'Best Deal Day',
       dateLabel: formatShortDate(dealYmd),
-      headline: top
-        ? `${formatPromotionBadge(top)}${top.requires_group ? ` · ${top.requires_group}` : ''}`
-        : groupCodes.size === 0
-          ? 'Add discount eligibilities'
-          : 'No qualifying deal soon',
-      detail: top
-        ? 'Largest basket discount in the next two months for groups you opted into.'
-        : groupCodes.size === 0
-          ? 'Turn on student, senior, or veteran discounts in your profile.'
-          : 'No matching promotions near you right now.',
-      timeWindowLabel: window,
-      chips: toChips(recChips.slice().reverse()),
+      ymd: dealYmd,
+      headline:
+        dealLinked.length > 0
+          ? `${dealLinked.length} weekly ad deal${dealLinked.length === 1 ? '' : 's'}`
+          : topBasket
+            ? `${formatPromotionBadge(topBasket)}${topBasket.requires_group ? ` · ${topBasket.requires_group}` : ''}`
+            : groupCodes.size === 0
+              ? 'Add discount eligibilities'
+              : 'No qualifying deal soon',
+      detail:
+        dealLinked.length > 0
+          ? 'Product deals from this week’s circular.'
+          : topBasket
+            ? 'Largest basket discount in the next two months for groups you opted into.'
+            : groupCodes.size === 0
+              ? 'Turn on student, senior, or veteran discounts in your profile.'
+              : 'No matching promotions near you right now.',
+      timeWindowLabel: dealWindow,
+      chips: dealPromoChips,
       needsSignIn: false,
     };
   }
@@ -313,26 +396,37 @@ export async function getWeeklyShoppingBoard(input?: {
       id: 'today',
       title: 'Shop Today',
       dateLabel: formatShortDate(today),
+      ymd: today,
       headline: todayHeadline,
       detail: todayDetail,
       timeWindowLabel: todayWindow,
-      chips: toChips(dueProducts.length > 0 ? dueProducts : stapleProducts),
+      chips: todayChips,
     },
     {
       id: 'recommended',
       title: 'Recommended Shop Date',
       dateLabel: formatShortDate(recDate),
+      ymd: recDate,
       headline: recommended?.reason === 'shelf_pattern' ? 'Lower shelf prices' : 'Best day to shop',
       detail: recommended?.reasonLabel ?? 'Based on nearby price history.',
       timeWindowLabel: null,
-      chips: toChips(recChips),
+      chips: recChips,
     },
     bestDealColumn,
   ];
 
-  return {
+  const draft: WeeklyShoppingBoard = {
     foodPrefNote,
     columns,
     recommended,
+    showBoard: true,
+  };
+  const showBoard = weeklyBoardPassesQualityGate(draft);
+
+  return {
+    foodPrefNote,
+    columns: showBoard ? columns : [],
+    recommended,
+    showBoard,
   };
 }
