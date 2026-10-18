@@ -38,14 +38,21 @@ async function rest(path, options = {}) {
   return text ? JSON.parse(text) : null;
 }
 
+/** Digits-only UPC variants so padded barcodes still resolve. */
+function upcLookupValues(value) {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  if (!digits) return [];
+  const stripped = digits.replace(/^0+/, "") || "0";
+  return [...new Set([digits, stripped, stripped.padStart(12, "0"), stripped.padStart(13, "0")])];
+}
+
 /** Active product row by UPC, or null. */
 export async function fetchProductByUpc(upc) {
   if (!canPersist()) return null;
-  const code = String(upc ?? "").trim();
-  if (!code) return null;
-  const rows = await rest(
-    `products?upc=eq.${encodeURIComponent(code)}&is_active=eq.true&select=*&limit=1`,
-  );
+  const values = upcLookupValues(upc);
+  if (values.length === 0) return null;
+  const list = values.map(encodeURIComponent).join(",");
+  const rows = await rest(`products?upc=in.(${list})&is_active=eq.true&select=*&limit=1`);
   return rows?.[0] ?? null;
 }
 

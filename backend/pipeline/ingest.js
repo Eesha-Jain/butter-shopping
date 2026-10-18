@@ -45,16 +45,59 @@ async function chainId(name) {
   return rows?.[0]?.id ?? null;
 }
 
+/** Digits-only UPC variants (leading-zero / UPC-A vs EAN-13) for cross-chain match. */
+function upcLookupValues(value) {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  if (!digits) return [];
+  const stripped = digits.replace(/^0+/, "") || "0";
+  return [...new Set([digits, stripped, stripped.padStart(12, "0"), stripped.padStart(13, "0")])];
+}
+
 async function findProduct({ upc, productName, brand }) {
-  if (upc) {
-    const rows = await rest(`products?upc=eq.${encodeURIComponent(upc)}&select=id&limit=1`);
+  const upcValues = upcLookupValues(upc);
+  if (upcValues.length > 0) {
+    const list = upcValues.map(encodeURIComponent).join(",");
+    const rows = await rest(`products?upc=in.(${list})&select=id&limit=1`);
     if (rows?.[0]?.id) return rows[0].id;
   }
+
   if (!productName) return null;
-  const name = encodeURIComponent(productName);
-  const rows = await rest(`products?name=eq.${name}&select=id,brand&limit=20`);
-  const brandValue = String(brand ?? "");
-  return (rows ?? []).find((row) => String(row.brand ?? "") === brandValue)?.id ?? null;
+  const name = String(productName).trim();
+  const brandValue = String(brand ?? "")
+    .trim()
+    .toLowerCase();
+
+  // Exact name + exact brand (legacy).
+  const exactRows = await rest(
+    `products?name=eq.${encodeURIComponent(name)}&select=id,brand&limit=20`,
+  );
+  const exactBrand = (exactRows ?? []).find(
+    (row) =>
+      String(row.brand ?? "")
+        .trim()
+        .toLowerCase() === brandValue,
+  );
+  if (exactBrand?.id) return exactBrand.id;
+
+  // Case-insensitive name; brand must match when both sides have a brand.
+  const ilikeRows = await rest(
+    `products?name=ilike.${encodeURIComponent(name)}&select=id,name,brand&limit=30`,
+  );
+  const loose = (ilikeRows ?? []).find((row) => {
+    if (
+      String(row.name ?? "")
+        .trim()
+        .toLowerCase() !== name.toLowerCase()
+    ) {
+      return false;
+    }
+    const rowBrand = String(row.brand ?? "")
+      .trim()
+      .toLowerCase();
+    if (!brandValue || !rowBrand) return true;
+    return rowBrand === brandValue;
+  });
+  return loose?.id ?? null;
 }
 
 async function categoryIdForProductName(productName) {
