@@ -181,6 +181,8 @@ export default function PlanScreen() {
   const [selectedYmd, setSelectedYmd] = useState<string | null>(null);
   const [productImages, setProductImages] = useState<Map<string, string | null>>(() => new Map());
   const [productNames, setProductNames] = useState<Map<string, string>>(() => new Map());
+  /** Unit shelf/sale price cents by product id (for guest Plan rows). */
+  const [unitPriceByProduct, setUnitPriceByProduct] = useState<Map<string, number>>(() => new Map());
   /** Unit cents saved (regular − shelf) by product id. */
   const [unitSavingsByProduct, setUnitSavingsByProduct] = useState<Map<string, number>>(
     () => new Map(),
@@ -480,10 +482,11 @@ export default function PlanScreen() {
       activeReasons.includes('bestDeal'));
 
   const loadProductMeta = useCallback(async (productIds: string[]) => {
-    const ids = [...new Set(productIds)];
+    const ids = [...new Set(productIds.filter(Boolean))];
     if (ids.length === 0) {
       setProductImages(new Map());
       setProductNames(new Map());
+      setUnitPriceByProduct(new Map());
       setUnitSavingsByProduct(new Map());
       return;
     }
@@ -493,14 +496,47 @@ export default function PlanScreen() {
     ]);
     setProductImages(new Map(products.map((product) => [product.id, product.image_path])));
     setProductNames(new Map(products.map((product) => [product.id, product.name])));
+    const prices = new Map<string, number>();
     const savings = new Map<string, number>();
     for (const [id, sale] of sales ?? []) {
+      prices.set(id, sale.priceCents);
       if (sale.regularPriceCents != null && sale.regularPriceCents > sale.priceCents) {
         savings.set(id, sale.regularPriceCents - sale.priceCents);
       }
     }
+    setUnitPriceByProduct(prices);
     setUnitSavingsByProduct(savings);
   }, []);
+
+  const guestProductIds = useMemo(
+    () =>
+      [
+        ...new Set(
+          guestCart.items
+            .map((item) => item.productId)
+            .filter((id): id is string => Boolean(id)),
+        ),
+      ],
+    [guestCart.items],
+  );
+
+  useEffect(() => {
+    if (!isGuest) return;
+    void loadProductMeta(guestProductIds);
+  }, [isGuest, guestProductIds, loadProductMeta]);
+
+  const guestTripSavingsCents = useMemo(() => {
+    if (!isGuest) return 0;
+    let sum = 0;
+    for (const item of guestCart.items) {
+      if (!item.productId) continue;
+      const unit = unitSavingsByProduct.get(item.productId);
+      if (unit == null || unit < MIN_SAVINGS_CENTS) continue;
+      const qty = item.quantity > 0 ? item.quantity : 1;
+      sum += Math.round(unit * qty);
+    }
+    return sum;
+  }, [isGuest, guestCart.items, unitSavingsByProduct]);
 
   const loadPlan = useCallback(
     async (refresh = false) => {
@@ -817,6 +853,15 @@ export default function PlanScreen() {
             <ThemedText type="small" themeColor="textSecondary">
               Your picks stay on-device until you sign up. Then they sync to your grocery list.
             </ThemedText>
+            {guestTripSavingsCents >= MIN_SAVINGS_CENTS ? (
+              <View style={styles.tripSavingsRow}>
+                <SavingsChip
+                  compact={false}
+                  cents={guestTripSavingsCents}
+                  label={`Save ${formatSavingsCents(guestTripSavingsCents)} this trip`}
+                />
+              </View>
+            ) : null}
           </Animated.View>
           {guestCart.items.length === 0 ? (
             <View style={styles.emptyBlock}>
@@ -826,15 +871,32 @@ export default function PlanScreen() {
           ) : (
             <View style={styles.guestCard}>
               <ThemedText type="smallBold">Your picks</ThemedText>
-              {guestCart.items.map((item) => (
-                <ListItemRow
-                  key={item.id}
-                  title={item.customName?.trim() || 'Product'}
-                  quantity={item.quantity}
-                  onDone={() => guestCart.removeItem(item.id)}
-                  onDelete={() => guestCart.removeItem(item.id)}
-                />
-              ))}
+              {guestCart.items.map((item) => {
+                const productId = item.productId ?? null;
+                const unitPrice = productId ? unitPriceByProduct.get(productId) : undefined;
+                const unitSave = productId ? unitSavingsByProduct.get(productId) : undefined;
+                const qty = item.quantity > 0 ? item.quantity : 1;
+                const lineSave =
+                  unitSave != null && unitSave >= MIN_SAVINGS_CENTS
+                    ? Math.round(unitSave * qty)
+                    : null;
+                const title =
+                  (productId ? productNames.get(productId) : null)?.trim() ||
+                  item.customName?.trim() ||
+                  'Product';
+                return (
+                  <ListItemRow
+                    key={item.id}
+                    title={title}
+                    quantity={item.quantity}
+                    priceCents={unitPrice ?? null}
+                    savingsCents={lineSave}
+                    imagePath={productId ? productImages.get(productId) : null}
+                    onDone={() => guestCart.removeItem(item.id)}
+                    onDelete={() => guestCart.removeItem(item.id)}
+                  />
+                );
+              })}
             </View>
           )}
           <ButterButton label="Sign up to plan trips" variant="ink" onPress={() => requestSignIn('signUp')} />
