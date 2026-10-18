@@ -3,14 +3,14 @@ import { SymbolView } from 'expo-symbols';
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View, type View as RNView } from 'react-native';
 import Animated, {
-  Easing,
-  useAnimatedStyle,
-  useSharedValue,
-  type SharedValue,
-  withDelay,
-  withSequence,
-  withSpring,
-  withTiming,
+    Easing,
+    useAnimatedStyle,
+    useSharedValue,
+    withDelay,
+    withSequence,
+    withSpring,
+    withTiming,
+    type SharedValue,
 } from 'react-native-reanimated';
 
 import type { Product } from '@/backend';
@@ -307,7 +307,13 @@ export function ProductCard({
         <ThemedText type="smallBold" numberOfLines={2} style={styles.name}>
           {product.name}
         </ThemedText>
-        {resolvedMeta ? (
+        {resolvedMeta === 'Sponsored' ? (
+          <View style={[styles.sponsoredPill, { borderColor: theme.text }]}>
+            <ThemedText type="smallBold" style={styles.sponsoredText}>
+              Sponsored
+            </ThemedText>
+          </View>
+        ) : resolvedMeta ? (
           <ThemedText type="small" themeColor="textSecondary" style={styles.meta}>
             {resolvedMeta}
           </ThemedText>
@@ -445,7 +451,11 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
   },
   burstInk: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -482,6 +492,18 @@ const styles = StyleSheet.create({
   meta: {
     fontSize: 11,
     lineHeight: 14,
+  },
+  sponsoredPill: {
+    alignSelf: 'flex-start',
+    borderWidth: 1.5,
+    borderRadius: 999,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 1,
+  },
+  sponsoredText: {
+    fontSize: 11,
+    lineHeight: 14,
+    letterSpacing: 0.3,
   },
   priceCol: {
     gap: 2,

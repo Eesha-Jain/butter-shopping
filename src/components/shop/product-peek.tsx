@@ -2,22 +2,22 @@ import * as Haptics from 'expo-haptics';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  View,
-  useWindowDimensions,
+    Modal,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    useWindowDimensions,
+    View,
 } from 'react-native';
 import Animated, {
-  Easing,
-  Extrapolation,
-  interpolate,
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-  withTiming,
+    Easing,
+    Extrapolation,
+    interpolate,
+    runOnJS,
+    useAnimatedStyle,
+    useSharedValue,
+    withSpring,
+    withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -25,11 +25,11 @@ import type { Product, SessionFoodRule } from '@/backend';
 import type { Promotion } from '@/backend/types';
 import { ProductDetailBody } from '@/components/shop/product-detail-body';
 import {
-  computeExpandedPeekRect,
-  isValidPeekAnchor,
-  PEEK_DEFAULT_HEIGHT,
-  PEEK_MAX_WIDTH,
-  type ProductPeekAnchor,
+    computeExpandedPeekRect,
+    isValidPeekAnchor,
+    PEEK_DEFAULT_HEIGHT,
+    PEEK_MAX_WIDTH,
+    type ProductPeekAnchor,
 } from '@/components/shop/product-peek-layout';
 import { ProductPhoto } from '@/components/shop/product-photo';
 import { ThemedText } from '@/components/themed-text';
@@ -50,6 +50,8 @@ type Props = {
   favorited?: boolean;
   onToggleFavorite?: () => void;
   onClose: () => void;
+  /** Fires when the collapse begins, so the source card can reappear beneath the panel. */
+  onCloseStart?: () => void;
   onAdd: () => void;
   onIncrement: () => void;
   onDecrement: () => void;
@@ -77,6 +79,7 @@ export function ProductPeek({
   favorited,
   onToggleFavorite,
   onClose,
+  onCloseStart,
   onAdd,
   onIncrement,
   onDecrement,
@@ -141,6 +144,7 @@ export function ProductPeek({
   const animateClose = useCallback(() => {
     if (closingRef.current) return;
     closingRef.current = true;
+    onCloseStart?.();
     // Clamp any spring overshoot so the collapse starts from the settled frame (no jump).
     if (progress.get() > 1) progress.set(1);
     progress.set(
@@ -150,7 +154,7 @@ export function ProductPeek({
         }
       }),
     );
-  }, [finishClose, progress]);
+  }, [finishClose, onCloseStart, progress]);
 
   // Parent cleared the product externally — still collapse before unmounting.
   useEffect(() => {
@@ -210,10 +214,10 @@ export function ProductPeek({
       width: interpolate(p, [0, 1], [from.width, toW.get()]),
       height: interpolate(p, [0, 1], [from.height, toH.get()]),
       borderRadius: interpolate(p, [0, 1], [Spacing.two, Radius.sheet], Extrapolation.CLAMP),
-      // The source card stays hidden until close finishes, so keep the panel opaque almost to the end.
+      // The source card is revealed underneath when closing starts, so this cross-fades into it.
       opacity: fadeOnly.get()
         ? interpolate(p, [0, 1], [0, 1], Extrapolation.CLAMP)
-        : interpolate(p, [0, 0.04], [0, 1], Extrapolation.CLAMP),
+        : interpolate(p, [0, 0.25], [0, 1], Extrapolation.CLAMP),
       overflow: 'hidden' as const,
     };
   });
@@ -469,3 +473,4 @@ const styles = StyleSheet.create({
 });
 
 export type { ProductPeekAnchor } from '@/components/shop/product-peek-layout';
+

@@ -199,6 +199,7 @@ export default function ShopScreen() {
   const [peekProduct, setPeekProduct] = useState<Product | null>(null);
   const [peekAnchor, setPeekAnchor] = useState<ProductPeekAnchor | null>(null);
   const [peekCompact, setPeekCompact] = useState(false);
+  const [peekClosing, setPeekClosing] = useState(false);
 
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -926,6 +927,7 @@ export default function ShopScreen() {
   ) => {
     if (haptic) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setPeekCompact(compact);
+    setPeekClosing(false);
     setPeekAnchor(anchor);
     setPeekProduct(product);
   };
@@ -934,6 +936,7 @@ export default function ShopScreen() {
     setPeekProduct(null);
     setPeekAnchor(null);
     setPeekCompact(false);
+    setPeekClosing(false);
   };
 
   const renderProductCard = (
@@ -964,7 +967,7 @@ export default function ShopScreen() {
         priceNote={priceNote}
         quantityOnList={effectiveQtyMap.get(product.id)?.quantity}
         priceCents={priceCents}
-        isPeekSource={peekProduct?.id === product.id}
+        isPeekSource={peekProduct?.id === product.id && !peekClosing}
         favorited={favoriteIds.has(product.id)}
         onPress={(anchor) => openPeek(product, anchor, compact, false)}
         onLongPress={(anchor) => openPeek(product, anchor, compact, true)}
@@ -1518,6 +1521,7 @@ export default function ShopScreen() {
           favorited={peekProduct ? favoriteIds.has(peekProduct.id) : false}
           onToggleFavorite={() => peekProduct && void handleToggleFavorite(peekProduct.id)}
           onClose={closePeek}
+          onCloseStart={() => setPeekClosing(true)}
           onAdd={() => peekProduct && void handleAdd(peekProduct)}
           onIncrement={() => peekProduct && void handleIncrement(peekProduct)}
           onDecrement={() => peekProduct && void handleDecrement(peekProduct)}
