@@ -89,6 +89,7 @@ export {
   addRecipeToList,
   addRecipeToListWithCaution,
   buildStandardList,
+  catalogLinesForItems,
   createList,
   getActiveListProductQtyMap,
   getDefaultGroceryList,
@@ -97,6 +98,7 @@ export {
   listListItems,
   listMyListTargets,
   listResolvedItems,
+  openProductOnList,
   previewRecipeForList,
   removeListItem,
   setListItemDone,
@@ -104,6 +106,7 @@ export {
 } from './lists';
 export type {
   ActiveListTarget,
+  CatalogLine,
   RecipeListPreview,
   RecipeListPreviewLine,
   RecipeListSkipReason,

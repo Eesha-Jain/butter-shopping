@@ -1,8 +1,8 @@
 import { type BottomSheetModal } from '@gorhom/bottom-sheet';
-import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
+import { Image } from 'expo-image';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -13,12 +13,23 @@ import {
   ScrollView,
   StyleSheet,
   View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { FadeInDown, runOnJS } from 'react-native-reanimated';
+import Animated, {
+  FadeIn,
+  FadeInDown,
+  FadeOut,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useActiveList } from '@/auth/active-list';
+import { useAppProfile } from '@/auth/app-profile';
 import { useGuestCart } from '@/auth/guest-cart-context';
 import { useSession } from '@/auth/session';
 import {
@@ -40,6 +51,7 @@ import {
   getGuestFoodRules,
   getGuestOnboardingDraft,
   getMyProfile,
+  publicImageUrl,
   saveGuestOnboardingDraft,
   getProductPromotionMap,
   getProductTraitsForIds,
@@ -57,7 +69,6 @@ import {
   listStoreShelf,
   listTrending,
   messageFromUnknown,
-  publicImageUrl,
   removeListItem,
   resolveSearchCoords,
   resolveShopZip,
@@ -77,17 +88,19 @@ import {
   type ShopSort,
   type UserLocation,
 } from '@/backend';
+import { AppHeader } from '@/components/app/app-header';
 import { CategoryIcon } from '@/components/shop/category-icons';
 import { ProductCard } from '@/components/shop/product-card';
 import { ProductDetailSheet } from '@/components/shop/product-detail-sheet';
 import { ProductPeek } from '@/components/shop/product-peek';
+import type { ProductPeekAnchor } from '@/components/shop/product-peek-layout';
 import { ShopFiltersDrawer } from '@/components/shop/shop-filters-drawer';
-import { ShopProfileDrawer } from '@/components/shop/shop-profile-drawer';
 import { SnapBadge } from '@/components/shop/snap-badge';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { ButterChip } from '@/components/ui/butter-chip';
 import { ButterSearchField } from '@/components/ui/butter-search-field';
+import { NativeIconButton } from '@/components/ui/native-icon-button';
 import { BottomTabInset, Radius, SheetChrome, Spacing, Type } from '@/constants/theme';
 import { useSnapOptedIn } from '@/hooks/use-snap-opted-in';
 import { useTheme } from '@/hooks/use-theme';
@@ -120,7 +133,8 @@ function chunkProducts(products: Product[], size = 2): Product[][] {
   return rows;
 }
 
-const AISLE_PREVIEW_COUNT = 4;
+const AISLE_PREVIEW_COUNT = 10;
+const SCROLL_TOP_THRESHOLD = 360;
 
 function searchResultToast(count: number, term: string): void {
   if (count === 0) {
@@ -137,8 +151,12 @@ function searchResultToast(count: number, term: string): void {
 export default function ShopScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { isGuest, requestSignIn, signOut } = useSession();
+  const { isGuest, requestSignIn } = useSession();
   const snapOptedIn = useSnapOptedIn();
+  const { headerName, avatarPath, avatarVersion, openProfile, closeProfile, refreshProfile } =
+    useAppProfile();
+  const avatarBaseUrl = publicImageUrl('avatars', avatarPath);
+  const avatarUrl = avatarBaseUrl ? `${avatarBaseUrl}?t=${avatarVersion}` : null;
   const {
     targets: listTargets,
     activeTarget,
@@ -147,13 +165,14 @@ export default function ShopScreen() {
   } = useActiveList();
   const guestCart = useGuestCart();
   const productSheetRef = useRef<BottomSheetModal>(null);
+  const listRef = useRef<FlatList<ShopListItem>>(null);
+  const pendingBrowseRef = useRef<(() => void) | null>(null);
+  const showScrollTopRef = useRef(false);
   const seededPrefsRef = useRef(false);
   const openPricesGeoRef = useRef<OpenPricesGeo | null>(null);
+  const contentOpacity = useSharedValue(1);
+  const [showScrollTop, setShowScrollTop] = useState(false);
 
-  const [displayName, setDisplayName] = useState<string | null>(null);
-  const [avatarPath, setAvatarPath] = useState<string | null>(null);
-  const [avatarVersion, setAvatarVersion] = useState(0);
-  const [profileOpen, setProfileOpen] = useState(false);
   const [location, setLocation] = useState<UserLocation | null>(null);
   const [qtyMap, setQtyMap] = useState<Map<string, { listItemId: string; quantity: number }>>(
     new Map(),
@@ -213,6 +232,8 @@ export default function ShopScreen() {
   const [search, setSearch] = useState('');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [peekProduct, setPeekProduct] = useState<Product | null>(null);
+  const [peekAnchor, setPeekAnchor] = useState<ProductPeekAnchor | null>(null);
+  const [peekCompact, setPeekCompact] = useState(false);
 
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -296,8 +317,7 @@ export default function ShopScreen() {
 
         if (isGuest) {
           setLocation(null);
-          setDisplayName(null);
-          setAvatarPath(null);
+          await refreshProfile();
           const guestPrefs = getGuestFoodRules();
           setPreferenceRules(guestPrefs);
           if (!seededPrefsRef.current || refresh) {
@@ -305,15 +325,12 @@ export default function ShopScreen() {
             seededPrefsRef.current = true;
           }
         } else {
-          const [locations, foodRules, profile] = await Promise.all([
+          const [locations, foodRules] = await Promise.all([
             listMyLocations(),
             listMyFoodRules(),
-            getMyProfile(),
           ]);
-          await refreshTargets();
+          await Promise.all([refreshTargets(), refreshProfile()]);
           setLocation(locations.find((row) => row.is_default) ?? locations[0] ?? null);
-          setDisplayName(profile.display_name);
-          setAvatarPath(profile.avatar_path);
           const prefs = rulesFromUserFoodRules(foodRules);
           setPreferenceRules(prefs);
           if (!seededPrefsRef.current || refresh) {
@@ -334,7 +351,7 @@ export default function ShopScreen() {
         setIsRefreshing(false);
       }
     },
-    [isGuest, refreshTargets],
+    [isGuest, refreshProfile, refreshTargets],
   );
 
   useEffect(() => {
@@ -798,18 +815,14 @@ export default function ShopScreen() {
   };
 
   const openFilters = useCallback(() => {
-    setProfileOpen(false);
+    closeProfile();
     setFiltersOpen(true);
-  }, []);
+  }, [closeProfile]);
 
-  const openProfile = useCallback(() => {
+  const openProfileFromShop = useCallback(() => {
     setFiltersOpen(false);
-    setProfileOpen(true);
-  }, []);
-
-  const avatarBaseUrl = publicImageUrl('avatars', avatarPath);
-  const avatarUrl = avatarBaseUrl ? `${avatarBaseUrl}?t=${avatarVersion}` : null;
-  const headerName = isGuest ? 'Guest' : displayName?.trim() || 'Butter shopper';
+    openProfile();
+  }, [openProfile]);
 
   // Swipe left opens the profile panel (also accepts a rightward pull from the left edge).
   const leftEdgeSwipe = useMemo(
@@ -818,10 +831,10 @@ export default function ShopScreen() {
         .activeOffsetX([-40, 40])
         .onEnd((event) => {
           if (event.translationX < -48 || event.translationX > 48) {
-            runOnJS(openProfile)();
+            runOnJS(openProfileFromShop)();
           }
         }),
-    [openProfile],
+    [openProfileFromShop],
   );
 
   // Swipe from the right edge opens filters.
@@ -871,27 +884,105 @@ export default function ShopScreen() {
     }));
   }, [categorySections, displayProducts, sectionedHome]);
 
+  const contentAnimStyle = useAnimatedStyle(() => ({
+    opacity: contentOpacity.value,
+  }));
+
+  const scrollListToTop = useCallback((animated: boolean) => {
+    listRef.current?.scrollToOffset({ offset: 0, animated });
+  }, []);
+
+  const finishBrowseTransition = useCallback(() => {
+    pendingBrowseRef.current?.();
+    pendingBrowseRef.current = null;
+    scrollListToTop(false);
+    contentOpacity.value = withTiming(1, { duration: 220 });
+  }, [contentOpacity, scrollListToTop]);
+
+  const runBrowseTransition = useCallback(
+    (next: () => void) => {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      pendingBrowseRef.current = next;
+      scrollListToTop(true);
+      contentOpacity.value = withTiming(0, { duration: 150 }, (finished) => {
+        if (finished) {
+          runOnJS(finishBrowseTransition)();
+        }
+      });
+    },
+    [contentOpacity, finishBrowseTransition, scrollListToTop],
+  );
+
   const enterAisle = (categoryId: string) => {
-    setSelectedCategoryId(categoryId);
-    setFavoritesOnly(false);
-    setSearch('');
+    if (selectedCategoryId === categoryId && !favoritesOnly && !search.trim()) {
+      scrollListToTop(true);
+      return;
+    }
+    runBrowseTransition(() => {
+      setSelectedCategoryId(categoryId);
+      setFavoritesOnly(false);
+      setSearch('');
+    });
   };
 
-  const openPeek = (product: Product) => {
+  const browseAll = () => {
+    if (selectedCategoryId == null && !favoritesOnly && !search.trim()) {
+      scrollListToTop(true);
+      return;
+    }
+    runBrowseTransition(() => {
+      setSelectedCategoryId(null);
+      setFavoritesOnly(false);
+      setSearch('');
+    });
+  };
+
+  /** Full shop home — aisles, trending, staples (clears aisle / favorites / search / store). */
+  const backToShopHome = () => {
+    if (sectionedHome) {
+      scrollListToTop(true);
+      return;
+    }
+    runBrowseTransition(() => {
+      setSelectedCategoryId(null);
+      setFavoritesOnly(false);
+      setSearch('');
+      setSelectedStore(null);
+    });
+  };
+
+  const onShopScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const y = event.nativeEvent.contentOffset.y;
+    const visible = y > SCROLL_TOP_THRESHOLD;
+    if (showScrollTopRef.current === visible) return;
+    showScrollTopRef.current = visible;
+    setShowScrollTop(visible);
+  };
+
+  const openPeek = (product: Product, anchor: ProductPeekAnchor, compact: boolean) => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setPeekCompact(compact);
+    setPeekAnchor(anchor);
     setPeekProduct(product);
   };
 
   const closePeek = () => {
     setPeekProduct(null);
+    setPeekAnchor(null);
+    setPeekCompact(false);
   };
 
   const openFullFromPeek = () => {
-    const product = peekProduct;
-    setPeekProduct(null);
-    if (product) openProduct(product);
+    if (peekProduct) openProduct(peekProduct);
   };
 
-  const renderProductCard = (product: Product, index = 0) => {
+  const renderProductCard = (
+    product: Product,
+    index = 0,
+    compact = false,
+    metaLabel?: string | null,
+    butterColor?: string,
+  ) => {
     const promo = promotions.get(product.id) ?? null;
     const priceCents = shelfPrices.get(product.id) ?? null;
     const shelfHint = !promo ? (shelfSales.get(product.id) ?? null) : null;
@@ -908,6 +999,9 @@ export default function ShopScreen() {
         key={product.id}
         product={product}
         index={index}
+        compact={compact}
+        metaLabel={metaLabel}
+        butterColor={butterColor}
         saleBadge={saleBadge}
         compareAtCents={hint?.compareAtCents}
         savingsLabel={hint?.savingsLabel}
@@ -915,8 +1009,9 @@ export default function ShopScreen() {
         showSnap={productShowsSnap(product)}
         quantityOnList={effectiveQtyMap.get(product.id)?.quantity}
         priceCents={priceCents}
+        isPeekSource={peekProduct?.id === product.id}
         onPress={() => openProduct(product)}
-        onLongPress={() => openPeek(product)}
+        onLongPress={(anchor) => openPeek(product, anchor, compact)}
         onAdd={() => void handleAdd(product)}
         onIncrement={() => void handleIncrement(product)}
         onDecrement={() => void handleDecrement(product)}
@@ -924,13 +1019,34 @@ export default function ShopScreen() {
     );
   };
 
-  const renderProductGrid = (products: Product[]) =>
-    chunkProducts(products).map((row) => (
-      <View key={row.map((product) => product.id).join('-')} style={styles.gridRow}>
-        {row.map((product, index) => renderProductCard(product, index))}
-        {row.length === 1 ? <View style={styles.gridSpacer} /> : null}
-      </View>
-    ));
+  const renderProductStrip = (products: Product[]) => (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.productStrip}
+      nestedScrollEnabled>
+      {products.map((product, index) => renderProductCard(product, index, true))}
+    </ScrollView>
+  );
+
+  const renderTrendingStrip = (rows: { product: Product; sponsored: boolean }[]) => (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.productStrip}
+      nestedScrollEnabled>
+      {rows.map((row, index) =>
+        renderProductCard(
+          row.product,
+          index,
+          true,
+          row.sponsored ? 'Sponsored' : 'Popular',
+          // Cream stick on gold banner — same yellow vanishes and reads as a dark blob.
+          theme.backgroundElement,
+        ),
+      )}
+    </ScrollView>
+  );
 
   const focusedAisleName = selectedCategoryId
     ? (categories.find((row) => row.id === selectedCategoryId)?.name ?? 'Aisle')
@@ -977,7 +1093,9 @@ export default function ShopScreen() {
       <GestureDetector gesture={rightEdgeSwipe}>
         <View style={[styles.edgeHitRight, { top: insets.top }]} />
       </GestureDetector>
+      <Animated.View style={[styles.listWrap, contentAnimStyle]}>
       <FlatList
+          ref={listRef}
           data={listData}
           extraData={`${selectedCategoryId ?? 'all'}:${favoritesOnly ? 'fav' : 'all'}:${searchQuery}:${sort}:${onSaleOnly ? 'sale' : ''}:${cashbackBps ?? ''}:${[...favoriteIds].join(',')}`}
           keyExtractor={(item) =>
@@ -985,12 +1103,14 @@ export default function ShopScreen() {
               ? item.section.category.id
               : item.products.map((product) => product.id).join('-') || 'empty'
           }
-          contentInsetAdjustmentBehavior="automatic"
+          contentInsetAdjustmentBehavior="never"
           contentContainerStyle={[
             styles.listContent,
             { paddingBottom: BottomTabInset + Spacing.four },
           ]}
           keyboardShouldPersistTaps="handled"
+          onScroll={onShopScroll}
+          scrollEventThrottle={16}
           refreshControl={
             <RefreshControl
               refreshing={isRefreshing}
@@ -1127,11 +1247,7 @@ export default function ShopScreen() {
                 <ButterChip
                   label="All"
                   selected={selectedCategoryId == null && !favoritesOnly}
-                  onPress={() => {
-                    setSelectedCategoryId(null);
-                    setFavoritesOnly(false);
-                    setSearch('');
-                  }}
+                  onPress={browseAll}
                   icon={
                     <SymbolView
                       name={{ ios: 'square.grid.2x2.fill', android: 'grid_view', web: 'grid_view' }}
@@ -1147,7 +1263,13 @@ export default function ShopScreen() {
                 <ButterChip
                   label="Favorites"
                   selected={favoritesOnly}
-                  onPress={() => setFavoritesOnly((value) => !value)}
+                  onPress={() => {
+                    const next = !favoritesOnly;
+                    runBrowseTransition(() => {
+                      setFavoritesOnly(next);
+                      if (next) setSelectedCategoryId(null);
+                    });
+                  }}
                   icon={
                     <SymbolView
                       name={{ ios: 'heart.fill', android: 'favorite', web: 'favorite' }}
@@ -1217,26 +1339,43 @@ export default function ShopScreen() {
                   <ThemedText type="small" themeColor="textSecondary" style={styles.quietLabel}>
                     Your staples
                   </ThemedText>
-                  {renderProductGrid(displayStaples.slice(0, AISLE_PREVIEW_COUNT))}
+                  {renderProductStrip(displayStaples.slice(0, AISLE_PREVIEW_COUNT))}
                 </View>
               ) : sectionedHome &&
                 displayTrending.length > 0 &&
                 !favoritesOnly &&
                 !isSearching &&
                 !selectedStore ? (
-                <View style={styles.section}>
-                  <ThemedText type="small" themeColor="textSecondary" style={styles.quietLabel}>
-                    Trending
-                  </ThemedText>
-                  {renderProductGrid(
-                    displayTrending.slice(0, AISLE_PREVIEW_COUNT).map((row) => row.product),
-                  )}
+                <View
+                  style={[
+                    styles.trendingBanner,
+                    {
+                      backgroundColor: theme.primary,
+                      borderColor: theme.borderInk,
+                    },
+                  ]}>
+                  <View style={styles.trendingHeader}>
+                    <ThemedText type="smallBold" style={styles.trendingTitle}>
+                      Trending
+                    </ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      Popular on campus · Sponsored labeled
+                    </ThemedText>
+                  </View>
+                  {renderTrendingStrip(displayTrending.slice(0, AISLE_PREVIEW_COUNT))}
                 </View>
               ) : null}
 
               {!sectionedHome ? (
                 <View style={styles.productsHeader}>
                   <View style={styles.sectionTitleRow}>
+                    <NativeIconButton
+                      accessibilityLabel="Back to shop home"
+                      iosSymbol="chevron.left"
+                      androidSymbol="arrow_back"
+                      onPress={backToShopHome}
+                      style={styles.backBtn}
+                    />
                     <ThemedText type="smallBold" style={[styles.flex, styles.aisleTitle]}>
                       {selectedStore
                         ? selectedStore.name
@@ -1322,7 +1461,7 @@ export default function ShopScreen() {
                       </ThemedText>
                     </Pressable>
                   </View>
-                  {renderProductGrid(preview)}
+                  {renderProductStrip(preview)}
                 </View>
               );
             }
@@ -1335,6 +1474,39 @@ export default function ShopScreen() {
             );
           }}
         />
+      </Animated.View>
+
+      {showScrollTop ? (
+        <Animated.View
+          entering={FadeIn.duration(180)}
+          exiting={FadeOut.duration(140)}
+          style={[
+            styles.scrollTopFabWrap,
+            { bottom: BottomTabInset + Spacing.three, right: Spacing.three },
+          ]}>
+          <Pressable
+            onPress={() => {
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              scrollListToTop(true);
+            }}
+            style={[styles.scrollTopFab, { backgroundColor: theme.secondary }]}
+            accessibilityRole="button"
+            accessibilityLabel="Scroll to top"
+            hitSlop={8}>
+            <SymbolView
+              name={
+                {
+                  ios: 'chevron.up',
+                  android: 'keyboard_arrow_up',
+                  web: 'keyboard_arrow_up',
+                } as ComponentProps<typeof SymbolView>['name']
+              }
+              size={22}
+              tintColor={theme.primary}
+            />
+          </Pressable>
+        </Animated.View>
+      ) : null}
 
         {filtersOpen ? (
           <ShopFiltersDrawer
@@ -1366,33 +1538,11 @@ export default function ShopScreen() {
           />
         ) : null}
 
-        {profileOpen ? (
-          <ShopProfileDrawer
-            key="shop-profile"
-            visible
-            displayName={displayName}
-            avatarPath={avatarPath}
-            avatarVersion={avatarVersion}
-            isGuest={isGuest}
-            onClose={() => setProfileOpen(false)}
-            onRequestAuth={(mode) => {
-              setProfileOpen(false);
-              requestSignIn(mode);
-            }}
-            onSignOut={async () => {
-              setProfileOpen(false);
-              await signOut();
-            }}
-            onAvatarChanged={(path) => {
-              setAvatarPath(path);
-              setAvatarVersion(Date.now());
-            }}
-          />
-        ) : null}
-
         <ProductPeek
           product={peekProduct}
           visible={peekProduct != null}
+          anchor={peekAnchor}
+          compact={peekCompact}
           saleBadge={
             peekProduct && promotions.has(peekProduct.id)
               ? formatPromotionBadge(promotions.get(peekProduct.id)!)
@@ -1497,6 +1647,9 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
   },
+  listWrap: {
+    flex: 1,
+  },
   centered: {
     flex: 1,
     justifyContent: 'center',
@@ -1506,12 +1659,23 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingHorizontal: Spacing.three,
-    gap: Spacing.two,
+    gap: Spacing.four,
+  },
+  scrollTopFabWrap: {
+    position: 'absolute',
+    zIndex: 20,
+  },
+  scrollTopFab: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   header: {
-    gap: Spacing.two,
-    paddingTop: Spacing.two,
-    paddingBottom: Spacing.two,
+    gap: Spacing.four,
+    paddingTop: Spacing.three,
+    paddingBottom: Spacing.three,
   },
   brandRow: {
     flexDirection: 'row',
@@ -1573,16 +1737,37 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   section: {
-    gap: Spacing.two,
+    gap: Spacing.three,
+    marginTop: Spacing.one,
+  },
+  trendingBanner: {
+    gap: Spacing.three,
+    marginHorizontal: -Spacing.three,
+    marginTop: Spacing.two,
+    marginBottom: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.four,
+    borderTopWidth: 2,
+    borderBottomWidth: 2,
+  },
+  trendingHeader: {
+    gap: Spacing.one,
+  },
+  trendingTitle: {
+    fontSize: Type.section,
+    lineHeight: 26,
   },
   categorySection: {
-    gap: Spacing.two,
-    marginBottom: Spacing.three,
+    gap: Spacing.three,
+    marginBottom: Spacing.four,
   },
   sectionTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
+  },
+  backBtn: {
+    marginLeft: -Spacing.one,
   },
   productsHeader: {
     gap: Spacing.one,
@@ -1592,6 +1777,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
+  },
+  productStrip: {
+    flexDirection: 'row',
+    gap: Spacing.two,
+    paddingRight: Spacing.three,
   },
   gridRow: {
     flexDirection: 'row',

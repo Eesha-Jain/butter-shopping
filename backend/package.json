@@ -11,7 +11,9 @@
     "scrape:demo": "node scrape-demo-full.js --zip=98195",
     "scrape:demo:tj": "node scrape-demo-full.js --zip=98195 --only=tj",
     "scrape:demo:safeway": "node scrape-demo-full.js --zip=98195 --only=safeway",
-    "import:weekly-ads": "node import-weekly-ads.js"
+    "import:weekly-ads": "node import-weekly-ads.js",
+    "scrape:safeway:parse": "node scrape-safeway-parse.js --zip=98195",
+    "scrape:wholefoods:parse": "node scrape-wholefoods-parse.js --zip=98195"
   },
   "keywords": [],
   "type": "module",

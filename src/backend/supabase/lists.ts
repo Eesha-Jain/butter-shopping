@@ -94,9 +94,8 @@ export async function createList(input: { groupId: string; name: string }): Prom
 }
 
 /**
- * Adds one thing to buy. Supply exactly one of productId, categoryId, or customName.
- * amountBase is measured in the category's g, ml, or ct unit. A category item is
- * resolved to a real product later by the shopping plan.
+ * Adds one real catalog product to a list. Category-only and custom-name lines
+ * are not written.
  */
 export async function addListItem(input: {
   listId: string;
@@ -108,9 +107,8 @@ export async function addListItem(input: {
   sizeFlexible?: boolean;
   sourceRecipeId?: string;
 }): Promise<ListItem> {
-  const targets = [input.productId, input.categoryId, input.customName].filter(Boolean);
-  if (targets.length !== 1) {
-    fail('A list item needs exactly one of a product, a category, or a custom name.');
+  if (!input.productId || input.categoryId || input.customName) {
+    fail('A list item has to be a real product.');
   }
   const user = await supabase.auth.getUser();
   return unwrapOne(
@@ -161,6 +159,101 @@ export async function removeListItem(itemId: string): Promise<void> {
  */
 export async function listResolvedItems(listId: string): Promise<ResolvedListItem[]> {
   return unwrap(await supabase.from('v_list_items').select('*').eq('list_id', listId));
+}
+
+export type CatalogLine = {
+  /** Brand, product name, and pack size from the products table. */
+  title: string;
+  /** Shelf price and store, when the list view found one. */
+  offer: string | null;
+};
+
+/** Brand + name + size. Falls back to the name alone. */
+export function formatCatalogTitle(product: {
+  name: string;
+  brand?: string | null;
+  size_base_amount?: number | null;
+  size_base_unit?: string | null;
+}): string {
+  const brand = product.brand?.trim();
+  const name = product.name.trim();
+  const titled = brand && !name.toLowerCase().startsWith(brand.toLowerCase()) ? `${brand} ${name}` : name;
+  const amount = Number(product.size_base_amount);
+  if (Number.isFinite(amount) && amount > 0 && product.size_base_unit) {
+    return `${titled}, ${amount} ${product.size_base_unit}`;
+  }
+  return titled;
+}
+
+function formatOffer(cents: number | null, storeName: string | null): string | null {
+  if (cents == null && !storeName) return null;
+  const price = cents == null ? null : `$${(cents / 100).toFixed(2)}`;
+  if (price && storeName) return `${price} at ${storeName}`;
+  return price ?? storeName;
+}
+
+/**
+ * Looks up each product row and the store behind the list's best price so the
+ * list can show the catalog item, not the short word that was spoken.
+ */
+export async function catalogLinesForItems(items: ResolvedListItem[]): Promise<Map<string, CatalogLine>> {
+  const lines = new Map<string, CatalogLine>();
+  const productIds = [...new Set(items.map((item) => item.product_id).filter((id): id is string => Boolean(id)))];
+  const shelfIds = [
+    ...new Set(items.map((item) => item.best_store_product_id).filter((id): id is string => Boolean(id))),
+  ];
+  const products = productIds.length
+    ? unwrap(
+        await supabase
+          .from('products')
+          .select('id, name, brand, size_base_amount, size_base_unit')
+          .in('id', productIds),
+      )
+    : [];
+  const shelves = shelfIds.length
+    ? unwrap(
+        await supabase.from('store_products').select('id, stores(name)').in('id', shelfIds),
+      )
+    : [];
+  const productById = new Map(products.map((row) => [row.id, row]));
+  const storeByShelf = new Map(
+    shelves.map((row) => {
+      const store = Array.isArray(row.stores) ? row.stores[0] : row.stores;
+      return [row.id, store?.name ?? null] as const;
+    }),
+  );
+  for (const item of items) {
+    const product = item.product_id ? productById.get(item.product_id) : undefined;
+    const title = product
+      ? formatCatalogTitle(product)
+      : (item.display_name ?? item.custom_name ?? 'Item');
+    const storeName = item.best_store_product_id ? (storeByShelf.get(item.best_store_product_id) ?? null) : null;
+    lines.set(item.id, {
+      title,
+      offer: formatOffer(item.best_price_cents, storeName),
+    });
+  }
+  return lines;
+}
+
+/** Open list row for this product, if one is already on the list. */
+export async function openProductOnList(
+  listId: string,
+  productId: string,
+): Promise<{ id: string; quantity: number } | null> {
+  const rows = unwrap(
+    await supabase
+      .from('list_items')
+      .select('id, quantity')
+      .eq('list_id', listId)
+      .eq('product_id', productId)
+      .is('done_at', null)
+      .order('created_at', { ascending: true })
+      .limit(1),
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return { id: row.id, quantity: Number(row.quantity) };
 }
 
 function openItemKey(item: Pick<ListItem, 'product_id' | 'category_id' | 'custom_name' | 'done_at'>): string | null {
@@ -234,12 +327,12 @@ export async function buildStandardList(input?: {
   let added = 0;
   const habits = await listHabits(group.id);
   for (const habit of habits) {
-    if (!habit.auto_add_enabled) {
+    if (!habit.auto_add_enabled || !habit.product_id) {
       continue;
     }
     const candidate = {
       product_id: habit.product_id,
-      category_id: habit.category_id,
+      category_id: null,
       custom_name: null,
       done_at: null,
     };
@@ -249,8 +342,7 @@ export async function buildStandardList(input?: {
     }
     await addListItem({
       listId: list.id,
-      productId: habit.product_id ?? undefined,
-      categoryId: habit.category_id ?? undefined,
+      productId: habit.product_id,
       amountBase: habit.usual_amount_base ?? undefined,
     });
     keys.add(key);
@@ -262,10 +354,12 @@ export async function buildStandardList(input?: {
       await supabase.from('recipe_ingredients').select('*').eq('recipe_id', recipeId),
     );
     for (const ingredient of ingredients) {
+      const productId = await productIdForIngredient(ingredient.category_id);
+      if (!productId) continue;
       const candidate = {
-        product_id: null,
-        category_id: ingredient.category_id,
-        custom_name: ingredient.category_id ? null : ingredient.raw_text,
+        product_id: productId,
+        category_id: null,
+        custom_name: null,
         done_at: null,
       };
       const key = openItemKey(candidate);
@@ -274,8 +368,7 @@ export async function buildStandardList(input?: {
       }
       await addListItem({
         listId: list.id,
-        categoryId: ingredient.category_id ?? undefined,
-        customName: ingredient.category_id ? undefined : ingredient.raw_text,
+        productId,
         amountBase: ingredient.amount_base ?? undefined,
         sourceRecipeId: recipeId,
       });
@@ -289,9 +382,8 @@ export async function buildStandardList(input?: {
 }
 
 /**
- * Copies a recipe's ingredient categories onto a list. Each ingredient becomes
- * a category item, not a specific brand. Ingredients without a category are
- * stored as custom names so the original line is not lost.
+ * Copies a recipe onto a list as real products. An ingredient with no matching
+ * active product is skipped.
  */
 export async function addRecipeToList(input: { listId: string; recipeId: string }): Promise<number> {
   const ingredients = unwrap(
@@ -299,10 +391,11 @@ export async function addRecipeToList(input: { listId: string; recipeId: string 
   );
   let added = 0;
   for (const ingredient of ingredients) {
+    const productId = await productIdForIngredient(ingredient.category_id);
+    if (!productId) continue;
     await addListItem({
       listId: input.listId,
-      categoryId: ingredient.category_id ?? undefined,
-      customName: ingredient.category_id ? undefined : ingredient.raw_text,
+      productId,
       amountBase: ingredient.amount_base ?? undefined,
       sourceRecipeId: input.recipeId,
     });
@@ -311,6 +404,18 @@ export async function addRecipeToList(input: { listId: string; recipeId: string 
   return added;
 }
 
+/** First active catalog product in a recipe ingredient's category, if any. */
+async function productIdForIngredient(categoryId: string | null): Promise<string | null> {
+  if (!categoryId) return null;
+  const product = await supabase
+    .from('products')
+    .select('id')
+    .eq('is_active', true)
+    .eq('category_id', categoryId)
+    .limit(1)
+    .maybeSingle();
+  return product.data?.id ?? null;
+}
 function normalizeName(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, ' ');
 }

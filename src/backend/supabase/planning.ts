@@ -166,7 +166,6 @@ const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', '
  * History-aware grocery day. Uses the cheapest day of the past week when that
  * history exists, then the longer weekday pattern. Pass shopOn to recommendShoppingPlan.
  */
-
 export async function suggestBestShopDate(input?: {
   postalCode?: string;
   from?: string;

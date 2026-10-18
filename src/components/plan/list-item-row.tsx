@@ -1,12 +1,19 @@
 import * as Haptics from 'expo-haptics';
 import { useRef } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
+import { SymbolView } from 'expo-symbols';
+import type { ComponentProps } from 'react';
 import { Swipeable } from 'react-native-gesture-handler';
+import Animated, { LinearTransition } from 'react-native-reanimated';
 
 import { ProductPhoto } from '@/components/shop/product-photo';
 import { ThemedText } from '@/components/themed-text';
 import { Fonts, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+
+type SymbolName = ComponentProps<typeof SymbolView>['name'];
+
+const CHECK_GREEN = '#2E9E5B';
 
 export function cadenceLabel(intervalDays: number): string {
   if (intervalDays === 7) return 'Weekly';
@@ -49,62 +56,88 @@ export function ListItemRow({
   const swipeRef = useRef<Swipeable>(null);
   const letter = title.trim().slice(0, 1) || '?';
 
-  const renderRight = () => (
-    <Pressable
-      onPress={() => {
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        swipeRef.current?.close();
-        onDelete();
-      }}
-      style={[styles.action, { backgroundColor: theme.error }]}
-      accessibilityRole="button"
-      accessibilityLabel="Delete item">
-      <ThemedText type="smallBold" style={styles.actionLabel}>
-        Delete
-      </ThemedText>
-    </Pressable>
+  const toggle = () => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    onDone();
+  };
+
+  const remove = () => {
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    onDelete();
+  };
+
+  // Swiping right reveals the left-side action (check); swiping left reveals the right side (delete).
+  const renderLeft = () => (
+    <View style={[styles.action, styles.actionLeft, { backgroundColor: CHECK_GREEN }]}>
+      <SymbolView
+        name={
+          {
+            ios: done ? 'arrow.uturn.backward' : 'checkmark',
+            android: done ? 'undo' : 'check',
+            web: done ? 'undo' : 'check',
+          } as SymbolName
+        }
+        size={24}
+        tintColor="#fff"
+      />
+    </View>
   );
 
-  const renderLeft = () => (
-    <Pressable
-      onPress={() => {
-        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        swipeRef.current?.close();
-        onDone();
-      }}
-      style={[styles.action, { backgroundColor: theme.secondary }]}
-      accessibilityRole="button"
-      accessibilityLabel={done ? 'Mark not done' : 'Mark done'}>
-      <ThemedText type="smallBold" style={[styles.actionLabel, { color: theme.primary }]}>
-        {done ? 'Undo' : 'Done'}
-      </ThemedText>
-    </Pressable>
+  const renderRight = () => (
+    <View style={[styles.action, styles.actionRight, { backgroundColor: theme.error }]}>
+      <SymbolView
+        name={{ ios: 'trash.fill', android: 'delete', web: 'delete' } as SymbolName}
+        size={24}
+        tintColor="#fff"
+      />
+    </View>
   );
 
   return (
+    <Animated.View layout={LinearTransition.duration(300)}>
     <Swipeable
       ref={swipeRef}
       renderRightActions={renderRight}
       renderLeftActions={renderLeft}
       overshootLeft={false}
       overshootRight={false}
-      friction={2}>
-      <Pressable
-        onPress={() => {
-          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          onDone();
-        }}
+      leftThreshold={72}
+      rightThreshold={72}
+      friction={1.5}
+      onSwipeableOpen={(direction) => {
+        swipeRef.current?.close();
+        if (direction === 'left') toggle();
+        else remove();
+      }}>
+      <View
         style={[
           styles.row,
-          {
-            backgroundColor: theme.background,
-            borderColor: theme.borderInk,
-            opacity: done ? 0.55 : 1,
-          },
-        ]}
-        accessibilityRole="button"
-        accessibilityState={{ checked: done }}>
-        <ProductPhoto imagePath={imagePath} placeholderLetter={letter} size={48} />
+          { backgroundColor: theme.background, opacity: done ? 0.55 : 1 },
+        ]}>
+        <Pressable
+          onPress={toggle}
+          hitSlop={10}
+          style={[
+            styles.checkbox,
+            {
+              borderColor: done ? CHECK_GREEN : theme.textSecondary,
+              backgroundColor: done ? CHECK_GREEN : 'transparent',
+            },
+          ]}
+          accessibilityRole="checkbox"
+          accessibilityLabel={title}
+          accessibilityState={{ checked: done }}>
+          {done ? (
+            <SymbolView
+              name={{ ios: 'checkmark', android: 'check', web: 'check' } as SymbolName}
+              size={14}
+              tintColor="#fff"
+            />
+          ) : null}
+        </Pressable>
+        <View style={[styles.photoWrap, { backgroundColor: theme.backgroundElement }]}>
+          <ProductPhoto imagePath={imagePath} placeholderLetter={letter} size={52} />
+        </View>
         <View style={styles.body}>
           <ThemedText
             type="smallBold"
@@ -156,8 +189,9 @@ export function ListItemRow({
             </View>
           ) : null}
         </View>
-      </Pressable>
+      </View>
     </Swipeable>
+    </Animated.View>
   );
 }
 
@@ -166,10 +200,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
+    paddingVertical: Spacing.two,
+    paddingHorizontal: Spacing.one,
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 7,
     borderWidth: 2,
-    borderRadius: Radius.card,
-    padding: Spacing.two,
-    marginBottom: Spacing.two,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoWrap: {
+    borderRadius: 14,
+    overflow: 'hidden',
   },
   body: {
     flex: 1,
@@ -206,11 +250,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     width: 88,
-    marginBottom: Spacing.two,
-    borderRadius: Radius.card,
+    marginVertical: 2,
   },
-  actionLabel: {
-    color: '#fff',
-    fontSize: 14,
+  actionLeft: {
+    borderTopLeftRadius: 16,
+    borderBottomLeftRadius: 16,
+  },
+  actionRight: {
+    borderTopRightRadius: 16,
+    borderBottomRightRadius: 16,
   },
 });

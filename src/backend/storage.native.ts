@@ -12,6 +12,8 @@ const KEYS = {
   onboardingCompleted: 'butter.onboardingCompleted',
   hasSeenWelcome: 'butter.hasSeenWelcome',
   groceryCashbackBps: 'butter.groceryCashbackBps',
+  /** '1' / unset = play spoken replies for typed AI input; '0' = silent text replies. */
+  aiTextReplyAudio: 'butter.aiTextReplyAudio',
   activeListId: 'butter.activeListId',
 } as const;
 

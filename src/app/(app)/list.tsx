@@ -19,6 +19,7 @@ import { useActiveList } from '@/auth/active-list';
 import { useGuestCart } from '@/auth/guest-cart-context';
 import { useSession } from '@/auth/session';
 import {
+  getMyProfile,
   getProductsByIds,
   getStore,
   listExpiringPurchases,
@@ -48,6 +49,14 @@ import {
   type ShoppingPlanLine,
 } from '@/backend';
 import { GroupManageSheet } from '@/components/list/group-manage-sheet';
+import {
+  assignGroceryDay,
+  buildGroceryDays,
+  groceryDayBlurb,
+  parseYmd,
+  ymdFromLocalDate,
+  type GroceryDayPlan,
+} from '@/components/plan/grocery-days';
 import { ListItemRow, cadenceLabel } from '@/components/plan/list-item-row';
 import { SectionDivider } from '@/components/plan/section-divider';
 import { StoreOrderCard, type StorePlanGroup } from '@/components/plan/store-order-card';
@@ -60,24 +69,12 @@ import { NativeIconButton } from '@/components/ui/native-icon-button';
 import { BottomTabInset, Fonts, Radius, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
-type Segment = 'plan' | 'past';
+type Segment = 'calendar' | 'list' | 'past';
 
 function kindLabel(kind: GroupKind): string {
   if (kind === 'personal') return 'Personal';
   if (kind === 'household') return 'Household';
   return 'Party';
-}
-
-function ymdFromLocalDate(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
-
-function parseYmd(ymd: string): Date {
-  const [y, m, d] = ymd.split('-').map(Number);
-  return new Date(y, (m ?? 1) - 1, d ?? 1);
 }
 
 function formatShortDate(ymd: string): string {
@@ -98,29 +95,24 @@ function formatDayTitle(ymd: string, todayYmd: string): string {
 
 function buildWeekCells(input: {
   todayYmd: string;
-  recommendedYmd: string | null;
-  bestDealYmd: string | null;
-  habitDueYmds: Set<string>;
+  plan: GroceryDayPlan;
+  itemCountByDay: Map<string, number>;
 }): WeekDayCell[] {
-  const today = parseYmd(input.todayYmd);
-  const start = new Date(today);
-  start.setDate(today.getDate() - today.getDay());
-  const cells: WeekDayCell[] = [];
-  for (let i = 0; i < 7; i += 1) {
-    const day = new Date(start);
-    day.setDate(start.getDate() + i);
-    const ymd = ymdFromLocalDate(day);
-    cells.push({
+  return input.plan.windowYmds.map((ymd) => {
+    const day = parseYmd(ymd);
+    const reasons = input.plan.reasons.get(ymd) ?? [];
+    return {
       ymd,
       weekday: new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(day),
       dayNum: String(day.getDate()),
       isToday: ymd === input.todayYmd,
-      isRecommended: ymd === input.recommendedYmd,
-      hasHabitsDue: input.habitDueYmds.has(ymd),
-      isBestDeal: ymd === input.bestDealYmd,
-    });
-  }
-  return cells;
+      isRecommended: reasons.includes('bestPrice'),
+      hasHabitsDue: reasons.includes('staples'),
+      isBestDeal: reasons.includes('bestDeal'),
+      isGroceryDay: reasons.length > 0,
+      itemCount: input.itemCountByDay.get(ymd) ?? 0,
+    };
+  });
 }
 
 function groupPlanByStore(
@@ -174,7 +166,9 @@ export default function PlanScreen() {
     isLoading: listsLoading,
   } = useActiveList();
 
-  const [segment, setSegment] = useState<Segment>('plan');
+  const [segment, setSegment] = useState<Segment>('calendar');
+  const isPlanView = segment !== 'past';
+  const [preferredDays, setPreferredDays] = useState<number[] | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -194,7 +188,6 @@ export default function PlanScreen() {
   const [buyHereOpen, setBuyHereOpen] = useState(false);
   const [expandedStoreId, setExpandedStoreId] = useState<string | null>(null);
   const [orderingStoreId, setOrderingStoreId] = useState<string | null>(null);
-  const [doneOpen, setDoneOpen] = useState(false);
 
   const [pastOrders, setPastOrders] = useState<GroupOrderRow[]>([]);
   const [pastDetail, setPastDetail] = useState<GroupOrderRow | null>(null);
@@ -207,21 +200,6 @@ export default function PlanScreen() {
   const listId = activeTarget?.list.id ?? null;
   const groupId = activeTarget?.group.id ?? null;
   const todayYmd = todayLocalDateKey();
-  const selectedYmdRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    selectedYmdRef.current = selectedYmd;
-  }, [selectedYmd]);
-
-  const habitDueYmds = useMemo(() => {
-    const set = new Set<string>();
-    for (const habit of habits) {
-      if (habit.auto_add_enabled && habit.next_due_on) {
-        set.add(habit.next_due_on);
-      }
-    }
-    return set;
-  }, [habits]);
 
   const habitByItemKey = useMemo(() => {
     const map = new Map<string, ItemHabit>();
@@ -232,21 +210,58 @@ export default function PlanScreen() {
     return map;
   }, [habits]);
 
-  const weekDays = useMemo(
-    () =>
-      buildWeekCells({
-        todayYmd,
-        recommendedYmd: bestShopDay?.shopOn ?? null,
-        bestDealYmd,
-        habitDueYmds,
-      }),
-    [todayYmd, bestShopDay?.shopOn, bestDealYmd, habitDueYmds],
+  const itemDueYmd = useCallback(
+    (item: ResolvedListItem): string | null => {
+      const key = itemHabitKey(item);
+      return (key ? habitByItemKey.get(key)?.next_due_on : null) ?? null;
+    },
+    [habitByItemKey],
   );
 
-  const storeGroups = useMemo(
-    () => groupPlanByStore(planLines, storeNames),
-    [planLines, storeNames],
+  /** Staples with auto-add on that are not already on the list. */
+  const upcomingStaples = useMemo(() => {
+    const onList = new Set(listItems.map(itemHabitKey).filter(Boolean));
+    return habits.filter((habit) => {
+      const key = habitKey(habit);
+      return habit.auto_add_enabled && habit.next_due_on && key && !onList.has(key);
+    });
+  }, [habits, listItems]);
+
+  const groceryPlan = useMemo(
+    () =>
+      buildGroceryDays({
+        todayYmd,
+        preferredDays,
+        bestShopYmd: bestShopDay?.shopOn ?? null,
+        bestDealYmd,
+        stapleDueYmds: [
+          ...listItems.filter((item) => !item.done_at).map(itemDueYmd),
+          ...upcomingStaples.map((habit) => habit.next_due_on),
+        ].filter((ymd): ymd is string => Boolean(ymd)),
+      }),
+    [todayYmd, preferredDays, bestShopDay?.shopOn, bestDealYmd, listItems, upcomingStaples, itemDueYmd],
   );
+
+  const dayByItemId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const item of listItems) {
+      map.set(item.id, assignGroceryDay(groceryPlan, itemDueYmd(item)));
+    }
+    return map;
+  }, [listItems, groceryPlan, itemDueYmd]);
+
+  const activeYmd =
+    selectedYmd && groceryPlan.windowYmds.includes(selectedYmd)
+      ? selectedYmd
+      : groceryPlan.primaryYmd;
+  const activeReasons = groceryPlan.reasons.get(activeYmd) ?? [];
+  const isGroceryDay = activeReasons.length > 0;
+
+  const selectedYmdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    selectedYmdRef.current = activeYmd;
+  }, [activeYmd]);
 
   const openItems = useMemo(
     () => listItems.filter((item) => !item.done_at),
@@ -258,25 +273,62 @@ export default function PlanScreen() {
     [listItems],
   );
 
-  const futureHabits = useMemo(() => {
-    if (!selectedYmd) return [] as ItemHabit[];
-    return habits
-      .filter(
-        (habit) =>
-          habit.auto_add_enabled &&
-          habit.next_due_on &&
-          habit.next_due_on > selectedYmd,
-      )
-      .sort((a, b) => a.next_due_on.localeCompare(b.next_due_on));
-  }, [habits, selectedYmd]);
+  const orderedItems = useMemo(() => [...openItems, ...doneItems], [openItems, doneItems]);
 
-  const useSoon = useMemo(() => {
-    if (!selectedYmd) return [] as ExpiringPurchase[];
-    return expiring
-      .filter((row) => row.expires_on >= selectedYmd)
-      .sort((a, b) => a.expires_on.localeCompare(b.expires_on))
-      .slice(0, 8);
-  }, [expiring, selectedYmd]);
+  const dayItems = useMemo(
+    () => orderedItems.filter((item) => dayByItemId.get(item.id) === activeYmd),
+    [orderedItems, dayByItemId, activeYmd],
+  );
+
+  const dayOpenItemIds = useMemo(
+    () => new Set(dayItems.filter((item) => !item.done_at).map((item) => item.id)),
+    [dayItems],
+  );
+
+  const itemCountByDay = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of openItems) {
+      const ymd = dayByItemId.get(item.id);
+      if (ymd) counts.set(ymd, (counts.get(ymd) ?? 0) + 1);
+    }
+    return counts;
+  }, [openItems, dayByItemId]);
+
+  const weekDays = useMemo(
+    () => buildWeekCells({ todayYmd, plan: groceryPlan, itemCountByDay }),
+    [todayYmd, groceryPlan, itemCountByDay],
+  );
+
+  const storeGroups = useMemo(
+    () =>
+      groupPlanByStore(
+        planLines.filter((line) => dayOpenItemIds.has(line.list_item_id)),
+        storeNames,
+      ),
+    [planLines, storeNames, dayOpenItemIds],
+  );
+
+  const dayStaples = useMemo(
+    () =>
+      upcomingStaples
+        .filter((habit) => assignGroceryDay(groceryPlan, habit.next_due_on) === activeYmd)
+        .sort((a, b) => a.next_due_on.localeCompare(b.next_due_on)),
+    [upcomingStaples, groceryPlan, activeYmd],
+  );
+
+  const nextGroceryYmd = useMemo(
+    () => groceryPlan.days.find((ymd) => ymd > activeYmd) ?? null,
+    [groceryPlan, activeYmd],
+  );
+
+  const useSoon = useMemo(
+    () =>
+      expiring
+        .filter((row) => row.expires_on >= activeYmd)
+        .sort((a, b) => a.expires_on.localeCompare(b.expires_on))
+        .slice(0, 8),
+    [expiring, activeYmd],
+  );
 
   const tripEstimateCents = useMemo(
     () => storeGroups.reduce((sum, group) => sum + group.totalCents, 0),
@@ -294,22 +346,14 @@ export default function PlanScreen() {
   }, [listItems, productImages]);
 
   const dayBlurb = useMemo(() => {
-    if (!selectedYmd) return null;
-    const bits: string[] = [];
-    if (bestShopDay?.shopOn === selectedYmd && bestShopDay.reasonLabel) {
-      bits.push(bestShopDay.reasonLabel);
+    if (!isGroceryDay) {
+      return nextGroceryYmd
+        ? `No grocery run planned. Next run: ${formatDayTitle(nextGroceryYmd, todayYmd)}.`
+        : 'No grocery run planned for this day.';
     }
-    if (bestDealYmd === selectedYmd) {
-      bits.push('Strong discount day nearby.');
-    }
-    if (habitDueYmds.has(selectedYmd)) {
-      bits.push('Staples are due around this day.');
-    }
-    if (bits.length === 0) {
-      bits.push(`Your haul for ${formatShortDate(selectedYmd)}.`);
-    }
-    return bits.join(' ');
-  }, [selectedYmd, bestShopDay, bestDealYmd, habitDueYmds]);
+    const why = groceryDayBlurb(activeReasons, bestShopDay?.reasonLabel);
+    return why || `Your haul for ${formatShortDate(activeYmd)}.`;
+  }, [isGroceryDay, nextGroceryYmd, todayYmd, activeReasons, bestShopDay?.reasonLabel, activeYmd]);
 
   const loadProductImages = useCallback(async (items: ResolvedListItem[], habitRows: ItemHabit[]) => {
     const ids = [
@@ -394,22 +438,23 @@ export default function PlanScreen() {
       setError(null);
       try {
         const zip = await resolveShopZip().catch(() => '98195');
-        const [rows, habitRows, shopDay, discount, expiringRows] = await Promise.all([
+        const [rows, habitRows, shopDay, discount, expiringRows, profile] = await Promise.all([
           listResolvedItems(listId),
           listHabits(groupId),
           suggestBestShopDate({ postalCode: zip, listId }).catch(() => null),
           suggestDiscountDate().catch(() => null),
           listExpiringPurchases(groupId).catch(() => [] as ExpiringPurchase[]),
+          getMyProfile().catch(() => null),
         ]);
         setListItems(rows);
         setHabits(habitRows);
         setExpiring(expiringRows);
         setBestShopDay(shopDay);
         setBestDealYmd(discount);
+        setPreferredDays(profile?.preferred_days ?? null);
         void loadProductImages(rows, habitRows);
-        const plannedFor = selectedYmdRef.current ?? shopDay?.shopOn ?? todayYmd;
-        if (!selectedYmdRef.current) setSelectedYmd(plannedFor);
         if (refresh) {
+          const plannedFor = selectedYmdRef.current ?? shopDay?.shopOn ?? todayYmd;
           await loadPlanForDay(listId, plannedFor, zip, true);
         }
       } catch (err) {
@@ -440,22 +485,22 @@ export default function PlanScreen() {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (segment === 'plan') void loadPlan();
-      else void loadPast();
+      if (segment === 'past') void loadPast();
+      else void loadPlan();
     }, 0);
     return () => clearTimeout(timer);
   }, [segment, loadPlan, loadPast]);
 
   useEffect(() => {
-    if (isGuest || !listId || !selectedYmd || segment !== 'plan') return;
+    if (isGuest || !listId || segment !== 'calendar' || !isGroceryDay) return;
     const timer = setTimeout(() => {
       void (async () => {
         const zip = await resolveShopZip().catch(() => '98195');
-        await loadPlanForDay(listId, selectedYmd, zip, false);
+        await loadPlanForDay(listId, activeYmd, zip, false);
       })();
     }, 0);
     return () => clearTimeout(timer);
-  }, [selectedYmd, listId, isGuest, segment, loadPlanForDay]);
+  }, [activeYmd, isGroceryDay, listId, isGuest, segment, loadPlanForDay]);
 
   const onGroupChanged = async (nextGroupId?: string) => {
     if (nextGroupId) await selectGroupId(nextGroupId);
@@ -463,14 +508,14 @@ export default function PlanScreen() {
   };
 
   const onOrderStore = async (storeId: string) => {
-    if (!listId || !groupId || !selectedYmd || orderingStoreId) return;
+    if (!listId || !groupId || !isGroceryDay || orderingStoreId) return;
     setOrderingStoreId(storeId);
     setError(null);
     try {
       const result = await placeStoreOrderFromList({
         listId,
         groupId,
-        plannedFor: selectedYmd,
+        plannedFor: activeYmd,
         storeId,
       });
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -512,14 +557,16 @@ export default function PlanScreen() {
   };
 
   const stickyVisible =
-    segment === 'plan' && !isGuest && openItems.length > 0 && selectedYmd != null;
+    segment === 'calendar' && !isGuest && isGroceryDay && dayOpenItemIds.size > 0;
+  // Native tabs float over content; clear the bar plus the home indicator.
+  const tabBarClearance = BottomTabInset + insets.bottom;
 
   if (isGuest) {
     return (
-      <ThemedView style={[styles.root, { paddingTop: insets.top + Spacing.three }]}>
+      <ThemedView style={[styles.root, { paddingTop: insets.top + Spacing.one }]}>
         <ScrollView
-          contentContainerStyle={styles.guestContent}
-          contentInsetAdjustmentBehavior="automatic">
+          contentContainerStyle={[styles.guestContent, { paddingBottom: tabBarClearance + Spacing.four }]}
+          contentInsetAdjustmentBehavior="never">
           <Animated.View entering={FadeInDown.duration(280)} style={styles.header}>
             <ThemedText type="smallBold" style={styles.pageTitle}>
               Plan
@@ -553,7 +600,7 @@ export default function PlanScreen() {
     );
   }
 
-  if ((isLoading || listsLoading) && segment === 'plan' && listItems.length === 0 && !error) {
+  if ((isLoading || listsLoading) && isPlanView && listItems.length === 0 && !error) {
     return (
       <ThemedView style={styles.centered}>
         <ActivityIndicator color={theme.secondary} />
@@ -568,19 +615,19 @@ export default function PlanScreen() {
     <ThemedView style={styles.root}>
       <ScrollView
         ref={scrollRef}
-        contentInsetAdjustmentBehavior="automatic"
+        contentInsetAdjustmentBehavior="never"
         contentContainerStyle={[
           styles.scrollContent,
           {
-            paddingTop: insets.top + Spacing.two,
-            paddingBottom: BottomTabInset + Spacing.four + (stickyVisible ? 72 : 0),
+            paddingTop: insets.top + Spacing.one,
+            paddingBottom: tabBarClearance + Spacing.four + (stickyVisible ? 72 : 0),
           },
         ]}
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing || (segment === 'past' && pastLoading)}
             onRefresh={() => {
-              if (segment === 'plan') void loadPlan(true);
+              if (isPlanView) void loadPlan(true);
               else void loadPast();
             }}
             tintColor={theme.text}
@@ -688,7 +735,7 @@ export default function PlanScreen() {
               </View>
             ) : null}
 
-            {openItems.length === 0 ? (
+            {listItems.length === 0 ? (
               <View style={styles.emptyBlock}>
                 <ThemedText type="small" themeColor="textSecondary" style={styles.centerText}>
                   Nothing on this trip yet. Add picks from Shop, then come back to plan.
@@ -701,10 +748,11 @@ export default function PlanScreen() {
                 />
               </View>
             ) : (
-              openItems.map((item) => {
+              orderedItems.map((item) => {
                 const title = item.display_name?.trim() || item.custom_name?.trim() || 'Item';
                 const key = itemHabitKey(item);
                 const habit = key ? habitByItemKey.get(key) : undefined;
+                const isDone = Boolean(item.done_at);
                 return (
                   <ListItemRow
                     key={item.id}
@@ -714,54 +762,26 @@ export default function PlanScreen() {
                     imagePath={item.product_id ? productImages.get(item.product_id) : null}
                     cadenceTag={habit ? cadenceLabel(habit.interval_days) : null}
                     recipeTag={Boolean(item.source_recipe_id)}
+                    done={isDone}
                     onDone={() => {
-                      void setListItemDone(item.id, true).then(() => loadPlan(true));
+                      const next = !isDone;
+                      setListItems((rows) =>
+                        rows.map((row) =>
+                          row.id === item.id
+                            ? { ...row, done_at: next ? new Date().toISOString() : null }
+                            : row,
+                        ),
+                      );
+                      void setListItemDone(item.id, next).then(() => loadPlan(true));
                     }}
                     onDelete={() => {
+                      setListItems((rows) => rows.filter((row) => row.id !== item.id));
                       void removeListItem(item.id).then(() => loadPlan(true));
                     }}
                   />
                 );
               })
             )}
-
-            {doneItems.length > 0 ? (
-              <View
-                style={[
-                  styles.collapseCard,
-                  { backgroundColor: theme.background, borderColor: theme.borderInk },
-                ]}>
-                <Pressable
-                  onPress={() => setDoneOpen((value) => !value)}
-                  style={styles.collapseHead}
-                  accessibilityRole="button">
-                  <ThemedText type="smallBold">Checked off ({doneItems.length})</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    {doneOpen ? 'Hide' : 'Show'}
-                  </ThemedText>
-                </Pressable>
-                {doneOpen
-                  ? doneItems.map((item) => {
-                      const title = item.display_name?.trim() || item.custom_name?.trim() || 'Item';
-                      return (
-                        <ListItemRow
-                          key={item.id}
-                          title={title}
-                          quantity={Number(item.quantity) || undefined}
-                          imagePath={item.product_id ? productImages.get(item.product_id) : null}
-                          done
-                          onDone={() => {
-                            void setListItemDone(item.id, false).then(() => loadPlan(true));
-                          }}
-                          onDelete={() => {
-                            void removeListItem(item.id).then(() => loadPlan(true));
-                          }}
-                        />
-                      );
-                    })
-                  : null}
-              </View>
-            ) : null}
 
             {futureHabits.length > 0 || useSoon.length > 0 ? (
               <>
@@ -910,7 +930,6 @@ export default function PlanScreen() {
           style={[
             styles.stickyBar,
             {
-              paddingBottom: Math.max(insets.bottom, Spacing.two),
               backgroundColor: theme.background,
               borderTopColor: theme.border,
             },
@@ -1168,6 +1187,7 @@ const styles = StyleSheet.create({
     bottom: BottomTabInset,
     paddingHorizontal: Spacing.three,
     paddingTop: Spacing.two,
+    paddingBottom: 0,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   stickyBtn: {
