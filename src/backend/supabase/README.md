@@ -115,6 +115,10 @@ images live in `public-assets`. The database stores the file path only.
 | Add a Trader Joe's or campus store | `registerReportableStore` | The store id. Campus stores need `collegeName`. |
 | Report a shelf price there | `reportManualPrice` | The price id. Pass cents. QFC and Safeway prices are not reported this way. |
 | List stores that accept reports | `listReportableStores` | Trader Joe's and campus stores. |
+| Resolve ZIP for price ingest | `resolveShopZip` | Saved postal code, GPS reverse geocode, or campus `98195`. |
+| Fill catalog for a search miss | `ensureCatalogForTerm` | Hits the price proxy, then re-reads Supabase products. |
+| Popular carousel with no history | `listCampusPopularProducts` | Recently priced products for “Popular on campus”. |
+| Barcode with ingest on miss | `findOrIngestProductByUpc` | Local UPC lookup, then QFC ingest via the proxy. |
 | Remember that eggs last two weeks | `saveHabit` | The group habit. |
 | Add due foods to the list | `addDueHabitItems` | How many new list rows were created. |
 | Show the trending tab | `listTrending` | Organic and sponsored rows. Label the sponsored ones. |

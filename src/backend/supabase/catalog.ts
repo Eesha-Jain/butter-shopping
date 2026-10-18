@@ -1,3 +1,4 @@
+import { BACKEND_URL, CAMPUS_DEFAULT_ZIP } from '../../api/config';
 import type {
   CurrentPrice,
   NearbyStore,
@@ -12,6 +13,27 @@ import type {
 import { supabase } from './client';
 import { fail } from '../errors';
 import { unwrap, unwrapOne } from './query';
+
+const CLIENT_INGEST_COOLDOWN_MS = 10 * 60 * 1000;
+const ingestCooldown = new Map<string, number>();
+
+function ingestCooldownKey(term: string, zip: string): string {
+  return `${zip}:${term.trim().toLowerCase()}`;
+}
+
+function ingestOnCooldown(term: string, zip: string): boolean {
+  const at = ingestCooldown.get(ingestCooldownKey(term, zip));
+  if (at == null) return false;
+  if (Date.now() - at > CLIENT_INGEST_COOLDOWN_MS) {
+    ingestCooldown.delete(ingestCooldownKey(term, zip));
+    return false;
+  }
+  return true;
+}
+
+function markIngest(term: string, zip: string): void {
+  ingestCooldown.set(ingestCooldownKey(term, zip), Date.now());
+}
 
 /**
  * Searches comparable categories such as whole milk. Dietary words such as vegan
@@ -154,6 +176,91 @@ export async function findProductByUpc(upc: string): Promise<Product | null> {
   return unwrap(
     await supabase.from('products').select('*').eq('upc', upc).eq('is_active', true).maybeSingle(),
   );
+}
+
+/**
+ * Looks up a barcode in Supabase, then asks the price proxy to ingest from QFC
+ * (and optionally enrich via Open Food Facts) when missing.
+ */
+export async function findOrIngestProductByUpc(
+  upc: string,
+  zip: string = CAMPUS_DEFAULT_ZIP,
+): Promise<Product | null> {
+  const code = upc.trim();
+  if (!code) return null;
+  const existing = await findProductByUpc(code);
+  if (existing) return existing;
+
+  try {
+    const params = new URLSearchParams({ upc: code, zip });
+    const res = await fetch(`${BACKEND_URL}/api/products/by-upc?${params}`);
+    const json = (await res.json().catch(() => ({}))) as { product?: Product | null };
+    if (json.product?.id) return json.product;
+  } catch {
+    // Fall through to a final local read.
+  }
+  return findProductByUpc(code);
+}
+
+/**
+ * When the local catalog is thin for a search term, fetch retailer prices
+ * (which persist into Supabase) and re-query products. Honors a 10-minute
+ * client cooldown per term+zip. Never call this on bare Shop open.
+ */
+export async function ensureCatalogForTerm(term: string, zip: string): Promise<Product[]> {
+  const query = term.trim();
+  if (query.length < 2) return searchProducts(query);
+
+  let products = await searchProducts(query);
+  if (products.length >= 3) return products;
+  if (ingestOnCooldown(query, zip)) return products;
+
+  try {
+    const params = new URLSearchParams({ term: query, zip });
+    await fetch(`${BACKEND_URL}/api/prices?${params}`);
+    markIngest(query, zip);
+  } catch {
+    // Keep whatever is already in the catalog.
+  }
+  products = await searchProducts(query);
+  return products;
+}
+
+/**
+ * Recently priced products for the “Popular on campus” carousel when the
+ * shopper has no personal staples yet.
+ */
+export async function listCampusPopularProducts(input?: { limit?: number }): Promise<Product[]> {
+  const limit = input?.limit ?? 12;
+  const prices = unwrap(
+    await supabase
+      .from('prices')
+      .select('store_product_id, created_at')
+      .order('created_at', { ascending: false })
+      .limit(80),
+  );
+  if (prices.length === 0) {
+    return listActiveProducts({ limit });
+  }
+
+  const storeProductIds = [...new Set(prices.map((row) => row.store_product_id))];
+  const listings = unwrap(
+    await supabase.from('store_products').select('id, product_id').in('id', storeProductIds),
+  );
+  const productIdByListing = new Map(listings.map((row) => [row.id, row.product_id]));
+  const orderedIds: string[] = [];
+  const seen = new Set<string>();
+  for (const price of prices) {
+    const productId = productIdByListing.get(price.store_product_id);
+    if (!productId || seen.has(productId)) continue;
+    seen.add(productId);
+    orderedIds.push(productId);
+    if (orderedIds.length >= limit) break;
+  }
+  if (orderedIds.length === 0) {
+    return listActiveProducts({ limit });
+  }
+  return getProductsByIds(orderedIds);
 }
 
 /**

@@ -54,6 +54,8 @@ export {
 } from './lists';
 export type { ActiveListTarget } from './lists';
 export {
+  ensureCatalogForTerm,
+  findOrIngestProductByUpc,
   findProductByUpc,
   formatPromotionBadge,
   getCheapestPriceCentsByProductIds,
@@ -63,6 +65,7 @@ export {
   getProductsByIds,
   getStore,
   listActiveProducts,
+  listCampusPopularProducts,
   listCategories,
   listCurrentPromotions,
   listReportedOffers,
@@ -82,7 +85,7 @@ export {
   rulesFromUserFoodRules,
 } from './foodFilters';
 export type { SessionFoodRule, ShopSort } from './foodFilters';
-export { fetchNearbyShops, getUserCoords } from './locationService';
+export { fetchNearbyShops, getUserCoords, resolveShopZip } from './locationService';
 export {
   getWeeklyBudgetCents,
   planLowestTrip,

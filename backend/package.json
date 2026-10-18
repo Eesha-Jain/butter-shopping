@@ -4,7 +4,9 @@
   "description": "",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "bootstrap": "node bootstrap-staples.js",
+    "bootstrap:uw": "node bootstrap-staples.js --zip=98195"
   },
   "keywords": [],
   "type": "module",

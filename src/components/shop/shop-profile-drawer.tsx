@@ -1,10 +1,12 @@
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { SymbolView } from 'expo-symbols';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  Easing,
   Modal,
   Platform,
   Pressable,
@@ -24,6 +26,9 @@ import {
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+
+const SLIDE_MS = 280;
+const SLIDE_EASE = Easing.out(Easing.cubic);
 
 type Props = {
   visible: boolean;
@@ -53,9 +58,53 @@ export function ShopProfileDrawer({
   const { width } = useWindowDimensions();
   const panelWidth = Math.min(320, Math.round(width * 0.82));
   const [uploading, setUploading] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const [translateX] = useState(() => new Animated.Value(-panelWidth));
+  const [backdropOpacity] = useState(() => new Animated.Value(0));
 
   const avatarBaseUrl = publicImageUrl('avatars', avatarPath);
   const avatarUrl = avatarBaseUrl ? `${avatarBaseUrl}?t=${avatarVersion}` : null;
+
+  useEffect(() => {
+    translateX.setValue(-panelWidth);
+    backdropOpacity.setValue(0);
+    Animated.parallel([
+      Animated.timing(translateX, {
+        toValue: 0,
+        duration: SLIDE_MS,
+        easing: SLIDE_EASE,
+        useNativeDriver: true,
+      }),
+      Animated.timing(backdropOpacity, {
+        toValue: 1,
+        duration: SLIDE_MS,
+        easing: SLIDE_EASE,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [backdropOpacity, panelWidth, translateX]);
+
+  const requestClose = (afterClose?: () => void) => {
+    if (closing) return;
+    setClosing(true);
+    const done = afterClose ?? onClose;
+    Animated.parallel([
+      Animated.timing(translateX, {
+        toValue: -panelWidth,
+        duration: SLIDE_MS,
+        easing: SLIDE_EASE,
+        useNativeDriver: true,
+      }),
+      Animated.timing(backdropOpacity, {
+        toValue: 0,
+        duration: SLIDE_MS,
+        easing: SLIDE_EASE,
+        useNativeDriver: true,
+      }),
+    ]).start(({ finished }) => {
+      if (finished) done();
+    });
+  };
 
   const pickAndUpload = async (source: 'library' | 'camera') => {
     if (isGuest) {
@@ -165,9 +214,16 @@ export function ShopProfileDrawer({
   };
 
   return (
-    <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      animationType="none"
+      transparent
+      onRequestClose={() => requestClose()}>
       <View style={styles.overlay}>
-        <View
+        <Animated.View style={[styles.backdrop, { opacity: backdropOpacity }]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => requestClose()} />
+        </Animated.View>
+        <Animated.View
           style={[
             styles.panel,
             {
@@ -176,11 +232,12 @@ export function ShopProfileDrawer({
               paddingTop: insets.top + Spacing.three,
               paddingBottom: insets.bottom + Spacing.three,
               borderRightColor: theme.border,
+              transform: [{ translateX }],
             },
           ]}>
           <View style={styles.header}>
             <ThemedText type="subtitle">Profile</ThemedText>
-            <Pressable onPress={onClose}>
+            <Pressable onPress={() => requestClose()}>
               <ThemedText type="linkPrimary">Close</ThemedText>
             </Pressable>
           </View>
@@ -236,7 +293,7 @@ export function ShopProfileDrawer({
 
           {isGuest ? (
             <Pressable
-              onPress={onSignIn}
+              onPress={() => requestClose(onSignIn)}
               style={[styles.primaryBtn, { backgroundColor: theme.primary }]}>
               <ThemedText type="smallBold" style={{ color: theme.primaryText }}>
                 Sign in
@@ -244,13 +301,12 @@ export function ShopProfileDrawer({
             </Pressable>
           ) : (
             <Pressable
-              onPress={onSignOut}
+              onPress={() => requestClose(onSignOut)}
               style={[styles.outlineBtn, { borderColor: theme.border }]}>
               <ThemedText type="smallBold">Sign out</ThemedText>
             </Pressable>
           )}
-        </View>
-        <Pressable style={styles.backdrop} onPress={onClose} />
+        </Animated.View>
       </View>
     </Modal>
   );
@@ -262,7 +318,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   backdrop: {
-    flex: 1,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.35)',
   },
   panel: {

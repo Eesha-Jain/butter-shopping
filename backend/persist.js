@@ -1,8 +1,10 @@
+import { categoryForProductName } from './category-map.js';
+
 function supabaseConfig() {
   const url = process.env.SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
-  return { url: url.replace(/\/$/, ""), key };
+  return { url: url.replace(/\/$/, ''), key };
 }
 
 async function rest(path, options = {}) {
@@ -13,7 +15,7 @@ async function rest(path, options = {}) {
     headers: {
       apikey: config.key,
       Authorization: `Bearer ${config.key}`,
-      "Content-Type": "application/json",
+      'Content-Type': 'application/json',
       ...(options.headers ?? {}),
     },
   });
@@ -23,6 +25,66 @@ async function rest(path, options = {}) {
   if (res.status === 204) return null;
   const text = await res.text();
   return text ? JSON.parse(text) : null;
+}
+
+/** Active product row by UPC, or null. */
+export async function fetchProductByUpc(upc) {
+  if (!canPersist()) return null;
+  const code = String(upc ?? '').trim();
+  if (!code) return null;
+  const rows = await rest(
+    `products?upc=eq.${encodeURIComponent(code)}&is_active=eq.true&select=*&limit=1`,
+  );
+  return rows?.[0] ?? null;
+}
+
+/**
+ * Sets category_id on active products that still have none, using the keyword map.
+ * Returns { updated, byCategory }.
+ */
+export async function assignProductCategories() {
+  if (!canPersist()) throw new Error('Persist is not configured.');
+  const categories = await rest('product_categories?parent_id=is.null&select=id,name');
+  const byName = new Map((categories ?? []).map((row) => [String(row.name).toLowerCase(), row.id]));
+  const products = await rest(
+    'products?category_id=is.null&is_active=eq.true&select=id,name&limit=1000',
+  );
+  const byCategory = {};
+  let updated = 0;
+  for (const product of products ?? []) {
+    const categoryName = categoryForProductName(product.name);
+    const categoryId = byName.get(String(categoryName).toLowerCase());
+    if (!categoryId) continue;
+    await rest(`products?id=eq.${product.id}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ category_id: categoryId }),
+    });
+    byCategory[categoryName] = (byCategory[categoryName] ?? 0) + 1;
+    updated += 1;
+  }
+  return { updated, byCategory };
+}
+
+/** Best-effort Open Food Facts trait sync via Edge Function (service role). */
+export async function enrichProductComposition(upc) {
+  const config = supabaseConfig();
+  const code = String(upc ?? '').trim();
+  if (!config || !code) return false;
+  try {
+    const res = await fetch(`${config.url}/functions/v1/sync-product-composition`, {
+      method: 'POST',
+      headers: {
+        apikey: config.key,
+        Authorization: `Bearer ${config.key}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ upc: code }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 async function chainId(name) {

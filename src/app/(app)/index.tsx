@@ -22,6 +22,7 @@ import { useSession } from '@/auth/session';
 import {
   addListItem,
   applyFoodFilters,
+  ensureCatalogForTerm,
   formatPromotionBadge,
   getActiveListProductQtyMap,
   getCheapestPriceCentsByProductIds,
@@ -32,6 +33,7 @@ import {
   getProductsByIds,
   indexTraitsByProduct,
   listActiveProducts,
+  listCampusPopularProducts,
   listCategories,
   listFoodTraits,
   listMyFoodRules,
@@ -41,6 +43,7 @@ import {
   listTrending,
   messageFromUnknown,
   removeListItem,
+  resolveShopZip,
   rulesFromUserFoodRules,
   searchProducts,
   showErrorToast,
@@ -91,9 +94,11 @@ export default function ShopScreen() {
   const [moreCategoriesOpen, setMoreCategoriesOpen] = useState(false);
 
   const [staples, setStaples] = useState<Product[]>([]);
+  const [staplesArePersonal, setStaplesArePersonal] = useState(false);
   const [trending, setTrending] = useState<{ product: Product; sponsored: boolean }[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [promotions, setPromotions] = useState<Map<string, Promotion>>(new Map());
+  const [checkingStores, setCheckingStores] = useState(false);
 
   const [traits, setTraits] = useState<FoodTrait[]>([]);
   const [preferenceRules, setPreferenceRules] = useState<SessionFoodRule[]>([]);
@@ -204,17 +209,25 @@ export default function ShopScreen() {
         const collegeId = isGuest ? null : (await getMyProfile()).college_id;
         const groupId = activeTarget?.group.id;
 
-        const [promoMap, cats, stapleProductIds, trendingRows] = await Promise.all([
+        const [promoMap, cats, stapleProductIds, trendingRows, popularCampus] = await Promise.all([
           getProductPromotionMap(),
           listCategories(),
           groupId ? listMyStapleProductIds(groupId) : Promise.resolve([] as string[]),
           listTrending(collegeId),
+          listCampusPopularProducts({ limit: 12 }),
         ]);
         if (cancelled) return;
 
         setPromotions(promoMap);
         setCategories(cats);
-        setStaples(stapleProductIds.length ? await getProductsByIds(stapleProductIds) : []);
+
+        if (stapleProductIds.length > 0) {
+          setStaples(await getProductsByIds(stapleProductIds));
+          setStaplesArePersonal(true);
+        } else {
+          setStaples(popularCampus);
+          setStaplesArePersonal(false);
+        }
 
         const trendingProductIds = trendingRows
           .filter((row) => row.kind === 'product' && row.product_id)
@@ -222,18 +235,44 @@ export default function ShopScreen() {
         const trendingProducts = await getProductsByIds(trendingProductIds);
         if (cancelled) return;
         const byId = new Map(trendingProducts.map((row) => [row.id, row]));
-        setTrending(
-          trendingRows
-            .filter((row) => row.kind === 'product' && row.product_id && byId.has(row.product_id))
-            .map((row) => ({
-              product: byId.get(row.product_id as string)!,
-              sponsored: row.source === 'sponsored',
-            })),
-        );
+        const organicTrending = trendingRows
+          .filter((row) => row.kind === 'product' && row.product_id && byId.has(row.product_id))
+          .map((row) => ({
+            product: byId.get(row.product_id as string)!,
+            sponsored: row.source === 'sponsored',
+          }));
+        if (organicTrending.length > 0) {
+          setTrending(organicTrending);
+        } else if (stapleProductIds.length > 0 && popularCampus.length > 0) {
+          // Personal staples exist; use campus popular as the discovery band.
+          setTrending(popularCampus.map((product) => ({ product, sponsored: false })));
+        } else {
+          // Avoid duplicating the same Popular on campus carousel under staples.
+          setTrending([]);
+        }
 
-        const rawProducts = debouncedSearch
+        let rawProducts = debouncedSearch
           ? await searchProducts(debouncedSearch)
           : await listActiveProducts({ categoryId: selectedCategoryId, limit: 60 });
+        if (cancelled) return;
+
+        // Demand-driven ingest: only when the user searched and the catalog is thin.
+        if (debouncedSearch.length >= 2 && rawProducts.length < 3) {
+          setCheckingStores(true);
+          try {
+            const zip = await resolveShopZip();
+            if (cancelled) return;
+            rawProducts = await ensureCatalogForTerm(debouncedSearch, zip);
+          } catch (err) {
+            if (!cancelled) {
+              showErrorToast(err, 'Could not check nearby stores.');
+            }
+          } finally {
+            if (!cancelled) setCheckingStores(false);
+          }
+        } else if (!cancelled) {
+          setCheckingStores(false);
+        }
         if (cancelled) return;
 
         const [traitsForProducts, priceMap] = await Promise.all([
@@ -257,6 +296,7 @@ export default function ShopScreen() {
       } catch (err) {
         if (!cancelled) {
           showErrorToast(err, 'Could not update products.');
+          setCheckingStores(false);
         }
       }
     })();
@@ -542,38 +582,13 @@ export default function ShopScreen() {
                 </ThemedText>
               )}
 
-              {staples.length > 0 ? (
-                <View style={styles.section}>
-                  <ThemedText type="subtitle">Your staples</ThemedText>
-                  <FlatList
-                    horizontal
-                    data={staples}
-                    keyExtractor={(item) => item.id}
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.carousel}
-                    renderItem={({ item }) => (
-                      <ProductCard
-                        product={item}
-                        compact
-                        saleBadge={
-                          promotions.has(item.id)
-                            ? formatPromotionBadge(promotions.get(item.id)!)
-                            : null
-                        }
-                        quantityOnList={effectiveQtyMap.get(item.id)?.quantity}
-                        onPress={() => openProduct(item)}
-                        onAdd={() => void handleAdd(item)}
-                        onIncrement={() => void handleIncrement(item)}
-                        onDecrement={() => void handleDecrement(item)}
-                      />
-                    )}
-                  />
-                </View>
-              ) : null}
-
               {trending.length > 0 ? (
                 <View style={styles.section}>
-                  <ThemedText type="subtitle">Trending</ThemedText>
+                  <ThemedText type="subtitle">
+                    {trending.every((row) => !row.sponsored) && staplesArePersonal
+                      ? 'Popular on campus'
+                      : 'Trending'}
+                  </ThemedText>
                   <FlatList
                     horizontal
                     data={trending}
@@ -595,6 +610,37 @@ export default function ShopScreen() {
                         onAdd={() => void handleAdd(item.product)}
                         onIncrement={() => void handleIncrement(item.product)}
                         onDecrement={() => void handleDecrement(item.product)}
+                      />
+                    )}
+                  />
+                </View>
+              ) : null}
+
+              {staples.length > 0 ? (
+                <View style={styles.section}>
+                  <ThemedText type="subtitle">
+                    {staplesArePersonal ? 'Your staples' : 'Popular on campus'}
+                  </ThemedText>
+                  <FlatList
+                    horizontal
+                    data={staples}
+                    keyExtractor={(item) => item.id}
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.carousel}
+                    renderItem={({ item }) => (
+                      <ProductCard
+                        product={item}
+                        compact
+                        saleBadge={
+                          promotions.has(item.id)
+                            ? formatPromotionBadge(promotions.get(item.id)!)
+                            : null
+                        }
+                        quantityOnList={effectiveQtyMap.get(item.id)?.quantity}
+                        onPress={() => openProduct(item)}
+                        onAdd={() => void handleAdd(item)}
+                        onIncrement={() => void handleIncrement(item)}
+                        onDecrement={() => void handleDecrement(item)}
                       />
                     )}
                   />
@@ -652,13 +698,27 @@ export default function ShopScreen() {
                 </ScrollView>
               </View>
 
-              <ThemedText type="subtitle">Products</ThemedText>
+              <View style={styles.productsHeader}>
+                <ThemedText type="subtitle">Products</ThemedText>
+                {checkingStores ? (
+                  <View style={styles.checkingRow}>
+                    <ActivityIndicator size="small" color={theme.primary} />
+                    <ThemedText type="small" themeColor="textSecondary">
+                      Checking nearby stores…
+                    </ThemedText>
+                  </View>
+                ) : null}
+              </View>
             </View>
           }
           ListEmptyComponent={
             <ThemedView style={styles.empty}>
               <ThemedText type="small" themeColor="textSecondary">
-                No products match. Try Clear all in Filters or another category.
+                {checkingStores
+                  ? 'Looking up products at nearby stores…'
+                  : debouncedSearch
+                    ? 'No products match. Try another search, Clear all in Filters, or another category.'
+                    : 'Catalog is empty. Run the campus staple bootstrap on the price proxy, then pull to refresh.'}
               </ThemedText>
             </ThemedView>
           }
@@ -840,6 +900,14 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.three,
   },
   section: {
+    gap: Spacing.two,
+  },
+  productsHeader: {
+    gap: Spacing.two,
+  },
+  checkingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: Spacing.two,
   },
   carousel: {

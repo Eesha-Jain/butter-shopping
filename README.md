@@ -60,17 +60,47 @@ Orders can be placed from your usual habits, with a confirmation notification be
 
    ```bash
    npm install
+   cd backend && npm install && cd ..
    ```
 
-2. Start the app:
+2. Copy [`.env.example`](./.env.example) to `.env.local` and fill Supabase keys. For the price proxy, also set the vars in [`backend/.env.example`](./backend/.env.example) (Kroger + `SUPABASE_SERVICE_ROLE_KEY`) in `.env.local` or `src/backend/.env`.
+
+3. Apply migrations (`npx supabase db push`), then start the price proxy and the app:
 
    ```bash
+   cd backend && npm start
+   # other terminal
    npx expo start
+   ```
+
+4. Confirm persist is on, then bootstrap the campus catalog once:
+
+   ```bash
+   curl http://127.0.0.1:3000/api/health
+   # expect: { "qfc": true, "safeway": true, "persist": true }
+
+   cd backend && npm run bootstrap:uw
    ```
 
 Then open it in a [development build](https://docs.expo.dev/develop/development-builds/introduction/), [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/), [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/), or [Expo Go](https://expo.dev/go).
 
 App routes live under `src/app/` using [Expo Router](https://docs.expo.dev/router/introduction/) file-based routing.
+
+## How the product catalog fills
+
+The Shop tab **reads** Supabase only. Real products are written by the Node price proxy (service role), not by fake seed rows and not on every app open.
+
+| Path | When | What happens |
+| --- | --- | --- |
+| Staple bootstrap | Ops / before demo | `npm run bootstrap:uw` hits `/api/prices` for campus staple terms (ZIP `98195`), upserts products + prices, then assigns categories |
+| Shop search miss | User search with fewer than 3 local hits | App calls `/api/prices` for that term + resolved ZIP, then re-queries Supabase |
+| Planning | `planLowestTrip` | Same proxy path per list item |
+| Barcode | `findOrIngestProductByUpc` | QFC lookup by UPC via `/api/products/by-upc`, optional OFF enrich |
+| User report | TJ / campus only | `reportManualPrice` creates product + listing |
+
+ZIP resolution: saved location → GPS reverse geocode → campus default `98195`. Retailer calls are cooled down server-side (5 min) and client-side (10 min) per term+zip.
+
+Production apps should set `EXPO_PUBLIC_BACKEND_URL` to your deployed proxy (see [`src/api/config.js`](./src/api/config.js)).
 
 ## Roadmap / checklist
 
@@ -92,7 +122,8 @@ Track what’s done and what’s left. Check items off as they land. Product dep
 - [x] Product detail sheet + add-to-list with quantity and haptics
 - [x] Active list switcher (personal vs roommate / group lists)
 - [x] Staples + trending discovery bands
-- [ ] Seeded campus / college-store catalog with reliable live prices
+- [x] Campus catalog ingest (QFC/Safeway proxy + staple bootstrap + Shop search-miss)
+- [ ] Reliable live prices across all preferred stores (ongoing refresh)
 - [ ] Aisle / in-store navigation for pickup lists
 
 ### Nearby & preferred stores
@@ -143,4 +174,5 @@ Track what’s done and what’s left. Check items off as they land. Product dep
 - [x] Product / UX docs (market research, Shop user stories)
 - [ ] Consistent empty / error / loading states across all tabs
 - [ ] Accessibility pass (fonts, contrast, hit targets)
-- [ ] Demo seed data and a short pitch / walkthrough script for DubHacks
+- [x] Demo catalog bootstrap (`backend` staple ingest) — pitch / walkthrough script still open
+- [ ] Short pitch / walkthrough script for DubHacks
