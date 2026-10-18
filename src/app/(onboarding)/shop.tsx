@@ -1,6 +1,6 @@
 import { StyleSheet, View } from 'react-native';
 
-import { persistOnboardingDraft } from '@/auth/finish-onboarding';
+import { completeOnboardingWithDraft } from '@/auth/finish-onboarding';
 import { useOnboardingDraft, type TransportMode } from '@/auth/onboarding-draft';
 import { useSession } from '@/auth/session';
 import {
@@ -16,6 +16,7 @@ const TRANSPORT: { id: TransportMode; label: string }[] = [
   { id: 'transit', label: 'Transit' },
   { id: 'drive', label: 'Drive' },
   { id: 'rideshare', label: 'Rideshare' },
+  { id: 'delivered', label: 'Delivered' },
 ];
 
 const STORE_CAPS = [
@@ -28,40 +29,30 @@ export default function OnboardingShopScreen() {
   const { isGuest, finishOnboarding } = useSession();
   const draft = useOnboardingDraft();
 
-  const persistAndFinish = async () => {
-    try {
-      await persistOnboardingDraft({
-        isGuest,
-        foodRules: draft.foodRules,
-        discountCodes: draft.discountCodes,
-        cashbackBps: draft.cashbackBps,
-        transportMode: draft.transportMode,
-        maxStores: draft.maxStores,
-      });
-    } catch {
-      // Still let them into the app; prefs can be set later.
-    }
-    finishOnboarding();
+  const finishPrefs = () => {
+    void completeOnboardingWithDraft({
+      isGuest,
+      finishOnboarding,
+      draft: draft.toPayload(),
+    });
   };
 
   return (
     <OnboardingShell
-      step={3}
+      step={5}
       title="How do you usually get groceries?"
-      subtitle="So I can prefer stores that fit your trip."
-      continueLabel="Start shopping"
-      onSkip={() => void persistAndFinish()}
-      onContinue={() => void persistAndFinish()}>
+      subtitle="Pick every mode you use — so I can prefer stores that fit your trip."
+      continueLabel="Finish"
+      onSkip={finishPrefs}
+      onContinue={finishPrefs}>
       <OnboardingLabel>I usually</OnboardingLabel>
       <View style={styles.chips}>
         {TRANSPORT.map((row) => (
           <Chip
             key={row.id}
             label={row.label}
-            selected={draft.transportMode === row.id}
-            onPress={() =>
-              draft.setTransportMode(draft.transportMode === row.id ? null : row.id)
-            }
+            selected={draft.transportModes.includes(row.id)}
+            onPress={() => draft.toggleTransportMode(row.id)}
           />
         ))}
       </View>

@@ -1,4 +1,5 @@
 import { type BottomSheetModal } from '@gorhom/bottom-sheet';
+import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -11,13 +12,13 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
-  TextInput,
   View,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { runOnJS } from 'react-native-reanimated';
+import Animated, { FadeInDown, runOnJS } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useActiveList } from '@/auth/active-list';
 import { useGuestCart } from '@/auth/guest-cart-context';
 import { useSession } from '@/auth/session';
 import {
@@ -26,6 +27,7 @@ import {
   applyFoodFilters,
   ensureCatalogForTerm,
   formatPromotionBadge,
+  promotionSavingsHint,
   getActiveListProductQtyMap,
   fetchNearbyShops,
   getCheapestPriceCentsByProductIds,
@@ -33,8 +35,10 @@ import {
   type OpenPricesGeo,
   getEffectiveGroceryCashbackBps,
   getGuestFavoriteIds,
-  getMyDefaultList,
+  getGuestFoodRules,
+  getGuestOnboardingDraft,
   getMyProfile,
+  saveGuestOnboardingDraft,
   getProductPromotionMap,
   getProductTraitsForIds,
   getProductsByIds,
@@ -45,13 +49,13 @@ import {
   listFoodTraits,
   listMyFavoriteProductIds,
   listMyFoodRules,
-  listMyListTargets,
   listMyLocations,
   listMyStapleProductIds,
   listProductsGroupedByCategory,
   listStoreShelf,
   listTrending,
   messageFromUnknown,
+  publicImageUrl,
   removeListItem,
   resolveSearchCoords,
   resolveShopZip,
@@ -61,7 +65,6 @@ import {
   showErrorToast,
   showSuccessToast,
   updateListItem,
-  type ActiveListTarget,
   type CategoryProductSection,
   type FoodTrait,
   type NearbyStore,
@@ -72,15 +75,17 @@ import {
   type ShopSort,
   type UserLocation,
 } from '@/backend';
-import { iconForCategory } from '@/components/shop/category-icons';
+import { CategoryIcon } from '@/components/shop/category-icons';
 import { ProductCard } from '@/components/shop/product-card';
 import { ProductDetailSheet } from '@/components/shop/product-detail-sheet';
+import { ProductPeek } from '@/components/shop/product-peek';
 import { ShopFiltersDrawer } from '@/components/shop/shop-filters-drawer';
 import { ShopProfileDrawer } from '@/components/shop/shop-profile-drawer';
-import { TrendingBlobCard } from '@/components/shop/trending-blob-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { BottomTabInset, Fonts, Spacing } from '@/constants/theme';
+import { ButterChip } from '@/components/ui/butter-chip';
+import { ButterSearchField } from '@/components/ui/butter-search-field';
+import { BottomTabInset, Radius, SheetChrome, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 const VISIBLE_CATEGORIES = 8;
@@ -96,6 +101,16 @@ function productMatchesSearch(product: Product, query: string): boolean {
     (product.brand?.toLowerCase().includes(q) ?? false)
   );
 }
+
+function chunkProducts(products: Product[], size = 2): Product[][] {
+  const rows: Product[][] = [];
+  for (let i = 0; i < products.length; i += size) {
+    rows.push(products.slice(i, i + size));
+  }
+  return rows;
+}
+
+const AISLE_PREVIEW_COUNT = 4;
 
 function searchResultToast(count: number, term: string): void {
   if (count === 0) {
@@ -113,6 +128,12 @@ export default function ShopScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { isGuest, requestSignIn, signOut } = useSession();
+  const {
+    targets: listTargets,
+    activeTarget,
+    setActiveTarget,
+    refreshTargets,
+  } = useActiveList();
   const guestCart = useGuestCart();
   const productSheetRef = useRef<BottomSheetModal>(null);
   const seededPrefsRef = useRef(false);
@@ -123,8 +144,6 @@ export default function ShopScreen() {
   const [avatarVersion, setAvatarVersion] = useState(0);
   const [profileOpen, setProfileOpen] = useState(false);
   const [location, setLocation] = useState<UserLocation | null>(null);
-  const [listTargets, setListTargets] = useState<ActiveListTarget[]>([]);
-  const [activeTarget, setActiveTarget] = useState<ActiveListTarget | null>(null);
   const [qtyMap, setQtyMap] = useState<Map<string, { listItemId: string; quantity: number }>>(
     new Map(),
   );
@@ -141,13 +160,12 @@ export default function ShopScreen() {
   const [trendingPrices, setTrendingPrices] = useState<Map<string, number>>(() => new Map());
   const [products, setProducts] = useState<Product[]>([]);
   const [categorySections, setCategorySections] = useState<CategoryProductSection[]>([]);
-  const [expandedCategoryIds, setExpandedCategoryIds] = useState<Set<string>>(() => new Set());
-  const [expandingCategoryId, setExpandingCategoryId] = useState<string | null>(null);
   const [promotions, setPromotions] = useState<Map<string, Promotion>>(new Map());
   const [checkingStores, setCheckingStores] = useState(false);
   const [nearbyStores, setNearbyStores] = useState<NearbyStore[]>([]);
   const [selectedStore, setSelectedStore] = useState<NearbyStore | null>(null);
   const [shelfPrices, setShelfPrices] = useState<Map<string, number>>(() => new Map());
+  const [cashbackBps, setCashbackBps] = useState<number | null>(null);
 
   const [traits, setTraits] = useState<FoodTrait[]>([]);
   const [preferenceRules, setPreferenceRules] = useState<SessionFoodRule[]>([]);
@@ -159,6 +177,7 @@ export default function ShopScreen() {
 
   const [search, setSearch] = useState('');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [peekProduct, setPeekProduct] = useState<Product | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -166,6 +185,46 @@ export default function ShopScreen() {
 
   const searchQuery = search.trim();
   const isSearching = searchQuery.length > 0;
+
+  const traitsById = useMemo(() => new Map(traits.map((trait) => [trait.id, trait])), [traits]);
+
+  const activeFilterChips = useMemo(() => {
+    const chips: { key: string; label: string; onRemove: () => void }[] = [];
+    const modePrefix: Record<SessionFoodRule['mode'], string> = {
+      avoid: 'Avoid',
+      prefer: 'Prefer',
+      require: 'Must',
+    };
+    for (const rule of sessionRules) {
+      const trait = traitsById.get(rule.trait_id);
+      const name = trait?.name ?? 'Filter';
+      chips.push({
+        key: `${rule.mode}:${rule.trait_id}`,
+        label: `${modePrefix[rule.mode]}: ${name}`,
+        onRemove: () => {
+          setSessionRules((prev) => {
+            const next = prev.filter((row) => row.trait_id !== rule.trait_id);
+            if (isGuest) {
+              saveGuestOnboardingDraft({
+                ...getGuestOnboardingDraft(),
+                foodRules: next,
+              });
+              setPreferenceRules(next);
+            }
+            return next;
+          });
+        },
+      });
+    }
+    if (onSaleOnly) {
+      chips.push({
+        key: 'on-sale',
+        label: 'On sale',
+        onRemove: () => setOnSaleOnly(false),
+      });
+    }
+    return chips;
+  }, [isGuest, onSaleOnly, sessionRules, traitsById]);
 
   const guestQtyMap = useMemo(() => {
     const map = new Map<string, { listItemId: string; quantity: number }>();
@@ -195,38 +254,28 @@ export default function ShopScreen() {
           setLocation(null);
           setDisplayName(null);
           setAvatarPath(null);
-          setListTargets([]);
-          setActiveTarget(null);
-          setPreferenceRules([]);
+          const guestPrefs = getGuestFoodRules();
+          setPreferenceRules(guestPrefs);
           if (!seededPrefsRef.current || refresh) {
-            setSessionRules([]);
+            setSessionRules(guestPrefs);
             seededPrefsRef.current = true;
           }
         } else {
-          const [locations, targets, foodRules, defaultTarget, profile] = await Promise.all([
+          const [locations, foodRules, profile] = await Promise.all([
             listMyLocations(),
-            listMyListTargets(),
             listMyFoodRules(),
-            getMyDefaultList(),
             getMyProfile(),
           ]);
+          await refreshTargets();
           setLocation(locations.find((row) => row.is_default) ?? locations[0] ?? null);
           setDisplayName(profile.display_name);
           setAvatarPath(profile.avatar_path);
-          setListTargets(targets);
           const prefs = rulesFromUserFoodRules(foodRules);
           setPreferenceRules(prefs);
           if (!seededPrefsRef.current || refresh) {
             setSessionRules(prefs);
             seededPrefsRef.current = true;
           }
-          setActiveTarget((current) => {
-            if (current && targets.some((row) => row.list.id === current.list.id)) {
-              return current;
-            }
-            return defaultTarget;
-          });
-          await refreshQtyMap(defaultTarget.list.id);
         }
         setShellReady(true);
         try {
@@ -241,7 +290,7 @@ export default function ShopScreen() {
         setIsRefreshing(false);
       }
     },
-    [isGuest, refreshQtyMap],
+    [isGuest, refreshTargets],
   );
 
   useEffect(() => {
@@ -250,6 +299,14 @@ export default function ShopScreen() {
     }, 0);
     return () => clearTimeout(timer);
   }, [loadShell]);
+
+  useEffect(() => {
+    if (isGuest || !activeTarget) return;
+    const timer = setTimeout(() => {
+      void refreshQtyMap(activeTarget.list.id);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [activeTarget, isGuest, refreshQtyMap]);
 
   useEffect(() => {
     if (!shellReady) return;
@@ -346,6 +403,11 @@ export default function ShopScreen() {
         );
         if (cancelled) return;
         setTrendingPrices(trendingPriceMap);
+        setShelfPrices((prev) => {
+          const next = new Map(prev);
+          for (const [id, cents] of trendingPriceMap) next.set(id, cents);
+          return next;
+        });
 
         const browseHome = !favoritesOnly && selectedCategoryId == null && selectedStore == null;
         const stapleIds = new Set(stapleProductIds);
@@ -353,7 +415,6 @@ export default function ShopScreen() {
 
         if (selectedStore) {
           setCategorySections([]);
-          setExpandedCategoryIds(new Set());
           let rawProducts: Product[];
           let priceMap: Map<string, number>;
           if (favoritesOnly) {
@@ -376,12 +437,13 @@ export default function ShopScreen() {
             priceMap = new Map(shelf.map((row) => [row.product.id, row.priceCents]));
           }
           if (cancelled) return;
-          const [traitsForProducts, cashbackBps] = await Promise.all([
+          const [traitsForProducts, nextCashbackBps] = await Promise.all([
             getProductTraitsForIds(rawProducts.map((row) => row.id)),
             getEffectiveGroceryCashbackBps(isGuest),
           ]);
           if (cancelled) return;
-          const netPriceMap = applyCashbackToPriceMap(priceMap, cashbackBps);
+          const netPriceMap = applyCashbackToPriceMap(priceMap, nextCashbackBps);
+          setCashbackBps(nextCashbackBps);
           setShelfPrices(netPriceMap);
           setProducts(
             applyFoodFilters(rawProducts, sessionRules, indexTraitsByProduct(traitsForProducts), {
@@ -403,13 +465,14 @@ export default function ShopScreen() {
           const sectionIds = grouped.flatMap((section) => section.products.map((row) => row.id));
           const catalogIds = catalogProducts.map((row) => row.id);
           const allIds = [...new Set([...sectionIds, ...catalogIds])];
-          const [traitsForProducts, priceMap, cashbackBps] = await Promise.all([
+          const [traitsForProducts, priceMap, nextCashbackBps] = await Promise.all([
             getProductTraitsForIds(allIds),
             getCheapestPriceCentsByProductIds(allIds, openPricesGeo),
             getEffectiveGroceryCashbackBps(isGuest),
           ]);
           if (cancelled) return;
-          const netPriceMap = applyCashbackToPriceMap(priceMap, cashbackBps);
+          const netPriceMap = applyCashbackToPriceMap(priceMap, nextCashbackBps);
+          setCashbackBps(nextCashbackBps);
           setShelfPrices(netPriceMap);
 
           const traitsByProduct = indexTraitsByProduct(traitsForProducts);
@@ -436,11 +499,9 @@ export default function ShopScreen() {
           setProducts(
             applyFoodFilters(catalogProducts, sessionRules, traitsByProduct, filterOpts),
           );
-          setExpandedCategoryIds(new Set());
           if (!cancelled) setCheckingStores(false);
         } else {
           setCategorySections([]);
-          setExpandedCategoryIds(new Set());
 
           let rawProducts: Product[];
           if (favoritesOnly) {
@@ -457,13 +518,14 @@ export default function ShopScreen() {
           }
           if (cancelled) return;
 
-          const [traitsForProducts, priceMap, cashbackBps] = await Promise.all([
+          const [traitsForProducts, priceMap, nextCashbackBps] = await Promise.all([
             getProductTraitsForIds(rawProducts.map((row) => row.id)),
             getCheapestPriceCentsByProductIds(rawProducts.map((row) => row.id), openPricesGeo),
             getEffectiveGroceryCashbackBps(isGuest),
           ]);
           if (cancelled) return;
-          const netPriceMap = applyCashbackToPriceMap(priceMap, cashbackBps);
+          const netPriceMap = applyCashbackToPriceMap(priceMap, nextCashbackBps);
+          setCashbackBps(nextCashbackBps);
           setShelfPrices(netPriceMap);
 
           setProducts(
@@ -686,6 +748,10 @@ export default function ShopScreen() {
     setProfileOpen(true);
   }, []);
 
+  const avatarBaseUrl = publicImageUrl('avatars', avatarPath);
+  const avatarUrl = avatarBaseUrl ? `${avatarBaseUrl}?t=${avatarVersion}` : null;
+  const headerName = isGuest ? 'Guest' : displayName?.trim() || 'Butter shopper';
+
   // Swipe left opens the profile panel (also accepts a rightward pull from the left edge).
   const leftEdgeSwipe = useMemo(
     () =>
@@ -740,91 +806,82 @@ export default function ShopScreen() {
         section,
       }));
     }
-    const rows: Product[][] = [];
-    for (let i = 0; i < displayProducts.length; i += 2) {
-      rows.push(displayProducts.slice(i, i + 2));
-    }
-    return rows.map((row) => ({ kind: 'row' as const, products: row }));
+    return chunkProducts(displayProducts).map((row) => ({
+      kind: 'row' as const,
+      products: row,
+    }));
   }, [categorySections, displayProducts, sectionedHome]);
 
-  const toggleCategoryExpand = async (categoryId: string) => {
-    if (expandedCategoryIds.has(categoryId)) {
-      setExpandedCategoryIds((prev) => {
-        const next = new Set(prev);
-        next.delete(categoryId);
-        return next;
-      });
-      return;
-    }
-
-    setExpandingCategoryId(categoryId);
-    try {
-      const shelf = selectedStore
-        ? await listStoreShelf(selectedStore.id, { categoryId, limit: 40 })
-        : null;
-      const rawProducts = shelf
-        ? shelf.map((row) => row.product)
-        : await listActiveProducts({ categoryId, limit: 40 });
-      const priceMap = shelf
-        ? new Map(shelf.map((row) => [row.product.id, row.priceCents]))
-        : await getCheapestPriceCentsByProductIds(
-            rawProducts.map((row) => row.id),
-            openPricesGeoRef.current,
-          );
-      const [traitsForProducts, cashbackBps] = await Promise.all([
-        getProductTraitsForIds(rawProducts.map((row) => row.id)),
-        getEffectiveGroceryCashbackBps(isGuest),
-      ]);
-      const netPriceMap = applyCashbackToPriceMap(priceMap, cashbackBps);
-      setShelfPrices((prev) => {
-        const next = new Map(prev);
-        for (const [id, cents] of netPriceMap) next.set(id, cents);
-        return next;
-      });
-      const stapleIds = new Set(staples.map((row) => row.id));
-      const filtered = applyFoodFilters(
-        rawProducts,
-        sessionRules,
-        indexTraitsByProduct(traitsForProducts),
-        {
-          sort,
-          stapleIds,
-          onSaleOnly,
-          promotionProductIds: new Set(promotions.keys()),
-          priceCentsByProduct: netPriceMap,
-        },
-      );
-      setCategorySections((prev) =>
-        prev.map((section) =>
-          section.category.id === categoryId ? { ...section, products: filtered } : section,
-        ),
-      );
-      setExpandedCategoryIds((prev) => new Set(prev).add(categoryId));
-    } catch (err) {
-      showErrorToast(err, 'Could not load more products.');
-    } finally {
-      setExpandingCategoryId(null);
-    }
+  const enterAisle = (categoryId: string) => {
+    setSelectedCategoryId(categoryId);
+    setFavoritesOnly(false);
+    setSearch('');
   };
 
-  const renderProductCard = (product: Product, compact?: boolean) => (
-    <ProductCard
-      key={product.id}
-      product={product}
-      compact={compact}
-      saleBadge={
-        promotions.has(product.id) ? formatPromotionBadge(promotions.get(product.id)!) : null
-      }
-      quantityOnList={effectiveQtyMap.get(product.id)?.quantity}
-      favorited={favoriteIds.has(product.id)}
-      priceCents={shelfPrices.get(product.id)}
-      onPress={() => openProduct(product)}
-      onAdd={() => void handleAdd(product)}
-      onIncrement={() => void handleIncrement(product)}
-      onDecrement={() => void handleDecrement(product)}
-      onToggleFavorite={() => void handleToggleFavorite(product.id)}
-    />
-  );
+  const openPeek = (product: Product) => {
+    setPeekProduct(product);
+  };
+
+  const closePeek = () => {
+    setPeekProduct(null);
+  };
+
+  const openFullFromPeek = () => {
+    const product = peekProduct;
+    setPeekProduct(null);
+    if (product) openProduct(product);
+  };
+
+  const renderProductCard = (product: Product, index = 0) => {
+    const promo = promotions.get(product.id) ?? null;
+    const priceCents = shelfPrices.get(product.id) ?? null;
+    const hint = promo ? promotionSavingsHint(promo, priceCents) : null;
+    const priceNote =
+      !promo && cashbackBps != null && cashbackBps > 0 && priceCents != null
+        ? 'after cash back'
+        : null;
+    return (
+      <ProductCard
+        key={product.id}
+        product={product}
+        index={index}
+        saleBadge={promo ? formatPromotionBadge(promo) : null}
+        compareAtCents={hint?.compareAtCents}
+        savingsLabel={hint?.savingsLabel}
+        priceNote={priceNote}
+        quantityOnList={effectiveQtyMap.get(product.id)?.quantity}
+        priceCents={priceCents}
+        onPress={() => openProduct(product)}
+        onLongPress={() => openPeek(product)}
+        onAdd={() => void handleAdd(product)}
+        onIncrement={() => void handleIncrement(product)}
+        onDecrement={() => void handleDecrement(product)}
+      />
+    );
+  };
+
+  const renderProductGrid = (products: Product[]) =>
+    chunkProducts(products).map((row) => (
+      <View key={row.map((product) => product.id).join('-')} style={styles.gridRow}>
+        {row.map((product, index) => renderProductCard(product, index))}
+        {row.length === 1 ? <View style={styles.gridSpacer} /> : null}
+      </View>
+    ));
+
+  const focusedAisleName = selectedCategoryId
+    ? (categories.find((row) => row.id === selectedCategoryId)?.name ?? 'Aisle')
+    : null;
+
+  const dealsStripLabel = (() => {
+    const parts: string[] = [];
+    if (promotions.size > 0) {
+      parts.push(`${promotions.size} deal${promotions.size === 1 ? '' : 's'} near you`);
+    }
+    if (cashbackBps != null && cashbackBps > 0) {
+      parts.push(`Prices include ${cashbackBps / 100}% cash back`);
+    }
+    return parts.join(' · ');
+  })();
 
   if (isLoading && !shellReady) {
     return (
@@ -858,7 +915,7 @@ export default function ShopScreen() {
       </GestureDetector>
       <FlatList
           data={listData}
-          extraData={`${selectedCategoryId ?? 'all'}:${favoritesOnly ? 'fav' : 'all'}:${searchQuery}:${[...favoriteIds].join(',')}:${[...expandedCategoryIds].join(',')}:${expandingCategoryId ?? ''}`}
+          extraData={`${selectedCategoryId ?? 'all'}:${favoritesOnly ? 'fav' : 'all'}:${searchQuery}:${sort}:${onSaleOnly ? 'sale' : ''}:${cashbackBps ?? ''}:${[...favoriteIds].join(',')}`}
           keyExtractor={(item) =>
             item.kind === 'section'
               ? item.section.category.id
@@ -878,105 +935,89 @@ export default function ShopScreen() {
             />
           }
           ListHeaderComponent={
-            <View style={styles.header}>
-              <View style={styles.locationRow}>
+            <Animated.View entering={FadeInDown.duration(280)} style={styles.header}>
+              <View style={styles.brandRow}>
                 <Pressable
                   onPress={openProfile}
                   hitSlop={8}
-                  style={[styles.iconBtn, { backgroundColor: theme.backgroundElement }]}
-                  accessibilityRole="button"
-                  accessibilityLabel="Open profile">
-                  <SymbolView
-                    name={{ ios: 'person.crop.circle', android: 'account_circle', web: 'account_circle' }}
-                    size={22}
-                    tintColor={theme.text}
-                  />
-                </Pressable>
-                <ThemedText type="smallBold">Near</ThemedText>
-                <ThemedText
-                  type="small"
-                  themeColor="textSecondary"
-                  numberOfLines={2}
-                  style={styles.flex}>
-                  {isGuest ? 'Sign in to save a default location' : formatLocation(location)}
-                </ThemedText>
-              </View>
-
-              {nearbyStores.length > 0 ? (
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.chipRow}>
-                  <Pressable
-                    onPress={() => setSelectedStore(null)}
-                    style={[
-                      styles.chip,
-                      {
-                        backgroundColor:
-                          selectedStore == null ? theme.primary : theme.backgroundElement,
-                      },
-                    ]}>
-                    <ThemedText
-                      type="small"
-                      style={selectedStore == null ? { color: theme.primaryText } : undefined}>
-                      All stores
-                    </ThemedText>
-                  </Pressable>
-                  {nearbyStores.map((store) => {
-                    const selected = selectedStore?.id === store.id;
-                    return (
-                      <Pressable
-                        key={store.id}
-                        onPress={() => setSelectedStore(store)}
-                        style={[
-                          styles.chip,
-                          {
-                            backgroundColor: selected ? theme.primary : theme.backgroundElement,
-                          },
-                        ]}>
-                        <ThemedText
-                          type="small"
-                          numberOfLines={1}
-                          style={selected ? { color: theme.primaryText } : undefined}>
-                          {store.name}
-                        </ThemedText>
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
-              ) : null}
-
-              <View style={styles.searchRow}>
-                <View
                   style={[
-                    styles.searchField,
+                    styles.avatarBtn,
                     {
                       backgroundColor: theme.backgroundElement,
                       borderColor: theme.border,
                     },
-                  ]}>
-                  <SymbolView
-                    name={{ ios: 'magnifyingglass', android: 'search', web: 'search' }}
-                    size={18}
-                    tintColor={theme.textSecondary}
-                  />
-                  <TextInput
-                    value={search}
-                    onChangeText={setSearch}
-                    placeholder="Search products"
-                    placeholderTextColor={theme.textSecondary}
-                    style={[styles.searchInput, { color: theme.text }]}
-                    autoCorrect={false}
-                    autoCapitalize="none"
-                    clearButtonMode="while-editing"
-                    returnKeyType="search"
-                    onSubmitEditing={() => void handleSearchSubmit()}
-                    accessibilityLabel="Search products"
-                  />
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open profile">
+                  {avatarUrl ? (
+                    <Image source={{ uri: avatarUrl }} style={styles.avatarImage} contentFit="cover" />
+                  ) : (
+                    <SymbolView
+                      name={{
+                        ios: 'person.crop.circle.fill',
+                        android: 'account_circle',
+                        web: 'account_circle',
+                      }}
+                      size={28}
+                      tintColor={theme.textSecondary}
+                    />
+                  )}
+                </Pressable>
+                <View style={styles.flex}>
+                  <ThemedText type="smallBold" style={styles.brandTitle} numberOfLines={1}>
+                    {headerName}
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>
+                    Pick an aisle. Spot a deal. Add to your list.
+                  </ThemedText>
+                  <Pressable
+                    onPress={() => {
+                      if (isGuest || listTargets.length <= 1) return;
+                      const idx = listTargets.findIndex((t) => t.list.id === activeTarget?.list.id);
+                      const next = listTargets[(idx + 1) % listTargets.length];
+                      if (next) {
+                        setActiveTarget(next);
+                        void refreshQtyMap(next.list.id);
+                      }
+                    }}
+                    disabled={isGuest || listTargets.length <= 1}
+                    hitSlop={6}>
+                    <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                      {isGuest
+                        ? `Near you · guest cart`
+                        : `Near ${formatLocation(location)}${
+                            activeTarget?.group.name
+                              ? ` · ${activeTarget.group.name}${
+                                  listTargets.length > 1 ? ' · tap to switch' : ''
+                                }`
+                              : ''
+                          }`}
+                    </ThemedText>
+                  </Pressable>
                 </View>
+              </View>
+
+              <View style={styles.searchRow}>
+                <ButterSearchField
+                  value={search}
+                  onChangeText={setSearch}
+                  placeholder="Search products"
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                  clearButtonMode="while-editing"
+                  returnKeyType="search"
+                  onSubmitEditing={() => void handleSearchSubmit()}
+                  accessibilityLabel="Search products"
+                />
                 <Pressable
-                  onPress={openFilters}
-                  style={[styles.iconBtn, { backgroundColor: theme.primary }]}
+                  onPress={() => {
+                    openFilters();
+                  }}
+                  style={[
+                    styles.iconBtn,
+                    styles.filterBtn,
+                    { backgroundColor: theme.secondary },
+                  ]}
                   accessibilityRole="button"
                   accessibilityLabel="Open filters">
                   <SymbolView
@@ -986,239 +1027,186 @@ export default function ShopScreen() {
                       web: 'filter_list',
                     }}
                     size={22}
-                    tintColor={theme.primaryText}
+                    tintColor={theme.primary}
                   />
                 </Pressable>
               </View>
 
-              {!isGuest && listTargets.length > 1 ? (
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.chipRow}>
-                  {listTargets.map((target) => {
-                    const selected = activeTarget?.list.id === target.list.id;
-                    return (
-                      <Pressable
-                        key={target.list.id}
-                        onPress={() => {
-                          setActiveTarget(target);
-                          void refreshQtyMap(target.list.id);
-                        }}
-                        style={[
-                          styles.chip,
-                          {
-                            backgroundColor: selected ? theme.primary : theme.backgroundElement,
-                          },
-                        ]}>
-                        <ThemedText
-                          type="small"
-                          style={selected ? { color: theme.primaryText } : undefined}
-                          numberOfLines={1}>
-                          {target.group.name}
-                        </ThemedText>
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
-              ) : (
-                <ThemedText type="small" themeColor="textSecondary">
-                  {isGuest
-                    ? 'Guest cart (sign in to sync lists)'
-                    : `Shopping for ${activeTarget?.group.name ?? 'My List'}`}
-                </ThemedText>
-              )}
+              {dealsStripLabel ? (
+                <Pressable
+                  onPress={() => setOnSaleOnly((value) => !value)}
+                  style={[
+                    styles.dealsStrip,
+                    {
+                      backgroundColor: onSaleOnly
+                        ? theme.backgroundSelected
+                        : theme.backgroundElement,
+                      borderColor: theme.border,
+                    },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: onSaleOnly }}
+                  accessibilityLabel={
+                    onSaleOnly ? 'Showing deals only, tap to clear' : 'Show deals only'
+                  }>
+                  <ThemedText type="smallBold" style={{ color: theme.primaryDark }}>
+                    {dealsStripLabel}
+                    {onSaleOnly ? ' · On' : ''}
+                  </ThemedText>
+                </Pressable>
+              ) : null}
 
-              <View style={styles.section}>
-                <ThemedText type="subtitle">Category</ThemedText>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.chipRow}>
-                  <Pressable
-                    onPress={() => {
-                      setSelectedCategoryId(null);
-                      setSearch('');
-                    }}
-                    style={[
-                      styles.chip,
-                      styles.chipWithIcon,
-                      {
-                        backgroundColor:
-                          selectedCategoryId == null && !favoritesOnly
-                            ? theme.primary
-                            : theme.backgroundElement,
-                      },
-                    ]}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.chipRow}>
+                <ButterChip
+                  label="All"
+                  selected={selectedCategoryId == null && !favoritesOnly}
+                  onPress={() => {
+                    setSelectedCategoryId(null);
+                    setFavoritesOnly(false);
+                    setSearch('');
+                  }}
+                  icon={
                     <SymbolView
                       name={{ ios: 'square.grid.2x2.fill', android: 'grid_view', web: 'grid_view' }}
                       size={16}
                       tintColor={
                         selectedCategoryId == null && !favoritesOnly
-                          ? theme.primaryText
-                          : theme.text
+                          ? theme.text
+                          : theme.textSecondary
                       }
                     />
-                    <ThemedText
-                      type="small"
-                      style={
-                        selectedCategoryId == null && !favoritesOnly
-                          ? { color: theme.primaryText }
-                          : undefined
-                      }>
-                      All
-                    </ThemedText>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => setFavoritesOnly((value) => !value)}
-                    style={[
-                      styles.chip,
-                      styles.chipWithIcon,
-                      {
-                        backgroundColor: favoritesOnly ? theme.primary : theme.backgroundElement,
-                      },
-                    ]}>
+                  }
+                />
+                <ButterChip
+                  label="Favorites"
+                  selected={favoritesOnly}
+                  onPress={() => setFavoritesOnly((value) => !value)}
+                  icon={
                     <SymbolView
                       name={{ ios: 'heart.fill', android: 'favorite', web: 'favorite' }}
                       size={16}
-                      tintColor={favoritesOnly ? theme.primaryText : theme.text}
+                      tintColor={favoritesOnly ? theme.text : theme.textSecondary}
                     />
-                    <ThemedText
-                      type="small"
-                      style={favoritesOnly ? { color: theme.primaryText } : undefined}>
-                      Favorites
-                    </ThemedText>
-                  </Pressable>
-                  {visibleCategories.map((category) => {
-                    const selected = selectedCategoryId === category.id;
-                    const symbol = iconForCategory(category.name);
-                    return (
-                      <Pressable
-                        key={category.id}
-                        onPress={() => {
-                          setSelectedCategoryId(category.id);
-                          setSearch('');
-                        }}
-                        style={[
-                          styles.chip,
-                          styles.chipWithIcon,
-                          {
-                            backgroundColor: selected ? theme.primary : theme.backgroundElement,
-                          },
-                        ]}>
-                        <SymbolView
-                          name={{ ios: symbol, android: 'label', web: 'label' }}
+                  }
+                />
+                {visibleCategories.map((category) => {
+                  const selected = selectedCategoryId === category.id;
+                  return (
+                    <ButterChip
+                      key={category.id}
+                      label={category.name}
+                      selected={selected}
+                      onPress={() => enterAisle(category.id)}
+                      icon={
+                        <CategoryIcon
+                          name={category.name}
                           size={16}
-                          tintColor={selected ? theme.primaryText : theme.text}
+                          color={selected ? theme.text : theme.textSecondary}
                         />
-                        <ThemedText
-                          type="small"
-                          style={selected ? { color: theme.primaryText } : undefined}>
-                          {category.name}
-                        </ThemedText>
-                      </Pressable>
-                    );
-                  })}
-                  {extraCategories.length > 0 ? (
-                    <Pressable
-                      onPress={() => setMoreCategoriesOpen(true)}
-                      style={[
-                        styles.chip,
-                        styles.chipWithIcon,
-                        { backgroundColor: theme.backgroundElement },
-                      ]}>
+                      }
+                    />
+                  );
+                })}
+                {extraCategories.length > 0 ? (
+                  <ButterChip
+                    label="More"
+                    onPress={() => setMoreCategoriesOpen(true)}
+                    icon={
                       <SymbolView
                         name={{ ios: 'ellipsis.circle', android: 'more_horiz', web: 'more_horiz' }}
                         size={16}
-                        tintColor={theme.text}
+                        tintColor={theme.textSecondary}
                       />
-                      <ThemedText type="small">More</ThemedText>
-                    </Pressable>
-                  ) : null}
-                </ScrollView>
-              </View>
-
-              {displayTrending.length > 0 && !favoritesOnly && !isSearching && !selectedStore ? (
-                <View style={styles.section}>
-                  <ThemedText type="subtitle">Trending</ThemedText>
-                  <FlatList
-                    horizontal
-                    data={displayTrending}
-                    keyExtractor={(item) => item.product.id}
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.carousel}
-                    renderItem={({ item, index }) => (
-                      <TrendingBlobCard
-                        product={item.product}
-                        index={index}
-                        sponsored={item.sponsored}
-                        saleBadge={
-                          promotions.has(item.product.id)
-                            ? formatPromotionBadge(promotions.get(item.product.id)!)
-                            : null
-                        }
-                        priceCents={trendingPrices.get(item.product.id) ?? null}
-                        quantityOnList={effectiveQtyMap.get(item.product.id)?.quantity}
-                        favorited={favoriteIds.has(item.product.id)}
-                        onPress={() => openProduct(item.product)}
-                        onAdd={() => void handleAdd(item.product)}
-                        onIncrement={() => void handleIncrement(item.product)}
-                        onDecrement={() => void handleDecrement(item.product)}
-                        onToggleFavorite={() => void handleToggleFavorite(item.product.id)}
-                      />
-                    )}
+                    }
                   />
+                ) : null}
+                {selectedStore ? (
+                  <ButterChip
+                    label={`${selectedStore.name} ×`}
+                    selected
+                    onPress={() => setSelectedStore(null)}
+                  />
+                ) : null}
+                {activeFilterChips.map((chip) => (
+                  <ButterChip
+                    key={chip.key}
+                    label={`${chip.label} ×`}
+                    selected
+                    onPress={chip.onRemove}
+                  />
+                ))}
+              </ScrollView>
+
+              {sectionedHome &&
+              staplesArePersonal &&
+              displayStaples.length > 0 &&
+              !favoritesOnly &&
+              !isSearching &&
+              !selectedStore ? (
+                <View style={styles.section}>
+                  <ThemedText type="small" themeColor="textSecondary" style={styles.quietLabel}>
+                    Your staples
+                  </ThemedText>
+                  {renderProductGrid(displayStaples.slice(0, AISLE_PREVIEW_COUNT))}
                 </View>
-              ) : null}
-
-              {staplesArePersonal && displayStaples.length > 0 && !favoritesOnly && !isSearching && !selectedStore ? (
+              ) : sectionedHome &&
+                displayTrending.length > 0 &&
+                !favoritesOnly &&
+                !isSearching &&
+                !selectedStore ? (
                 <View style={styles.section}>
-                  <ThemedText type="subtitle">Your staples</ThemedText>
-                  <FlatList
-                    horizontal
-                    data={displayStaples}
-                    keyExtractor={(item) => item.id}
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.carousel}
-                    renderItem={({ item }) => (
-                      <ProductCard
-                        product={item}
-                        compact
-                        saleBadge={
-                          promotions.has(item.id)
-                            ? formatPromotionBadge(promotions.get(item.id)!)
-                            : null
-                        }
-                        quantityOnList={effectiveQtyMap.get(item.id)?.quantity}
-                        favorited={favoriteIds.has(item.id)}
-                        onPress={() => openProduct(item)}
-                        onAdd={() => void handleAdd(item)}
-                        onIncrement={() => void handleIncrement(item)}
-                        onDecrement={() => void handleDecrement(item)}
-                        onToggleFavorite={() => void handleToggleFavorite(item.id)}
-                      />
-                    )}
-                  />
+                  <ThemedText type="small" themeColor="textSecondary" style={styles.quietLabel}>
+                    Trending
+                  </ThemedText>
+                  {renderProductGrid(
+                    displayTrending.slice(0, AISLE_PREVIEW_COUNT).map((row) => row.product),
+                  )}
                 </View>
               ) : null}
 
               {!sectionedHome ? (
                 <View style={styles.productsHeader}>
-                  <ThemedText type="subtitle">
-                    {selectedStore
-                      ? selectedStore.name
-                      : isSearching
-                      ? `Results for “${searchQuery}”`
-                      : favoritesOnly
-                        ? 'Favorites'
-                        : selectedCategoryId
-                          ? (categories.find((row) => row.id === selectedCategoryId)?.name ??
-                            'Products')
-                          : 'Products'}
-                  </ThemedText>
+                  <View style={styles.sectionTitleRow}>
+                    <ThemedText type="smallBold" style={[styles.flex, styles.aisleTitle]}>
+                      {selectedStore
+                        ? selectedStore.name
+                        : isSearching
+                          ? `Results for “${searchQuery}”`
+                          : favoritesOnly
+                            ? 'Favorites'
+                            : (focusedAisleName ?? 'Products')}
+                    </ThemedText>
+                    {focusedAisleName && !isSearching && !favoritesOnly ? (
+                      <Pressable
+                        onPress={() =>
+                          setSort((prev) => (prev === 'cheapest' ? 'default' : 'cheapest'))
+                        }
+                        hitSlop={8}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: sort === 'cheapest' }}>
+                        <ThemedText
+                          type="smallBold"
+                          style={{
+                            color: sort === 'cheapest' ? theme.primaryDark : theme.textSecondary,
+                          }}>
+                          Cheapest first
+                        </ThemedText>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                  {focusedAisleName && !isSearching && !favoritesOnly ? (
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {sort === 'cheapest'
+                        ? 'Lowest price first · tap Filters to change'
+                        : 'Cheapest nearby · tap Filters to change'}
+                    </ThemedText>
+                  ) : null}
                   {checkingStores ? (
                     <View style={styles.checkingRow}>
-                      <ActivityIndicator size="small" color={theme.primary} />
+                      <ActivityIndicator size="small" color={theme.secondary} />
                       <ThemedText type="small" themeColor="textSecondary">
                         Checking nearby stores…
                       </ThemedText>
@@ -1226,93 +1214,55 @@ export default function ShopScreen() {
                   ) : null}
                 </View>
               ) : null}
-            </View>
+            </Animated.View>
           }
           ListEmptyComponent={
             <ThemedView style={styles.empty}>
-              <ThemedText type="small" themeColor="textSecondary">
+              <ThemedText type="smallBold">Nothing here yet</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
                 {checkingStores
                   ? 'Looking up products at nearby stores…'
                   : selectedStore
                     ? `${selectedStore.name} has no matching items in stock.`
                     : favoritesOnly && !isSearching
-                    ? 'No favorites yet. Tap the heart on a product to save it here.'
-                    : isSearching
-                      ? 'No products match. Try another search, Clear all in Filters, or another category.'
-                      : 'Catalog is empty. Run the campus staple bootstrap on the price proxy, then pull to refresh.'}
+                      ? 'Tap the heart on a product to save favorites here.'
+                      : isSearching
+                        ? 'Try another search, clear filters, or pick a category.'
+                        : 'Pull to refresh — or search for something you love.'}
               </ThemedText>
             </ThemedView>
           }
           renderItem={({ item }) => {
             if (item.kind === 'section') {
               const section = item.section;
-              const expanded = expandedCategoryIds.has(section.category.id);
-              const expanding = expandingCategoryId === section.category.id;
-              if (expanded) {
-                const rows: Product[][] = [];
-                for (let i = 0; i < section.products.length; i += 2) {
-                  rows.push(section.products.slice(i, i + 2));
-                }
-                return (
-                  <View style={styles.categorySection}>
-                    <View style={styles.sectionTitleRow}>
-                      <ThemedText type="subtitle" style={styles.flex}>
-                        {section.category.name}
-                      </ThemedText>
-                      <Pressable
-                        onPress={() => void toggleCategoryExpand(section.category.id)}
-                        hitSlop={8}>
-                        <ThemedText type="small" themeColor="textSecondary">
-                          Show less
-                        </ThemedText>
-                      </Pressable>
-                    </View>
-                    {rows.map((row) => (
-                      <View
-                        key={row.map((product) => product.id).join('-')}
-                        style={styles.gridRow}>
-                        {row.map((product) => renderProductCard(product))}
-                        {row.length === 1 ? <View style={styles.gridSpacer} /> : null}
-                      </View>
-                    ))}
-                  </View>
-                );
-              }
-
+              const preview = section.products.slice(0, AISLE_PREVIEW_COUNT);
               return (
                 <View style={styles.categorySection}>
                   <View style={styles.sectionTitleRow}>
-                    <ThemedText type="subtitle" style={styles.flex}>
-                      {section.category.name}
-                    </ThemedText>
                     <Pressable
-                      onPress={() => void toggleCategoryExpand(section.category.id)}
+                      onPress={() => enterAisle(section.category.id)}
+                      style={styles.flex}
                       hitSlop={8}
-                      disabled={expanding}>
-                      {expanding ? (
-                        <ActivityIndicator size="small" color={theme.primary} />
-                      ) : (
-                        <ThemedText type="small" themeColor="textSecondary">
-                          See more
-                        </ThemedText>
-                      )}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Open ${section.category.name} aisle`}>
+                      <ThemedText type="smallBold" style={styles.aisleTitle}>
+                        {section.category.name}
+                      </ThemedText>
+                    </Pressable>
+                    <Pressable onPress={() => enterAisle(section.category.id)} hitSlop={8}>
+                      <ThemedText type="smallBold" themeColor="textSecondary">
+                        See all
+                      </ThemedText>
                     </Pressable>
                   </View>
-                  <FlatList
-                    horizontal
-                    data={section.products}
-                    keyExtractor={(product) => product.id}
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.carousel}
-                    renderItem={({ item: product }) => renderProductCard(product, true)}
-                  />
+                  {renderProductGrid(preview)}
                 </View>
               );
             }
 
             return (
               <View style={styles.gridRow}>
-                {item.products.map((product) => renderProductCard(product))}
+                {item.products.map((product, index) => renderProductCard(product, index))}
                 {item.products.length === 1 ? <View style={styles.gridSpacer} /> : null}
               </View>
             );
@@ -1327,6 +1277,9 @@ export default function ShopScreen() {
             draftRules={sessionRules}
             draftSort={sort}
             draftOnSaleOnly={onSaleOnly}
+            nearbyStores={nearbyStores}
+            selectedStoreId={selectedStore?.id ?? null}
+            onSelectStore={(store) => setSelectedStore(store)}
             onClose={() => setFiltersOpen(false)}
             onResetToPreferences={() => preferenceRules}
             onApply={({ rules, sort: nextSort, onSaleOnly: nextSale }) => {
@@ -1334,6 +1287,13 @@ export default function ShopScreen() {
               setSort(nextSort);
               setOnSaleOnly(nextSale);
               setFiltersOpen(false);
+              if (isGuest) {
+                saveGuestOnboardingDraft({
+                  ...getGuestOnboardingDraft(),
+                  foodRules: rules,
+                });
+                setPreferenceRules(rules);
+              }
             }}
           />
         ) : null}
@@ -1347,13 +1307,13 @@ export default function ShopScreen() {
             avatarVersion={avatarVersion}
             isGuest={isGuest}
             onClose={() => setProfileOpen(false)}
-            onSignIn={() => {
+            onRequestAuth={(mode) => {
               setProfileOpen(false);
-              requestSignIn();
+              requestSignIn(mode);
             }}
-            onSignOut={() => {
+            onSignOut={async () => {
               setProfileOpen(false);
-              void signOut();
+              await signOut();
             }}
             onAvatarChanged={(path) => {
               setAvatarPath(path);
@@ -1361,6 +1321,29 @@ export default function ShopScreen() {
             }}
           />
         ) : null}
+
+        <ProductPeek
+          product={peekProduct}
+          visible={peekProduct != null}
+          saleBadge={
+            peekProduct && promotions.has(peekProduct.id)
+              ? formatPromotionBadge(promotions.get(peekProduct.id)!)
+              : null
+          }
+          priceCents={
+            peekProduct
+              ? (shelfPrices.get(peekProduct.id) ?? trendingPrices.get(peekProduct.id) ?? null)
+              : null
+          }
+          quantityOnList={
+            peekProduct ? effectiveQtyMap.get(peekProduct.id)?.quantity : undefined
+          }
+          onClose={closePeek}
+          onOpenFull={openFullFromPeek}
+          onAdd={() => peekProduct && void handleAdd(peekProduct)}
+          onIncrement={() => peekProduct && void handleIncrement(peekProduct)}
+          onDecrement={() => peekProduct && void handleDecrement(peekProduct)}
+        />
 
         <ProductDetailSheet
           ref={productSheetRef}
@@ -1370,6 +1353,12 @@ export default function ShopScreen() {
               ? formatPromotionBadge(promotions.get(selectedProduct.id)!)
               : null
           }
+          promotion={
+            selectedProduct && promotions.has(selectedProduct.id)
+              ? promotions.get(selectedProduct.id)!
+              : null
+          }
+          preferenceRules={sessionRules}
           quantityOnList={
             selectedProduct ? effectiveQtyMap.get(selectedProduct.id)?.quantity : undefined
           }
@@ -1388,25 +1377,29 @@ export default function ShopScreen() {
           transparent
           onRequestClose={() => setMoreCategoriesOpen(false)}>
           <Pressable style={styles.moreBackdrop} onPress={() => setMoreCategoriesOpen(false)} />
-          <View style={[styles.moreSheet, { backgroundColor: theme.background }]}>
-            <ThemedText type="subtitle">More categories</ThemedText>
+          <View
+            style={[
+              styles.moreSheet,
+              {
+                backgroundColor: theme.background,
+                borderColor: theme.borderInk,
+              },
+            ]}>
+            <View style={[styles.moreHandle, { backgroundColor: theme.primary }]} />
+            <ThemedText type="smallBold" style={styles.moreTitle}>
+              More categories
+            </ThemedText>
             <ScrollView>
               {extraCategories.map((category) => {
-                const symbol = iconForCategory(category.name);
                 return (
                   <Pressable
                     key={category.id}
                     onPress={() => {
-                      setSelectedCategoryId(category.id);
-                      setSearch('');
+                      enterAisle(category.id);
                       setMoreCategoriesOpen(false);
                     }}
-                    style={styles.moreRow}>
-                    <SymbolView
-                      name={{ ios: symbol, android: 'label', web: 'label' }}
-                      size={20}
-                      tintColor={theme.text}
-                    />
+                    style={[styles.moreRow, { borderBottomColor: theme.border }]}>
+                    <CategoryIcon name={category.name} size={20} color={theme.text} />
                     <ThemedText>{category.name}</ThemedText>
                   </Pressable>
                 );
@@ -1443,14 +1436,25 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   header: {
-    gap: Spacing.three,
+    gap: Spacing.two,
     paddingTop: Spacing.two,
     paddingBottom: Spacing.two,
   },
-  locationRow: {
+  brandRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.two,
+    alignItems: 'flex-start',
+    gap: Spacing.three,
+  },
+  brandTitle: {
+    fontSize: 28,
+    lineHeight: 32,
+  },
+  aisleTitle: {
+    fontSize: Type.section,
+    lineHeight: 28,
+  },
+  quietLabel: {
+    fontSize: Type.label,
   },
   flex: {
     flex: 1,
@@ -1460,43 +1464,40 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     alignItems: 'center',
   },
-  searchField: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.two,
-    borderWidth: 1,
-    borderRadius: Spacing.three,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-  },
-  searchInput: {
-    flex: 1,
-    padding: 0,
-    fontFamily: Fonts.sans,
-    fontSize: 16,
-  },
   iconBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: Spacing.three,
+    width: 48,
+    height: 48,
+    borderRadius: Radius.button,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  avatarBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+  },
+  filterBtn: {
+    width: 48,
+    height: 48,
+  },
+  dealsStrip: {
+    borderWidth: 1,
+    borderRadius: Radius.button,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
   },
   chipRow: {
     flexDirection: 'row',
     gap: Spacing.two,
     alignItems: 'center',
-  },
-  chip: {
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-    borderRadius: Spacing.three,
-  },
-  chipWithIcon: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.one,
   },
   section: {
     gap: Spacing.two,
@@ -1511,16 +1512,13 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   productsHeader: {
-    gap: Spacing.two,
+    gap: Spacing.one,
+    paddingTop: Spacing.one,
   },
   checkingRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
-  },
-  carousel: {
-    gap: Spacing.two,
-    paddingVertical: Spacing.one,
   },
   gridRow: {
     flexDirection: 'row',
@@ -1533,6 +1531,7 @@ const styles = StyleSheet.create({
   empty: {
     padding: Spacing.four,
     alignItems: 'center',
+    gap: Spacing.two,
   },
   edgeHitLeft: {
     position: 'absolute',
@@ -1550,19 +1549,32 @@ const styles = StyleSheet.create({
   },
   moreBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    backgroundColor: SheetChrome.scrim,
   },
   moreSheet: {
     maxHeight: '50%',
-    borderTopLeftRadius: Spacing.four,
-    borderTopRightRadius: Spacing.four,
+    borderTopLeftRadius: SheetChrome.topRadius,
+    borderTopRightRadius: SheetChrome.topRadius,
+    borderTopWidth: 2,
     padding: Spacing.four,
     gap: Spacing.two,
+  },
+  moreHandle: {
+    alignSelf: 'center',
+    width: SheetChrome.handleWidth,
+    height: SheetChrome.handleHeight,
+    borderRadius: 2,
+    marginBottom: Spacing.two,
+  },
+  moreTitle: {
+    fontSize: Type.section,
+    marginBottom: Spacing.one,
   },
   moreRow: {
     paddingVertical: Spacing.three,
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
 });

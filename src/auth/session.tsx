@@ -10,17 +10,20 @@ import type { Session } from '@supabase/supabase-js';
 
 import {
   clearGuest,
+  hasCompletedOnboardingLocally,
   isGuest as readIsGuest,
   markIsGuest,
 } from '@/backend/preferences';
 import { mergeGuestCashbackIntoProfile, needsOnboarding } from '@/backend/cashback';
 import { mergeGuestCartIntoDefaultList } from '@/backend/guest-cart';
 import { mergeGuestFavoritesIntoAccount } from '@/backend/guest-favorites';
+import { mergeGuestOnboardingIntoAccount } from '@/backend/guest-onboarding';
 import {
   getSession,
   onAuthStateChange,
   signOut as backendSignOut,
 } from '@/backend/supabase/auth';
+import type { AuthMode } from '@/auth/auth-mode';
 
 type SessionContextValue = {
   session: Session | null;
@@ -30,15 +33,17 @@ type SessionContextValue = {
   /** Signed in or continuing as guest. */
   canUseApp: boolean;
   /**
-   * Whether the 3-screen onboarding should show.
-   * null while resolving; only meaningful when canUseApp.
+   * Whether onboarding (welcome → auth → prefs) should show.
+   * null while resolving. First open shows onboarding even before sign-in.
    */
   needsOnboardingFlow: boolean | null;
+  /** Preferred auth form mode when leaving guest / signed-out state. */
+  preferredAuthMode: AuthMode | null;
   /** Mark onboarding done in-session (after Skip / Finish). */
   finishOnboarding: () => void;
   continueAsGuest: () => void;
   /** Leave guest mode and show auth (keeps local guest cart). */
-  requestSignIn: () => void;
+  requestSignIn: (mode?: AuthMode) => void;
   signOut: () => Promise<void>;
 };
 
@@ -57,10 +62,12 @@ export function SessionProvider({ children }: PropsWithChildren) {
   const [isGuest, setIsGuest] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [needsOnboardingFlow, setNeedsOnboardingFlow] = useState<boolean | null>(null);
+  const [preferredAuthMode, setPreferredAuthMode] = useState<AuthMode | null>(null);
 
   const refreshOnboardingGate = useCallback(async (guest: boolean, signedIn: boolean) => {
+    // First launch: show onboarding before auth even with no session.
     if (!guest && !signedIn) {
-      setNeedsOnboardingFlow(null);
+      setNeedsOnboardingFlow(!hasCompletedOnboardingLocally());
       return;
     }
     try {
@@ -111,6 +118,9 @@ export function SessionProvider({ children }: PropsWithChildren) {
         void mergeGuestFavoritesIntoAccount().catch(() => {
           // Same for favorites.
         });
+        void mergeGuestOnboardingIntoAccount().catch(() => {
+          // Same for onboarding food rules / discounts / transport.
+        });
         void mergeGuestCashbackIntoProfile().catch(() => {
           // Same for cashback prefs.
         });
@@ -134,11 +144,15 @@ export function SessionProvider({ children }: PropsWithChildren) {
     void refreshOnboardingGate(true, false);
   }, [refreshOnboardingGate]);
 
-  const requestSignIn = useCallback(() => {
-    clearGuest();
-    setIsGuest(false);
-    setNeedsOnboardingFlow(null);
-  }, []);
+  const requestSignIn = useCallback(
+    (mode: AuthMode = 'logIn') => {
+      clearGuest();
+      setIsGuest(false);
+      setPreferredAuthMode(mode);
+      void refreshOnboardingGate(false, false);
+    },
+    [refreshOnboardingGate],
+  );
 
   const finishOnboarding = useCallback(() => {
     setNeedsOnboardingFlow(false);
@@ -148,11 +162,12 @@ export function SessionProvider({ children }: PropsWithChildren) {
     if (!session) {
       clearGuest();
       setIsGuest(false);
-      setNeedsOnboardingFlow(null);
+      setPreferredAuthMode(null);
+      void refreshOnboardingGate(false, false);
       return;
     }
     await backendSignOut();
-  }, [session]);
+  }, [refreshOnboardingGate, session]);
 
   const value: SessionContextValue = {
     session,
@@ -160,6 +175,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
     isGuest,
     canUseApp: !!session || isGuest,
     needsOnboardingFlow,
+    preferredAuthMode,
     finishOnboarding,
     continueAsGuest,
     requestSignIn,

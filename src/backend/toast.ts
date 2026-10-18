@@ -1,4 +1,5 @@
 import Constants from 'expo-constants';
+import * as Haptics from 'expo-haptics';
 import { Alert, Platform, ToastAndroid } from 'react-native';
 
 type ToastOptions = {
@@ -26,6 +27,24 @@ function getBurnt(): BurntModule | null {
   }
 }
 
+function fireToastHaptic(kind: ToastOptions['haptic']): void {
+  if (!kind || kind === 'none') return;
+  // Burnt may also fire haptics in a dev build; Expo Go / fallback never does.
+  void (async () => {
+    try {
+      if (kind === 'error') {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      } else if (kind === 'warning') {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      } else {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    } catch {
+      // Web / unsupported devices
+    }
+  })();
+}
+
 function fallbackToast(options: ToastOptions): void {
   const body = [options.title, options.message].filter(Boolean).join('\n');
   if (Platform.OS === 'android') {
@@ -36,13 +55,15 @@ function fallbackToast(options: ToastOptions): void {
 }
 
 function showToast(options: ToastOptions): void {
+  fireToastHaptic(options.haptic);
   const burnt = getBurnt();
   if (!burnt) {
     fallbackToast(options);
     return;
   }
   try {
-    burnt.toast(options);
+    // Burnt already received haptic: — pass none so we don't double-buzz in native builds.
+    burnt.toast({ ...options, haptic: 'none' });
   } catch {
     fallbackToast(options);
   }

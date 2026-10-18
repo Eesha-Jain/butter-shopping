@@ -7,6 +7,7 @@ export type {
   FoodRuleMode, FulfillmentMethod, GroupKind, TraitKind, TraitRelation, TripStatus
 } from '../types';
 export {
+  getOptionalUserId,
   getSession,
   onAuthStateChange,
   requestPasswordReset,
@@ -20,6 +21,7 @@ export {
   findOrIngestProductByUpc,
   findProductByUpc,
   formatPromotionBadge,
+  promotionSavingsHint,
   getCheapestPriceCentsByProductIds,
   getStorePriceCentsByProductIds,
   getCurrentPrice,
@@ -51,20 +53,31 @@ export { nextPreferredGroceryDate } from './dates';
 export { listMyFavoriteProductIds, setProductFavorite } from './favorites';
 export {
   applyFoodFilters,
+  areAllTraitsAvoided,
+  groupAvoidTraitsForFilterUi,
   groupTraitsForFilterUi,
   indexTraitsByProduct,
-  rulesFromUserFoodRules
+  rulesFromUserFoodRules,
+  toggleAvoidGroup,
 } from './foodFilters';
-export type { SessionFoodRule, ShopSort } from './foodFilters';
+export type {
+  AvoidTraitGroup,
+  AvoidTraitGroupId,
+  SessionFoodRule,
+  ShopSort,
+} from './foodFilters';
 export {
   createGroup,
+  getGroup,
   joinGroup,
   leaveGroup,
   listGroupBalances,
   listGroupMembers,
+  listGroupMembersWithProfiles,
   listMyGroups,
-  updateGroup
+  updateGroup,
 } from './groups';
+export type { GroupMemberWithProfile } from './groups';
 export {
   addListItem,
   addRecipeToList,
@@ -108,13 +121,17 @@ export {
   confirmOrder,
   createTripFromList,
   finalizeOrder,
+  findOpenTrip,
   getTrip,
+  listGroupOrders,
   listOrderItems,
   listOrderShares,
   markSharePaid,
+  placeStoreOrderFromList,
   previewEvenSplit,
-  requestCheckoutLink
+  requestCheckoutLink,
 } from './orders';
+export type { GroupOrderRow } from './orders';
 export {
   getWeeklyBudgetCents,
   planLowestTrip,
@@ -127,6 +144,7 @@ export {
 export type { BestShopDay, ShopDayReason, ShopDayStoreHint } from './planning';
 export { getWeeklyShoppingBoard } from './weeklyShopping';
 export type { WeeklyBoardChip, WeeklyBoardColumn, WeeklyShoppingBoard } from './weeklyShopping';
+export { listColleges, resolveCollegeId } from './colleges';
 export {
   getMyProfile,
   listFoodTraits,

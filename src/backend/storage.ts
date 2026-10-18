@@ -8,8 +8,11 @@ const KEYS = {
   isGuest: 'butter.isGuest',
   guestCart: 'butter.guestCart',
   guestFavorites: 'butter.guestFavorites',
+  guestOnboarding: 'butter.guestOnboarding',
   onboardingCompleted: 'butter.onboardingCompleted',
+  hasSeenWelcome: 'butter.hasSeenWelcome',
   groceryCashbackBps: 'butter.groceryCashbackBps',
+  activeListId: 'butter.activeListId',
 } as const;
 
 export type StorageKey = keyof typeof KEYS;

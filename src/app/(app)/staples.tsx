@@ -4,7 +4,6 @@ import {
   FlatList,
   Pressable,
   StyleSheet,
-  TextInput,
   View,
 } from 'react-native';
 
@@ -19,7 +18,9 @@ import {
 } from '@/backend';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { BottomTabInset, Spacing } from '@/constants/theme';
+import { ButterButton } from '@/components/ui/butter-button';
+import { ButterSearchField } from '@/components/ui/butter-search-field';
+import { BottomTabInset, Radius, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 export default function StaplesScreen() {
@@ -103,9 +104,7 @@ export default function StaplesScreen() {
     return (
       <ThemedView style={styles.centered}>
         <ThemedText>{error}</ThemedText>
-        <Pressable onPress={() => void loadHabits()}>
-          <ThemedText type="linkPrimary">Try again</ThemedText>
-        </Pressable>
+        <ButterButton label="Try again" variant="yellow" onPress={() => void loadHabits()} />
       </ThemedView>
     );
   }
@@ -119,28 +118,31 @@ export default function StaplesScreen() {
       contentContainerStyle={styles.listContent}
       ListHeaderComponent={
         <View style={styles.header}>
-          <ThemedText type="subtitle">Foods you eat often</ThemedText>
+          <ThemedText type="smallBold" style={styles.title}>
+            Foods you eat often
+          </ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
             Search a shopping category. Build list on the List tab uses these staples.
           </ThemedText>
-          <TextInput
+          <ButterSearchField
             value={query}
             onChangeText={setQuery}
             placeholder="Search milk, eggs, rice…"
-            placeholderTextColor={theme.textSecondary}
             autoCapitalize="none"
             autoCorrect={false}
-            style={[
-              styles.input,
-              { color: theme.text, borderColor: theme.border, backgroundColor: theme.backgroundElement },
-            ]}
           />
           {matches.map((category) => (
             <Pressable
               key={category.id}
               onPress={() => void addStaple(category)}
-              style={[styles.row, { backgroundColor: theme.backgroundElement }]}>
-              <ThemedText>{category.name}</ThemedText>
+              style={[
+                styles.row,
+                {
+                  backgroundColor: theme.backgroundElement,
+                  borderColor: theme.borderInk,
+                },
+              ]}>
+              <ThemedText type="smallBold">{category.name}</ThemedText>
               <ThemedText type="small" themeColor="textSecondary">
                 Add weekly
               </ThemedText>
@@ -150,18 +152,32 @@ export default function StaplesScreen() {
         </View>
       }
       ListEmptyComponent={
-        <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>
-          No staples yet. Search a food above.
-        </ThemedText>
+        <View style={styles.emptyBlock}>
+          <ThemedText type="smallBold" style={styles.emptyTitle}>
+            No staples yet
+          </ThemedText>
+          <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>
+            Search a food above to add something you buy often.
+          </ThemedText>
+        </View>
       }
       renderItem={({ item }) => (
-        <ThemedView type="backgroundElement" style={styles.habitRow}>
-          <ThemedText>{item.category_id ? 'Category staple' : 'Product staple'}</ThemedText>
+        <View
+          style={[
+            styles.habitRow,
+            {
+              backgroundColor: theme.backgroundElement,
+              borderColor: theme.borderInk,
+            },
+          ]}>
+          <ThemedText type="smallBold">
+            {item.category_id ? 'Category staple' : 'Product staple'}
+          </ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
             every {item.interval_days} days
             {item.auto_add_enabled ? '' : ' · not auto-added'}
           </ThemedText>
-        </ThemedView>
+        </View>
       )}
     />
   );
@@ -173,6 +189,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: Spacing.four,
+    gap: Spacing.three,
   },
   listContent: {
     paddingHorizontal: Spacing.three,
@@ -183,11 +200,9 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     paddingVertical: Spacing.three,
   },
-  input: {
-    borderWidth: 1,
-    borderRadius: Spacing.three,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
+  title: {
+    fontSize: Type.pageTitle,
+    lineHeight: 34,
   },
   row: {
     flexDirection: 'row',
@@ -195,15 +210,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
+    borderWidth: 2,
   },
   habitRow: {
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.three,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
+    borderWidth: 2,
     gap: Spacing.half,
   },
+  emptyBlock: {
+    padding: Spacing.four,
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  emptyTitle: {
+    fontSize: Type.section,
+  },
   empty: {
-    padding: Spacing.three,
+    textAlign: 'center',
   },
 });

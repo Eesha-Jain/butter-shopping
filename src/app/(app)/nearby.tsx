@@ -11,7 +11,8 @@ import {
 } from '@/backend';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Spacing } from '@/constants/theme';
+import { ButterButton } from '@/components/ui/butter-button';
+import { Fonts, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 const SEARCH_DELTA = 0.2;
@@ -160,9 +161,7 @@ export default function NearbyScreen() {
             </ThemedText>
           ) : null}
           {error || showEmpty ? (
-            <Pressable onPress={() => void loadShops()}>
-              <ThemedText type="linkPrimary">Try again</ThemedText>
-            </Pressable>
+            <ButterButton label="Try again" variant="yellow" onPress={() => void loadShops()} />
           ) : null}
         </ThemedView>
       ) : null}
@@ -170,7 +169,14 @@ export default function NearbyScreen() {
       <Pressable
         onPress={() => void loadShops(true)}
         disabled={isRefreshing || isLoading}
-        style={[styles.retry, { backgroundColor: theme.backgroundElement, opacity: isRefreshing ? 0.6 : 1 }]}>
+        style={[
+          styles.retry,
+          {
+            backgroundColor: theme.backgroundElement,
+            borderColor: theme.borderInk,
+            opacity: isRefreshing ? 0.6 : 1,
+          },
+        ]}>
         <ThemedText type="smallBold">{isRefreshing ? 'Updating…' : 'Refresh'}</ThemedText>
       </Pressable>
 
@@ -213,7 +219,7 @@ const styles = StyleSheet.create({
     left: Spacing.three,
     right: Spacing.three,
     padding: Spacing.three,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
     gap: Spacing.two,
     alignItems: 'center',
   },
@@ -223,7 +229,8 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.two,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.chip,
+    borderWidth: 2,
   },
   sheetHost: {
     position: 'absolute',
@@ -245,7 +252,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     overflow: 'hidden',
     fontSize: 12,
-    fontWeight: '700',
+    fontFamily: Fonts.sansBold,
     textAlign: 'center',
   },
 });

@@ -27,12 +27,13 @@ export async function setGroceryCashbackBps(bps: number | null, isGuest: boolean
 }
 
 export async function needsOnboarding(isGuest: boolean): Promise<boolean> {
-  if (isGuest) return !hasCompletedOnboardingLocally();
+  if (hasCompletedOnboardingLocally()) return false;
+  if (isGuest) return true;
   try {
     const profile = await getMyProfile();
     return profile.onboarding_completed_at == null;
   } catch {
-    return !hasCompletedOnboardingLocally();
+    return true;
   }
 }
 

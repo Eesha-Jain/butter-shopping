@@ -10,13 +10,13 @@ export default function AppTabs() {
   return (
     <NativeTabs
       backgroundColor={colors.background}
-      indicatorColor={colors.primaryDark}
-      tintColor={colors.primaryDark}
-      iconColor={{ default: colors.textSecondary, selected: colors.primaryDark }}
+      indicatorColor={colors.primary}
+      tintColor={colors.text}
+      iconColor={{ default: colors.textSecondary, selected: colors.text }}
       labelStyle={{
-        fontFamily: Fonts.sans,
+        fontFamily: Fonts.sansBold,
         color: colors.textSecondary,
-        selected: { color: colors.primaryDark },
+        selected: { color: colors.text },
       }}>
       <NativeTabs.Trigger name="index">
         <NativeTabs.Trigger.Label>Shop</NativeTabs.Trigger.Label>
@@ -32,27 +32,14 @@ export default function AppTabs() {
       </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="list">
-        <NativeTabs.Trigger.Label>List</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Label>Plan</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf="checklist" md="format_list_bulleted" />
-      </NativeTabs.Trigger>
-
-      <NativeTabs.Trigger name="days">
-        <NativeTabs.Trigger.Label>Days</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf="calendar" md="calendar_month" />
       </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="agent">
         <NativeTabs.Trigger.Label>AI</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon
           src={require('@/assets/images/tabIcons/agent.png')}
-          renderingMode="original"
-        />
-      </NativeTabs.Trigger>
-
-      <NativeTabs.Trigger name="cart">
-        <NativeTabs.Trigger.Label>Cart</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon
-          src={require('@/assets/images/tabIcons/cart.png')}
           renderingMode="original"
         />
       </NativeTabs.Trigger>

@@ -25,20 +25,14 @@ export default function AppTabs() {
           <TabTrigger name="home" href={'/' as Href} asChild>
             <TabButton>Shop</TabButton>
           </TabTrigger>
-          <TabTrigger name="days" href={'/days' as Href} asChild>
-            <TabButton>Days</TabButton>
-          </TabTrigger>
-          <TabTrigger name="agent" href={'/agent' as Href} asChild>
-            <TabButton>AI</TabButton>
-          </TabTrigger>
-          <TabTrigger name="cart" href={'/cart' as Href} asChild>
-            <TabButton>Cart</TabButton>
-          </TabTrigger>
           <TabTrigger name="nearby" href={'/nearby' as Href} asChild>
             <TabButton>Nearby</TabButton>
           </TabTrigger>
           <TabTrigger name="list" href={'/list' as Href} asChild>
-            <TabButton>List</TabButton>
+            <TabButton>Plan</TabButton>
+          </TabTrigger>
+          <TabTrigger name="agent" href={'/agent' as Href} asChild>
+            <TabButton>AI</TabButton>
           </TabTrigger>
         </CustomTabList>
       </TabList>
@@ -52,7 +46,7 @@ export function TabButton({ children, isFocused, ...props }: TabTriggerSlotProps
       <ThemedView
         type={isFocused ? 'backgroundSelected' : 'backgroundElement'}
         style={styles.tabButtonView}>
-        <ThemedText type="small" themeColor={isFocused ? 'text' : 'textSecondary'}>
+        <ThemedText type="smallBold" themeColor={isFocused ? 'text' : 'textSecondary'}>
           {children}
         </ThemedText>
       </ThemedView>
@@ -68,7 +62,7 @@ export function CustomTabList(props: TabListProps) {
     <View {...props} style={styles.tabListContainer}>
       <ThemedView type="backgroundElement" style={styles.innerContainer}>
         <ThemedText type="smallBold" style={styles.brandText}>
-          Expo Starter
+          Butter
         </ThemedText>
 
         {props.children}

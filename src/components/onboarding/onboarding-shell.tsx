@@ -1,6 +1,17 @@
 import * as Haptics from 'expo-haptics';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeInDown, FadeOutLeft } from 'react-native-reanimated';
+import { router, type Href } from 'expo-router';
+import { useEffect } from 'react';
+import { Keyboard, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated, {
+  FadeIn,
+  FadeInDown,
+  FadeOutLeft,
+  ZoomIn,
+  interpolate,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { OnboardingCow } from '@/components/onboarding/onboarding-cow';
@@ -9,15 +20,35 @@ import { Fonts, Spacing } from '@/constants/theme';
 export const ONBOARDING_YELLOW = '#ffd700';
 const INK = '#000000';
 const BUBBLE = '#ffffff';
+const COMPACT_MS = 280;
+
+const STEP_HREF: Record<1 | 2 | 3 | 4 | 5, Href> = {
+  1: '/(onboarding)/welcome',
+  2: '/(onboarding)/account',
+  3: '/(onboarding)/eat',
+  4: '/(onboarding)/save',
+  5: '/(onboarding)/shop',
+};
 
 type Props = {
-  step: 1 | 2 | 3;
-  title: string;
+  step: 1 | 2 | 3 | 4 | 5;
+  title?: string;
   subtitle?: string;
-  children: React.ReactNode;
-  onSkip: () => void;
+  children?: React.ReactNode;
+  onSkip?: () => void;
   onContinue: () => void;
   continueLabel?: string;
+  skipLabel?: string;
+  /** Hide the speech bubble and show title as a hero (welcome screen). */
+  hero?: boolean;
+  /** Keep the cow but omit the speech bubble (e.g. account / auth step). */
+  hideBubble?: boolean;
+  /** Hide the primary Continue button (e.g. account screen uses AuthForm CTAs). */
+  hideContinue?: boolean;
+  /** Hide the step dots (welcome + auth). */
+  hideDots?: boolean;
+  /** Hide the top-right skip / continue-as-guest control. */
+  hideSkip?: boolean;
 };
 
 export function OnboardingShell({
@@ -28,13 +59,65 @@ export function OnboardingShell({
   onSkip,
   onContinue,
   continueLabel = 'Continue',
+  skipLabel = 'Skip all',
+  hero = false,
+  hideBubble = false,
+  hideContinue = false,
+  hideDots = false,
+  hideSkip = false,
 }: Props) {
   const insets = useSafeAreaInsets();
+  const compactProgress = useSharedValue(0);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, () => {
+      compactProgress.value = withTiming(1, { duration: COMPACT_MS });
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      compactProgress.value = withTiming(0, { duration: COMPACT_MS });
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, [compactProgress]);
+
+  const bubbleStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(compactProgress.value, [0, 0.55], [1, 0]),
+    maxHeight: interpolate(compactProgress.value, [0, 1], [200, 0]),
+    marginBottom: interpolate(compactProgress.value, [0, 1], [0, -Spacing.two]),
+    transform: [{ scale: interpolate(compactProgress.value, [0, 1], [1, 0.92]) }],
+    overflow: 'hidden' as const,
+  }));
+
+  const heroTextStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(compactProgress.value, [0, 0.55], [1, 0]),
+    maxHeight: interpolate(compactProgress.value, [0, 1], [120, 0]),
+    overflow: 'hidden' as const,
+  }));
 
   const handleContinue = () => {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     onContinue();
   };
+
+  const handleSkip = () => {
+    if (!onSkip) return;
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    onSkip();
+  };
+
+  const goToStep = (n: 1 | 2 | 3 | 4 | 5) => {
+    if (n >= step) return;
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    // Pop to that route when it's in history; otherwise replace (e.g. after Skip).
+    // Do not loop router.back() — canGoBack() is stale until the queue runs.
+    router.dismissTo(STEP_HREF[n]);
+  };
+
+  const showTopBar = !hideDots || !hideSkip;
 
   return (
     <View
@@ -46,48 +129,101 @@ export function OnboardingShell({
           paddingBottom: insets.bottom + Spacing.three,
         },
       ]}>
-      <OnboardingCow />
-
-      <Animated.View
-        key={`bubble-${step}`}
-        entering={FadeInDown.duration(320)}
-        exiting={FadeOutLeft.duration(180)}
-        style={styles.bubbleBlock}>
-        <View style={styles.tail} />
-        <View style={styles.bubble}>
-          <Text style={styles.bubbleTitle}>{title}</Text>
-          {subtitle ? <Text style={styles.bubbleSubtitle}>{subtitle}</Text> : null}
+      {showTopBar ? (
+        <View style={styles.topBar}>
+          {hideDots ? (
+            <View />
+          ) : (
+            <View style={styles.dots}>
+              {([1, 2, 3, 4, 5] as const).map((n) => {
+                const isCurrent = n === step;
+                const isPast = n < step;
+                return (
+                  <Pressable
+                    key={n}
+                    onPress={() => goToStep(n)}
+                    disabled={!isPast}
+                    hitSlop={10}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Onboarding step ${n}`}
+                    accessibilityState={{ selected: isCurrent, disabled: !isPast }}>
+                    <View
+                      style={[
+                        styles.dot,
+                        isCurrent ? styles.dotActive : isPast ? styles.dotPast : styles.dotIdle,
+                      ]}
+                    />
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
+          {hideSkip ? null : (
+            <Pressable onPress={handleSkip} hitSlop={12} accessibilityRole="button">
+              <Text style={styles.skipTop}>{skipLabel}</Text>
+            </Pressable>
+          )}
         </View>
-        <View style={styles.dots}>
-          {([1, 2, 3] as const).map((n) => (
-            <View
-              key={n}
-              style={[styles.dot, n === step ? styles.dotActive : styles.dotIdle]}
-            />
-          ))}
+      ) : null}
+
+      {hero ? (
+        <View style={styles.heroCenter}>
+          <Animated.View entering={ZoomIn.duration(560).springify().damping(15).stiffness(120)}>
+            <OnboardingCow compactProgress={compactProgress} />
+          </Animated.View>
+          {title ? (
+            <Animated.View
+              key={`hero-${step}`}
+              entering={FadeInDown.delay(180).duration(420)}
+              style={[styles.heroBlock, heroTextStyle]}>
+              <Text style={styles.heroTitle}>{title}</Text>
+              {subtitle ? <Text style={styles.heroSubtitle}>{subtitle}</Text> : null}
+            </Animated.View>
+          ) : null}
         </View>
-      </Animated.View>
+      ) : (
+        <>
+          <OnboardingCow compactProgress={compactProgress} />
+          {!hideBubble && title ? (
+            <Animated.View
+              key={`bubble-${step}`}
+              entering={FadeInDown.duration(320)}
+              exiting={FadeOutLeft.duration(180)}
+              style={[styles.bubbleBlock, bubbleStyle]}>
+              <View style={styles.tail} />
+              <View style={styles.bubble}>
+                <Text style={styles.bubbleTitle}>{title}</Text>
+                {subtitle ? <Text style={styles.bubbleSubtitle}>{subtitle}</Text> : null}
+              </View>
+            </Animated.View>
+          ) : null}
+          {children ? (
+            <Animated.View
+              key={`body-${step}`}
+              entering={FadeInDown.delay(80).duration(360)}
+              exiting={FadeOutLeft.duration(180)}
+              style={styles.body}>
+              {children}
+            </Animated.View>
+          ) : (
+            <View style={styles.body} />
+          )}
+        </>
+      )}
 
-      <Animated.View
-        key={`body-${step}`}
-        entering={FadeInDown.delay(80).duration(360)}
-        exiting={FadeOutLeft.duration(180)}
-        style={styles.body}>
-        {children}
-      </Animated.View>
-
-      <View style={styles.footer}>
-        <Pressable
-          onPress={handleContinue}
-          style={styles.continueBtn}
-          accessibilityRole="button"
-          accessibilityLabel={continueLabel}>
-          <Text style={styles.continueLabel}>{continueLabel}</Text>
-        </Pressable>
-        <Pressable onPress={onSkip} hitSlop={10} accessibilityRole="button">
-          <Text style={styles.skipLabel}>Skip</Text>
-        </Pressable>
-      </View>
+      {hideContinue ? null : (
+        <Animated.View
+          entering={hero ? FadeIn.delay(380).duration(420) : undefined}
+          style={styles.footer}>
+          <Pressable
+            onPress={handleContinue}
+            style={styles.continueBtn}
+            accessibilityRole="button"
+            accessibilityLabel={continueLabel}>
+            <Text style={styles.continueLabel}>{continueLabel}</Text>
+          </Pressable>
+        </Animated.View>
+      )}
     </View>
   );
 }
@@ -123,9 +259,67 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     gap: Spacing.two,
   },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  dots: {
+    flexDirection: 'row',
+    gap: Spacing.two,
+    alignItems: 'center',
+  },
+  dot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  dotActive: {
+    backgroundColor: INK,
+    width: 26,
+  },
+  /** Already visited — tappable to go back. */
+  dotPast: {
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  /** Not reached yet — not tappable. */
+  dotIdle: {
+    backgroundColor: 'rgba(0,0,0,0.28)',
+  },
+  skipTop: {
+    fontFamily: Fonts.sansBold,
+    fontSize: 15,
+    color: INK,
+    textDecorationLine: 'underline',
+  },
   bubbleBlock: {
     alignItems: 'center',
     gap: Spacing.two,
+  },
+  heroCenter: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  heroBlock: {
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.one,
+    alignItems: 'center',
+  },
+  heroTitle: {
+    fontFamily: Fonts.sansBold,
+    fontSize: 34,
+    lineHeight: 40,
+    color: INK,
+    textAlign: 'center',
+  },
+  heroSubtitle: {
+    fontFamily: Fonts.sans,
+    fontSize: 17,
+    lineHeight: 24,
+    color: '#222222',
+    textAlign: 'center',
   },
   tail: {
     width: 0,
@@ -162,23 +356,6 @@ const styles = StyleSheet.create({
     color: '#333333',
     textAlign: 'center',
   },
-  dots: {
-    flexDirection: 'row',
-    gap: Spacing.two,
-    marginTop: Spacing.one,
-  },
-  dot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-  },
-  dotActive: {
-    backgroundColor: INK,
-    width: 22,
-  },
-  dotIdle: {
-    backgroundColor: 'rgba(0,0,0,0.25)',
-  },
   body: {
     flex: 1,
     gap: Spacing.two,
@@ -199,13 +376,6 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.sansBold,
     fontSize: 18,
     color: ONBOARDING_YELLOW,
-  },
-  skipLabel: {
-    fontFamily: Fonts.sansBold,
-    fontSize: 15,
-    color: INK,
-    textDecorationLine: 'underline',
-    paddingVertical: Spacing.two,
   },
   chip: {
     paddingHorizontal: Spacing.three,

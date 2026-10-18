@@ -699,6 +699,21 @@ app.post("/api/admin/assign-categories", async (req, res) => {
   }
 });
 
-app.listen(3000, () => {
-  console.log("Price proxy running on :3000");
+const PORT = Number(process.env.PORT) || 3000;
+const server = app.listen(PORT, () => {
+  // On Windows, the listening callback can fire before EADDRINUSE; only log when bound.
+  const addr = server.address();
+  if (!addr || !server.listening) return;
+  const port = typeof addr === "string" ? addr : addr.port;
+  console.log(`Price proxy running on :${port}`);
+});
+server.on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    console.error(
+      `Port ${PORT} is already in use. Kill the other node process (or set PORT=3001).`,
+    );
+    process.exit(1);
+  }
+  console.error(err);
+  process.exit(1);
 });

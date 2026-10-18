@@ -452,6 +452,44 @@ export function formatPromotionBadge(promo: Promotion): string {
   return 'BOGO';
 }
 
+export type PromotionSavingsHint = {
+  /** Compare-at shelf cents before the promo (when derivable). */
+  compareAtCents: number | null;
+  /** Short line under price, e.g. "Save $1" — null when badge alone is enough. */
+  savingsLabel: string | null;
+};
+
+/**
+ * Derive browse-card savings proof from a promo + displayed (post-cashback) price.
+ * Pure helper — no I/O. Returns null labels when math would be misleading.
+ */
+export function promotionSavingsHint(
+  promo: Promotion,
+  priceCents: number | null | undefined,
+): PromotionSavingsHint {
+  if (priceCents == null || priceCents < 0) {
+    return { compareAtCents: null, savingsLabel: null };
+  }
+  if (promo.discount_type === 'amount_off' && promo.discount_value > 0) {
+    const save = promo.discount_value;
+    const compareAt = priceCents + save;
+    const dollars = (save / 100).toFixed(save % 100 === 0 ? 0 : 2);
+    return { compareAtCents: compareAt, savingsLabel: `Save $${dollars}` };
+  }
+  if (promo.discount_type === 'percent_off') {
+    const pct = promo.discount_value;
+    if (pct > 0 && pct < 100) {
+      const compareAt = Math.round(priceCents / (1 - pct / 100));
+      if (compareAt > priceCents) {
+        return { compareAtCents: compareAt, savingsLabel: null };
+      }
+    }
+    return { compareAtCents: null, savingsLabel: null };
+  }
+  // BOGO — badge is the proof; no fake math.
+  return { compareAtCents: null, savingsLabel: null };
+}
+
 /** Searches active products by name or brand. Inactive products are recalled or discontinued. */
 export async function searchProducts(
   query: string,
