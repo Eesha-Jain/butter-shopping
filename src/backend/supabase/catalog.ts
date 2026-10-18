@@ -376,7 +376,7 @@ export async function listCurrentPromotions(): Promise<Promotion[]> {
   );
 }
 
-/** Trader Joe's stores and campus stores, which are the only places a user can report a shelf price. */
+/** Every store a signed-in user may attach a shelf-price report to. */
 export async function listReportableStores(): Promise<ReportableStore[]> {
   return unwrap(await supabase.rpc('list_reportable_stores'));
 }
@@ -384,7 +384,8 @@ export async function listReportableStores(): Promise<ReportableStore[]> {
 /**
  * Saves a Trader Joe's or campus store for later price reports.
  * kind is `trader_joes` or `campus`. A campus store requires collegeName.
- * The same name and ZIP return the existing store.
+ * The same name and ZIP return the existing store. Scraped QFC, Safeway,
+ * Fred Meyer, and Trader Joe's stores already exist from the price proxy.
  */
 export async function registerReportableStore(input: {
   name: string;
@@ -421,7 +422,8 @@ export type ReportedOffer = {
 };
 
 /**
- * Saved shelf prices at Trader Joe's and campus stores whose product name matches.
+ * Latest user_report shelf prices whose product name matches, at any store.
+ * Ignores api/scrape observations so manual reports stay the trusted source.
  * Returns an empty list when nobody is signed in.
  */
 export async function listReportedOffers(term: string): Promise<ReportedOffer[]> {
@@ -444,14 +446,21 @@ export async function listReportedOffers(term: string): Promise<ReportedOffer[]>
   if (relevant.length === 0) return [];
   const prices = unwrap(
     await supabase
-      .from('current_prices')
-      .select('store_product_id, price_cents')
+      .from('prices')
+      .select('store_product_id, price_cents, created_at')
+      .eq('source', 'user_report')
       .in(
         'store_product_id',
         relevant.map((listing) => listing.id),
-      ),
+      )
+      .order('created_at', { ascending: false }),
   );
-  const priceByListing = new Map(prices.map((price) => [price.store_product_id, price.price_cents]));
+  const priceByListing = new Map<string, number>();
+  for (const price of prices) {
+    if (!priceByListing.has(price.store_product_id)) {
+      priceByListing.set(price.store_product_id, price.price_cents);
+    }
+  }
   const productById = new Map(products.map((product) => [product.id, product]));
   return relevant.flatMap((listing) => {
     const priceCents = priceByListing.get(listing.id);
@@ -470,8 +479,9 @@ export async function listReportedOffers(term: string): Promise<ReportedOffer[]>
 }
 
 /**
- * Appends a student-reported shelf price in cents at a Trader Joe's or campus store.
+ * Appends a student-reported shelf price in cents at any store.
  * Creates the product and the store listing when they do not exist yet.
+ * Manual reports override automated api/scrape prices for that listing.
  */
 export async function reportManualPrice(input: {
   storeId: string;
@@ -494,8 +504,8 @@ export async function reportManualPrice(input: {
 /**
  * Appends a student-reported shelf price in cents. Prices are never edited.
  * submitted_by must be the signed-in user, which this function sets.
- * The store listing must already exist. For Trader Joe's and campus stores,
- * reportManualPrice creates that listing.
+ * The store listing must already exist. reportManualPrice creates that listing
+ * for any store when needed.
  */
 export async function reportPrice(input: {
   storeProductId: string;
