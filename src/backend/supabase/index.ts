@@ -3,8 +3,12 @@
  * table queries directly. See README.md for which function belongs to which task.
  */
 export { AppError } from '../errors';
-export { evenShareCents, payerRemainderCents } from './money';
-export { nextPreferredGroceryDate } from './dates';
+export type {
+  FoodRuleMode, FulfillmentMethod,
+  GroupKind, TraitKind,
+  TraitRelation,
+  TripStatus
+} from '../types';
 export {
   getSession,
   onAuthStateChange,
@@ -12,8 +16,59 @@ export {
   signIn,
   signInWithGoogle,
   signOut,
-  signUp,
+  signUp
 } from './auth';
+export {
+  findProductByUpc,
+  getCurrentPrice,
+  getStore,
+  listCurrentPromotions,
+  nearbyStores,
+  productWarnings,
+  reportPrice,
+  searchCategories,
+  searchProducts
+} from './catalog';
+export { nextPreferredGroceryDate } from './dates';
+export {
+  createGroup,
+  joinGroup,
+  leaveGroup,
+  listGroupBalances,
+  listGroupMembers,
+  listMyGroups,
+  updateGroup
+} from './groups';
+export {
+  addListItem,
+  addRecipeToList,
+  createList,
+  listGroupLists,
+  listResolvedItems,
+  removeListItem,
+  setListItemDone,
+  updateListItem
+} from './lists';
+export { evenShareCents, payerRemainderCents } from './money';
+export { registerPushToken, removePushToken, sendOrderConfirmationPush } from './notifications';
+export {
+  cancelOrder,
+  confirmOrder,
+  createTripFromList,
+  finalizeOrder,
+  getTrip,
+  listOrderItems,
+  listOrderShares,
+  markSharePaid,
+  previewEvenSplit,
+  requestCheckoutLink
+} from './orders';
+export {
+  getWeeklyBudgetCents,
+  priceOptions,
+  recommendShoppingPlan,
+  suggestGroceryDate
+} from './planning';
 export {
   getMyProfile,
   listFoodTraits,
@@ -28,80 +83,25 @@ export {
   setMyFoodRules,
   unpreferStore,
   updateMyProfile,
-  uploadMyAvatar,
+  uploadMyAvatar
 } from './profiles';
-export {
-  createGroup,
-  joinGroup,
-  leaveGroup,
-  listGroupBalances,
-  listGroupMembers,
-  listMyGroups,
-  updateGroup,
-} from './groups';
-export {
-  addListItem,
-  addRecipeToList,
-  createList,
-  listGroupLists,
-  listResolvedItems,
-  removeListItem,
-  setListItemDone,
-  updateListItem,
-} from './lists';
-export {
-  findProductByUpc,
-  getCurrentPrice,
-  getStore,
-  listCurrentPromotions,
-  nearbyStores,
-  productWarnings,
-  reportPrice,
-  searchCategories,
-  searchProducts,
-} from './catalog';
-export {
-  getWeeklyBudgetCents,
-  priceOptions,
-  recommendShoppingPlan,
-  suggestGroceryDate,
-} from './planning';
-export {
-  cancelOrder,
-  confirmOrder,
-  createTripFromList,
-  finalizeOrder,
-  getTrip,
-  listOrderItems,
-  listOrderShares,
-  markSharePaid,
-  previewEvenSplit,
-  requestCheckoutLink,
-} from './orders';
 export {
   addDueHabitItems,
   listExpiringPurchases,
   listHabits,
   listPurchases,
   recordPurchase,
-  saveHabit,
+  saveHabit
 } from './purchases';
 export {
   addRecipeIngredient,
   createRecipe,
   getRecipeDetail,
   listTrending,
-  listVisibleRecipes,
+  listVisibleRecipes
 } from './recipes';
-export { getProductSafety, traitsChangedSince } from './safety';
-export { registerPushToken, removePushToken, sendOrderConfirmationPush } from './notifications';
 export { analyzeRipeness } from './ripeness';
 export type { RipenessResult } from './ripeness';
-export type {
-  FulfillmentMethod,
-  GroupKind,
-  FoodRuleMode,
-  TraitKind,
-  TraitRelation,
-  TripStatus,
-} from '../types';
+export { getProductSafety, traitsChangedSince } from './safety';
+export * from './voice';
+

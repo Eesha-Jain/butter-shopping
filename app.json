@@ -7,10 +7,12 @@
     "icon": "./assets/images/icon.png",
     "scheme": "buttershopping",
     "userInterfaceStyle": "automatic",
+
     "ios": {
       "icon": "./assets/images/icon.png",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "Butter uses your microphone so you can talk to your grocery shopping assistant.",
+        "NSMicrophoneUsageDescription": "Used for push-to-talk ordering.", 
+        "NSSpeechRecognitionUsageDescription": "Used to transcribe your push-to-talk order.",
         "ITSAppUsesNonExemptEncryption": false
       },
       "bitcode": false,
@@ -22,14 +24,7 @@
         "foregroundImage": "./assets/images/icon.png"
       },
       "permissions": [
-        "android.permission.RECORD_AUDIO",
-        "android.permission.ACCESS_NETWORK_STATE",
-        "android.permission.CAMERA",
-        "android.permission.INTERNET",
-        "android.permission.MODIFY_AUDIO_SETTINGS",
-        "android.permission.SYSTEM_ALERT_WINDOW",
-        "android.permission.WAKE_LOCK",
-        "android.permission.BLUETOOTH"
+        "android.permission.RECORD_AUDIO"
       ],
       "predictiveBackGestureEnabled": false
     },
