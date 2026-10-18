@@ -365,43 +365,55 @@ function chunk<T>(items: T[], size = IN_CHUNK): T[][] {
   return out;
 }
 
+export type CheapestShelf = {
+  priceCents: number;
+  /** Winning chain, or the store name when the chain is unset. Null for Open Prices. */
+  chainName: string | null;
+};
+
 /**
  * Cheapest known shelf price (cents) per product across available store listings.
-<<<<<<< HEAD
  * Expands UPC/fingerprint siblings so cross-store duplicates share one low price.
-=======
- * Includes listings on same-UPC sibling rows (matches the PDP offer list).
->>>>>>> 0c28983def681cb6223460403f276accdbf9dd81
  * Missing ids mean no observed price yet.
  */
 export async function getCheapestPriceCentsByProductIds(
   productIds: string[],
   geo?: OpenPricesGeo | null,
 ): Promise<Map<string, number>> {
-  const unique = [...new Set(productIds.filter(Boolean))];
-  const prices = new Map<string, number>();
-  if (unique.length === 0) return prices;
+  const shelves = await getCheapestShelfByProductIds(productIds, geo);
+  return new Map([...shelves].map(([id, row]) => [id, row.priceCents]));
+}
 
-<<<<<<< HEAD
-  const products = unwrap(
-    await supabase
-      .from('products')
-      .select('id, upc, canonical_upc, fingerprint')
-      .in('id', unique)
-      .eq('is_active', true),
-  ) as Pick<Product, 'id' | 'upc' | 'canonical_upc' | 'fingerprint'>[];
+/**
+ * Cheapest shelf price plus the chain (or store name) that set it.
+ */
+export async function getCheapestShelfByProductIds(
+  productIds: string[],
+  geo?: OpenPricesGeo | null,
+): Promise<Map<string, CheapestShelf>> {
+  const unique = [...new Set(productIds.filter(Boolean))];
+  const shelves = new Map<string, CheapestShelf>();
+  if (unique.length === 0) return shelves;
+
+  const products = (
+    await Promise.all(
+      chunk(unique).map(async (ids) =>
+        unwrap(
+          await supabase
+            .from('products')
+            .select('id, upc, canonical_upc, fingerprint')
+            .in('id', ids)
+            .eq('is_active', true),
+        ) as Pick<Product, 'id' | 'upc' | 'canonical_upc' | 'fingerprint'>[],
+      ),
+    )
+  ).flat();
 
   const groupKeyById = new Map<string, string>();
-  const idsByGroup = new Map<string, Set<string>>();
   for (const product of products) {
-    const key = productGroupKey(product);
-    groupKeyById.set(product.id, key);
-    const set = idsByGroup.get(key) ?? new Set<string>();
-    set.add(product.id);
-    idsByGroup.set(key, set);
+    groupKeyById.set(product.id, productGroupKey(product));
   }
 
-  // Expand soft siblings not in the request set (same fingerprint / canonical UPC).
   const canonKeys = [
     ...new Set(
       products
@@ -415,102 +427,58 @@ export async function getCheapestPriceCentsByProductIds(
   const extraBatches: Pick<Product, 'id' | 'upc' | 'canonical_upc' | 'fingerprint'>[][] = [];
   if (canonKeys.length > 0) {
     extraBatches.push(
-      unwrap(
-        await supabase
-          .from('products')
-          .select('id, upc, canonical_upc, fingerprint')
-          .eq('is_active', true)
-          .in('canonical_upc', canonKeys),
-      ) as Pick<Product, 'id' | 'upc' | 'canonical_upc' | 'fingerprint'>[],
+      (
+        await Promise.all(
+          chunk(canonKeys).map(async (keys) =>
+            unwrap(
+              await supabase
+                .from('products')
+                .select('id, upc, canonical_upc, fingerprint')
+                .eq('is_active', true)
+                .in('canonical_upc', keys),
+            ) as Pick<Product, 'id' | 'upc' | 'canonical_upc' | 'fingerprint'>[],
+          ),
+        )
+      ).flat(),
     );
   }
   if (fingerprints.length > 0) {
     extraBatches.push(
-      unwrap(
-        await supabase
-          .from('products')
-          .select('id, upc, canonical_upc, fingerprint')
-          .eq('is_active', true)
-          .in('fingerprint', fingerprints),
-      ) as Pick<Product, 'id' | 'upc' | 'canonical_upc' | 'fingerprint'>[],
+      (
+        await Promise.all(
+          chunk(fingerprints).map(async (keys) =>
+            unwrap(
+              await supabase
+                .from('products')
+                .select('id, upc, canonical_upc, fingerprint')
+                .eq('is_active', true)
+                .in('fingerprint', keys),
+            ) as Pick<Product, 'id' | 'upc' | 'canonical_upc' | 'fingerprint'>[],
+          ),
+        )
+      ).flat(),
     );
   }
   for (const product of extraBatches.flat()) {
-    const key = productGroupKey(product);
-    const set = idsByGroup.get(key) ?? new Set<string>();
-    set.add(product.id);
-    idsByGroup.set(key, set);
-    groupKeyById.set(product.id, key);
+    groupKeyById.set(product.id, productGroupKey(product));
   }
 
-  const allIds = [...new Set([...groupKeyById.keys()])];
-  const listings = unwrap(
-    await supabase
-      .from('store_products')
-      .select('id, product_id')
-      .in('product_id', allIds)
-      .eq('is_available', true),
-  );
-=======
-  const products = (
-    await Promise.all(
-      chunk(unique).map(async (ids) =>
-        unwrap(await supabase.from('products').select('id, upc').in('id', ids)) as {
-          id: string;
-          upc: string | null;
-        }[],
-      ),
-    )
-  ).flat();
-
-  // Map every listing-owning product id back to the requested ids it should price.
-  const ownersById = new Map<string, Set<string>>(unique.map((id) => [id, new Set([id])]));
-  const requestersByUpc = new Map<string, Set<string>>();
-  for (const row of products) {
-    for (const variant of upcLookupValues(row.upc)) {
-      const set = requestersByUpc.get(variant) ?? new Set<string>();
-      set.add(row.id);
-      requestersByUpc.set(variant, set);
-    }
-  }
-  if (requestersByUpc.size > 0) {
-    const siblings = (
-      await Promise.all(
-        chunk([...requestersByUpc.keys()]).map(async (upcs) =>
-          unwrap(await supabase.from('products').select('id, upc').in('upc', upcs)) as {
-            id: string;
-            upc: string | null;
-          }[],
-        ),
-      )
-    ).flat();
-    for (const sibling of siblings) {
-      for (const variant of upcLookupValues(sibling.upc)) {
-        const requesters = requestersByUpc.get(variant);
-        if (!requesters) continue;
-        const owners = ownersById.get(sibling.id) ?? new Set<string>();
-        for (const id of requesters) owners.add(id);
-        ownersById.set(sibling.id, owners);
-      }
-    }
-  }
-
+  const allIds = [...groupKeyById.keys()];
   const listings = (
     await Promise.all(
-      chunk([...ownersById.keys()]).map(async (ids) =>
+      chunk(allIds).map(async (ids) =>
         unwrap(
           await supabase
             .from('store_products')
-            .select('id, product_id')
+            .select('id, product_id, store_id')
             .in('product_id', ids)
             .eq('is_available', true),
         ),
       ),
     )
   ).flat();
->>>>>>> 0c28983def681cb6223460403f276accdbf9dd81
 
-  const groupMin = new Map<string, number>();
+  const groupMin = new Map<string, { cents: number; storeId: string }>();
   if (listings.length > 0) {
     const current = (
       await Promise.all(
@@ -528,49 +496,74 @@ export async function getCheapestPriceCentsByProductIds(
     for (const listing of listings) {
       const cents = priceByStoreProduct.get(listing.id);
       if (cents == null) continue;
-<<<<<<< HEAD
       const key = groupKeyById.get(listing.product_id);
       if (!key) continue;
       const prior = groupMin.get(key);
-      if (prior == null || cents < prior) groupMin.set(key, cents);
-=======
-      for (const owner of ownersById.get(listing.product_id) ?? []) {
-        const prior = prices.get(owner);
-        if (prior == null || cents < prior) prices.set(owner, cents);
+      if (prior == null || cents < prior.cents) {
+        groupMin.set(key, { cents, storeId: listing.store_id });
       }
->>>>>>> 0c28983def681cb6223460403f276accdbf9dd81
+    }
+  }
+
+  const winningStoreIds = [...new Set([...groupMin.values()].map((row) => row.storeId))];
+  const chainByStore = new Map<string, string>();
+  if (winningStoreIds.length > 0) {
+    const stores = (
+      await Promise.all(
+        chunk(winningStoreIds).map(async (ids) =>
+          unwrap(await supabase.from('stores').select('id, name, chain_id').in('id', ids)),
+        ),
+      )
+    ).flat();
+    const chainIds = [...new Set(stores.map((row) => row.chain_id).filter(Boolean))] as string[];
+    const chains =
+      chainIds.length === 0
+        ? []
+        : (
+            await Promise.all(
+              chunk(chainIds).map(async (ids) =>
+                unwrap(await supabase.from('chains').select('id, name').in('id', ids)),
+              ),
+            )
+          ).flat();
+    const chainNameById = new Map(chains.map((row) => [row.id, row.name]));
+    for (const store of stores) {
+      chainByStore.set(
+        store.id,
+        (store.chain_id ? chainNameById.get(store.chain_id) : null) ?? store.name,
+      );
     }
   }
 
   for (const id of unique) {
     const key = groupKeyById.get(id);
     if (!key) continue;
-    const cents = groupMin.get(key);
-    if (cents != null) prices.set(id, cents);
+    const win = groupMin.get(key);
+    if (!win) continue;
+    shelves.set(id, {
+      priceCents: win.cents,
+      chainName: chainByStore.get(win.storeId) ?? null,
+    });
   }
 
   // Fill gaps with Open Prices (cached, geo-preferring) when products have UPCs.
-  const missingIds = new Set(unique.filter((id) => !prices.has(id)));
-  if (missingIds.size === 0) return prices;
+  const missingIds = new Set(unique.filter((id) => !shelves.has(id)));
+  if (missingIds.size === 0) return shelves;
 
   const upcByProduct = new Map<string, string>();
   for (const row of products) {
-<<<<<<< HEAD
-    if (!missingIds.includes(row.id)) continue;
-=======
     if (!missingIds.has(row.id)) continue;
->>>>>>> 0c28983def681cb6223460403f276accdbf9dd81
     const upc = String(row.upc ?? '').replace(/\D/g, '');
     if (/^\d{8,14}$/.test(upc)) upcByProduct.set(row.id, upc);
   }
-  if (upcByProduct.size === 0) return prices;
+  if (upcByProduct.size === 0) return shelves;
 
   const openByUpc = await getOpenPricesCentsByUpcs([...upcByProduct.values()], geo);
   for (const [productId, upc] of upcByProduct) {
     const cents = openByUpc.get(upc);
-    if (cents != null) prices.set(productId, cents);
+    if (cents != null) shelves.set(productId, { priceCents: cents, chainName: null });
   }
-  return prices;
+  return shelves;
 }
 
 export type StoreShelfRow = {

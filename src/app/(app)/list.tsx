@@ -18,6 +18,7 @@ import { useActiveList } from '@/auth/active-list';
 import { useGuestCart } from '@/auth/guest-cart-context';
 import { useSession } from '@/auth/session';
 import {
+  getCheapestShelfSaleByProductIds,
   getMyProfile,
   getProductsByIds,
   listExpiringPurchases,
@@ -56,6 +57,11 @@ import { ThemedView } from '@/components/themed-view';
 import { ButterButton } from '@/components/ui/butter-button';
 import { ButterChip } from '@/components/ui/butter-chip';
 import { NativeIconButton } from '@/components/ui/native-icon-button';
+import {
+  formatSavingsCents,
+  MIN_SAVINGS_CENTS,
+  SavingsChip,
+} from '@/components/ui/savings-chip';
 import { BottomTabInset, Fonts, Radius, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -143,6 +149,10 @@ export default function PlanScreen() {
   const [bestShopDay, setBestShopDay] = useState<BestShopDay | null>(null);
   const [bestDealYmd, setBestDealYmd] = useState<string | null>(null);
   const [selectedYmd, setSelectedYmd] = useState<string | null>(null);
+  /** Unit cents saved (regular − shelf) by product id. */
+  const [unitSavingsByProduct, setUnitSavingsByProduct] = useState<Map<string, number>>(
+    () => new Map(),
+  );
 
   const [pastOrders, setPastOrders] = useState<GroupOrderRow[]>([]);
   const [pastDetail, setPastDetail] = useState<GroupOrderRow | null>(null);
@@ -261,6 +271,34 @@ export default function PlanScreen() {
     [expiring, activeYmd],
   );
 
+  const lineSavingsCents = useCallback(
+    (item: ResolvedListItem): number | null => {
+      if (!item.product_id || item.done_at) return null;
+      const unit = unitSavingsByProduct.get(item.product_id);
+      if (unit == null || unit < MIN_SAVINGS_CENTS) return null;
+      const qty = Number(item.quantity) > 0 ? Number(item.quantity) : 1;
+      return Math.round(unit * qty);
+    },
+    [unitSavingsByProduct],
+  );
+
+  const tripSavingsCents = useMemo(() => {
+    const scope = segment === 'calendar' ? dayItems : openItems;
+    let sum = 0;
+    for (const item of scope) {
+      if (item.done_at) continue;
+      const line = lineSavingsCents(item);
+      if (line != null) sum += line;
+    }
+    return sum;
+  }, [segment, dayItems, openItems, lineSavingsCents]);
+
+  const showTripSavings =
+    tripSavingsCents >= MIN_SAVINGS_CENTS &&
+    (segment === 'list' ||
+      activeReasons.includes('bestPrice') ||
+      activeReasons.includes('bestDeal'));
+
   const loadProductImages = useCallback(async (items: ResolvedListItem[], habitRows: ItemHabit[]) => {
     const ids = [
       ...new Set(
@@ -326,6 +364,28 @@ export default function PlanScreen() {
         setBestDealYmd(discount);
         setPreferredDays(profile?.preferred_days ?? null);
         void loadProductImages(rows, habitRows);
+        const productIds = [
+          ...new Set(rows.map((row) => row.product_id).filter((id): id is string => Boolean(id))),
+        ];
+        if (productIds.length > 0) {
+          try {
+            const sales = await getCheapestShelfSaleByProductIds(productIds);
+            const next = new Map<string, number>();
+            for (const [id, sale] of sales) {
+              if (
+                sale.regularPriceCents != null &&
+                sale.regularPriceCents > sale.priceCents
+              ) {
+                next.set(id, sale.regularPriceCents - sale.priceCents);
+              }
+            }
+            setUnitSavingsByProduct(next);
+          } catch {
+            setUnitSavingsByProduct(new Map());
+          }
+        } else {
+          setUnitSavingsByProduct(new Map());
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Could not load your plan.');
       } finally {
@@ -392,6 +452,7 @@ export default function PlanScreen() {
         title={title}
         quantity={Number(item.quantity) || undefined}
         priceCents={item.best_price_cents}
+        savingsCents={lineSavingsCents(item)}
         imagePath={item.product_id ? productImages.get(item.product_id) : null}
         cadenceTag={habit ? cadenceLabel(habit.interval_days) : null}
         recipeTag={Boolean(item.source_recipe_id)}
@@ -580,6 +641,23 @@ export default function PlanScreen() {
               onPress={() => setSegment('past')}
             />
           </View>
+
+          {isPlanView && showTripSavings ? (
+            <View style={styles.tripSavingsRow}>
+              <SavingsChip
+                compact={false}
+                cents={tripSavingsCents}
+                label={`Save ${formatSavingsCents(tripSavingsCents)} this trip`}
+              />
+              {activeReasons.includes('bestPrice') || activeReasons.includes('bestDeal') ? (
+                <ThemedText type="small" themeColor="textSecondary" style={styles.tripSavingsHint}>
+                  {activeReasons.includes('bestDeal')
+                    ? 'Best deal day'
+                    : bestShopDay?.reasonLabel ?? 'Best price day'}
+                </ThemedText>
+              ) : null}
+            </View>
+          ) : null}
 
           {error ? (
             <ThemedText type="small" style={{ color: theme.error }}>
@@ -850,6 +928,15 @@ const styles = StyleSheet.create({
   segments: {
     flexDirection: 'row',
     gap: Spacing.two,
+  },
+  tripSavingsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  tripSavingsHint: {
+    flexShrink: 1,
   },
   segmentTab: {
     flexDirection: 'row',
