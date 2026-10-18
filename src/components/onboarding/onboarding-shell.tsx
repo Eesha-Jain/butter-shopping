@@ -173,12 +173,11 @@ export function OnboardingShell({
             <OnboardingCow compactProgress={compactProgress} />
           </Animated.View>
           {title ? (
-            <Animated.View
-              key={`hero-${step}`}
-              entering={FadeInDown.delay(180).duration(420)}
-              style={[styles.heroBlock, heroTextStyle]}>
-              <Text style={styles.heroTitle}>{title}</Text>
-              {subtitle ? <Text style={styles.heroSubtitle}>{subtitle}</Text> : null}
+            <Animated.View key={`hero-${step}`} entering={FadeInDown.delay(180).duration(420)}>
+              <Animated.View style={[styles.heroBlock, heroTextStyle]}>
+                <Text style={styles.heroTitle}>{title}</Text>
+                {subtitle ? <Text style={styles.heroSubtitle}>{subtitle}</Text> : null}
+              </Animated.View>
             </Animated.View>
           ) : null}
         </View>
@@ -189,13 +188,14 @@ export function OnboardingShell({
             <Animated.View
               key={`bubble-${step}`}
               entering={FadeInDown.duration(320)}
-              exiting={FadeOutLeft.duration(180)}
-              style={[styles.bubbleBlock, bubbleStyle]}>
-              <View style={styles.tail} />
-              <View style={styles.bubble}>
-                <Text style={styles.bubbleTitle}>{title}</Text>
-                {subtitle ? <Text style={styles.bubbleSubtitle}>{subtitle}</Text> : null}
-              </View>
+              exiting={FadeOutLeft.duration(180)}>
+              <Animated.View style={[styles.bubbleBlock, bubbleStyle]}>
+                <View style={styles.tail} />
+                <View style={styles.bubble}>
+                  <Text style={styles.bubbleTitle}>{title}</Text>
+                  {subtitle ? <Text style={styles.bubbleSubtitle}>{subtitle}</Text> : null}
+                </View>
+              </Animated.View>
             </Animated.View>
           ) : null}
           {children ? (

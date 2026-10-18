@@ -19,6 +19,8 @@ const KEYS = {
   /** Text of the last three voice requests, newest first. Not the audio. */
   recentVoiceTexts: 'butter.recentVoiceTexts',
   activeListId: 'butter.activeListId',
+  /** Last successful Shop home payload, shown instantly on next launch. */
+  shopHomeCache: 'butter.shopHomeCache',
 } as const;
 
 export type StorageKey = keyof typeof KEYS;

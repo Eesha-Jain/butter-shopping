@@ -357,16 +357,36 @@ export function ShopProfileDrawer({
           <View
             style={[
               styles.card,
+              styles.nameCardRow,
               { backgroundColor: theme.backgroundElement, borderColor: theme.borderInk },
             ]}>
-            <ThemedText type="smallBold">
-              {isGuest ? 'Guest account' : displayName?.trim() || 'Butter shopper'}
-            </ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              {isGuest
-                ? "You're browsing without an account. Sign up or log in to save your cart and preferences."
-                : 'Signed in'}
-            </ThemedText>
+            <View style={styles.nameCardCopy}>
+              <ThemedText type="smallBold">
+                {isGuest ? 'Guest account' : displayName?.trim() || 'Butter shopper'}
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                {isGuest
+                  ? "You're browsing without an account. Sign up or log in to save your cart and preferences."
+                  : 'Signed in'}
+              </ThemedText>
+            </View>
+            <Pressable
+              onPress={() =>
+                requestClose(() => {
+                  onClose();
+                  router.push('/settings');
+                })
+              }
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Settings"
+              style={styles.settingsIconBtn}>
+              <SymbolView
+                name={{ ios: 'gearshape', android: 'settings', web: 'settings' }}
+                size={22}
+                tintColor={theme.textSecondary}
+              />
+            </Pressable>
           </View>
 
           <View
@@ -427,14 +447,11 @@ export function ShopProfileDrawer({
               />
             </View>
             <ThemedText type="smallBold">AI voice</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              Female and male read the reply. Cow plays a real moo. The words stay on screen.
-            </ThemedText>
             <View style={styles.cashbackRow}>
               {(
                 [
-                  ['female', 'Female'],
-                  ['male', 'Male'],
+                  ['female', 'Woman'],
+                  ['male', 'Man'],
                   ['cow', 'Cow'],
                 ] as const
               ).map(([id, label]) => (
@@ -450,19 +467,6 @@ export function ShopProfileDrawer({
               ))}
             </View>
           </View>
-
-          <Pressable
-            onPress={() =>
-              requestClose(() => {
-                onClose();
-                router.push('/settings');
-              })
-            }
-            style={[styles.outlineBtn, { borderColor: theme.border }]}
-            accessibilityRole="button"
-            accessibilityLabel="Settings">
-            <ThemedText type="smallBold">Settings</ThemedText>
-          </Pressable>
 
           {isGuest ? (
             <View style={styles.authActions}>
@@ -564,6 +568,20 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     padding: Spacing.three,
     gap: Spacing.one,
+  },
+  nameCardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  nameCardCopy: {
+    flex: 1,
+    gap: Spacing.one,
+  },
+  settingsIconBtn: {
+    padding: Spacing.one,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   authActions: {
     gap: Spacing.two,

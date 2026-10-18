@@ -21,12 +21,13 @@ import {
   toggleAvoidGroup,
 } from '@/backend';
 import type { NearbyStore } from '@/backend/types';
-import { SnapBadge } from '@/components/shop/snap-badge';
+import { StoreFilterSection } from '@/components/shop/store-filter-section';
 import { ThemedText } from '@/components/themed-text';
 import { ButterButton } from '@/components/ui/butter-button';
 import { ButterChip } from '@/components/ui/butter-chip';
 import { SheetChrome, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import type { StoreGroup } from '@/utils/store-names';
 
 const SLIDE_MS = 280;
 const SLIDE_EASE = Easing.out(Easing.cubic);
@@ -37,11 +38,12 @@ type Props = {
   draftRules: SessionFoodRule[];
   draftSort: ShopSort;
   draftOnSaleOnly: boolean;
-  nearbyStores?: NearbyStore[];
-  selectedStoreId?: string | null;
+  storeGroups?: StoreGroup<NearbyStore>[];
+  selectedStoreIds?: string[];
   /** When true, show SNAP next to stores that accept EBT. */
   showSnapBadges?: boolean;
-  onSelectStore?: (store: NearbyStore | null) => void;
+  onToggleStoreGroup?: (group: StoreGroup<NearbyStore>) => void;
+  onClearStores?: () => void;
   onClose: () => void;
   onApply: (next: {
     rules: SessionFoodRule[];
@@ -63,10 +65,11 @@ export function ShopFiltersDrawer({
   draftRules,
   draftSort,
   draftOnSaleOnly,
-  nearbyStores = [],
-  selectedStoreId = null,
+  storeGroups = [],
+  selectedStoreIds = [],
   showSnapBadges = false,
-  onSelectStore,
+  onToggleStoreGroup,
+  onClearStores,
   onClose,
   onApply,
   onResetToPreferences,
@@ -199,34 +202,17 @@ export function ShopFiltersDrawer({
           </View>
 
           <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-            {nearbyStores.length > 0 && onSelectStore ? (
-              <>
-                <ThemedText type="smallBold">Store</ThemedText>
-                <ThemedText type="small" themeColor="textSecondary">
-                  Limit the shelf to one nearby store.
-                </ThemedText>
-                <View style={styles.chipRow}>
-                  <ButterChip
-                    label="All stores"
-                    selected={selectedStoreId == null}
-                    onPress={() => onSelectStore(null)}
-                  />
-                  {nearbyStores.map((store) => (
-                    <ButterChip
-                      key={store.id}
-                      label={store.name}
-                      selected={selectedStoreId === store.id}
-                      onPress={() => onSelectStore(store)}
-                      icon={
-                        showSnapBadges && store.accepts_snap ? <SnapBadge size="sm" /> : undefined
-                      }
-                    />
-                  ))}
-                </View>
-              </>
+            {storeGroups.length > 0 && onToggleStoreGroup && onClearStores ? (
+              <StoreFilterSection
+                groups={storeGroups}
+                selectedIds={selectedStoreIds}
+                showSnapBadges={showSnapBadges}
+                onToggleGroup={onToggleStoreGroup}
+                onClear={onClearStores}
+              />
             ) : null}
 
-            <ThemedText type="smallBold" style={nearbyStores.length > 0 ? styles.sectionGap : undefined}>
+            <ThemedText type="smallBold" style={storeGroups.length > 0 ? styles.sectionGap : undefined}>
               Sort
             </ThemedText>
             <View style={styles.chipRow}>

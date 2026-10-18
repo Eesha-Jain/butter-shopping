@@ -59,11 +59,13 @@ export const CATEGORY_KEYWORDS = [
     category: "Bakery",
     patterns: ["banana bread", "apple pie", "bread", "bagel", "tortilla", "bun", "muffin", "croissant"],
   },
-  { category: "Frozen", patterns: ["frozen", "ice cream", "frozen pizza"] },
+  // "swirl" beats fruit tokens (mango swirl, banana soft serve swirl).
+  { category: "Frozen", patterns: ["swirl", "frozen", "ice cream", "frozen pizza"] },
   {
     category: "Beverages",
     // Drink forms override produce tokens (smoothie / sparkling water before mango/strawberry).
     patterns: [
+      "bh protein plus",
       "fruit juice",
       "orange juice",
       "apple juice",
@@ -88,7 +90,16 @@ export const CATEGORY_KEYWORDS = [
   },
   {
     category: "Meat & Seafood",
-    patterns: ["chicken", "beef", "salmon", "turkey", "pork", "shrimp", "tofu"],
+    patterns: [
+      "shallot salmon",
+      "chicken",
+      "beef",
+      "salmon",
+      "turkey",
+      "pork",
+      "shrimp",
+      "tofu",
+    ],
   },
   // Snacks before Fruits so "avocado chips" / fruit-flavored crisps land here.
   {
@@ -125,6 +136,11 @@ export const CATEGORY_KEYWORDS = [
       "fruit",
       "puree",
     ],
+  },
+  // Prepared dips before vegetable tokens (spinach artichoke dip).
+  {
+    category: "Pantry",
+    patterns: ["spinach artichoke", "artichoke dip", "dip"],
   },
   {
     category: "Vegetables",

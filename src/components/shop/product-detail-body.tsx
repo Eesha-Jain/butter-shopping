@@ -9,12 +9,8 @@ import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeabl
 import { useSession } from '@/auth/session';
 import {
   computeNetPrice,
-  fetchVisaMerchantOffers,
   formatLocalDateTime,
   formatPromotionBadge,
-  getEffectiveGroceryCashbackBps,
-  getProductTraitsForIds,
-  listFoodTraits,
   listProductStoreOffers,
   refreshProductStoreOffers,
   reportManualPrice,
@@ -34,6 +30,16 @@ import { ThemedText } from '@/components/themed-text';
 import { SavingsChip } from '@/components/ui/savings-chip';
 import { Fonts, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import {
+  getCachedFoodTraits,
+  getCachedProductDetail,
+  getCachedProductTraits,
+  isDetailLive,
+  loadFoodTraits,
+  loadProductDetail,
+  loadProductTraits,
+  markProductOffersLoaded,
+} from '@/services/product-detail-prefetch';
 
 type PendingEvidence = {
   uri: string;
@@ -48,16 +54,27 @@ type Props = {
   preferenceRules?: SessionFoodRule[];
 };
 
-type DetailCacheEntry = {
-  offers: ProductStoreOffer[];
-  visaOffers: VisaMerchantOffer[];
-  cashbackBps: number | null;
-  refreshedAt: number;
-};
-
-// Session-lifetime cache so reopening a product shows prices instantly while refreshing quietly.
-const detailCache = new Map<string, DetailCacheEntry>();
-const CACHE_TTL_MS = 5 * 60 * 1000;
+function computeMatchLabels(
+  productId: string,
+  preferenceRules: SessionFoodRule[],
+  catalog: FoodTrait[],
+): string[] {
+  const productTraits = getCachedProductTraits(productId) ?? [];
+  const byId = new Map<string, FoodTrait>(catalog.map((t) => [t.id, t]));
+  const labels: string[] = [];
+  for (const rule of preferenceRules) {
+    if (rule.mode !== 'prefer' && rule.mode !== 'require') continue;
+    const hit = productTraits.some(
+      (trait) =>
+        trait.trait_id === rule.trait_id &&
+        (trait.relation === 'suitable' || trait.relation === 'certified'),
+    );
+    if (!hit) continue;
+    const name = byId.get(rule.trait_id)?.name;
+    if (name && !labels.includes(name)) labels.push(name);
+  }
+  return labels.slice(0, 4);
+}
 
 function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(cents % 100 === 0 ? 0 : 2)}`;
@@ -112,46 +129,37 @@ function formatGroupLabel(code: string): string {
 export function ProductDetailBody({ product, saleBadge, promotion, preferenceRules = [] }: Props) {
   const theme = useTheme();
   const { isGuest, requestSignIn } = useSession();
-  const cached = detailCache.get(product.id);
+  const cached = getCachedProductDetail(product.id);
   const [offers, setOffers] = useState<ProductStoreOffer[]>(cached?.offers ?? []);
   const [offersLoading, setOffersLoading] = useState(!cached);
   const [visaOffers, setVisaOffers] = useState<VisaMerchantOffer[]>(cached?.visaOffers ?? []);
   const [cashbackBps, setCashbackBps] = useState<number | null>(cached?.cashbackBps ?? null);
-  const [checkingStores, setCheckingStores] = useState(
-    !cached || Date.now() - cached.refreshedAt > CACHE_TTL_MS,
-  );
+  const [checkingStores, setCheckingStores] = useState(!isDetailLive(cached));
   const [reportingStoreId, setReportingStoreId] = useState<string | null>(null);
   const [reportPriceText, setReportPriceText] = useState('');
   const [reportEvidence, setReportEvidence] = useState<PendingEvidence | null>(null);
   const [reportSubmitting, setReportSubmitting] = useState(false);
   const [stockBusyId, setStockBusyId] = useState<string | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
-  const [matchLabels, setMatchLabels] = useState<string[]>([]);
+  const [matchLabels, setMatchLabels] = useState<string[]>(() => {
+    const catalog = getCachedFoodTraits();
+    if (!catalog || !getCachedProductTraits(product.id)) return [];
+    return computeMatchLabels(product.id, preferenceRules, catalog);
+  });
   const [otherStoresOpen, setOtherStoresOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
 
-    void Promise.all([
-      listProductStoreOffers(product.id),
-      fetchVisaMerchantOffers(),
-      getEffectiveGroceryCashbackBps(isGuest),
-    ])
-      .then(([rows, visa, bps]) => {
+    void loadProductDetail(product.id, isGuest)
+      .then((entry) => {
         if (cancelled) return;
-        setOffers(rows);
-        setVisaOffers(visa.offers);
-        setCashbackBps(bps);
-        const prev = detailCache.get(product.id);
-        detailCache.set(product.id, {
-          offers: rows,
-          visaOffers: visa.offers,
-          cashbackBps: bps,
-          refreshedAt: prev?.refreshedAt ?? 0,
-        });
+        setOffers(entry.offers);
+        setVisaOffers(entry.visaOffers);
+        setCashbackBps(entry.cashbackBps);
       })
       .catch(() => {
-        if (!cancelled) {
+        if (!cancelled && !getCachedProductDetail(product.id)) {
           setOffers([]);
           setVisaOffers([]);
         }
@@ -162,19 +170,12 @@ export function ProductDetailBody({ product, saleBadge, promotion, preferenceRul
 
     void (async () => {
       try {
-        const hit = detailCache.get(product.id);
-        // Fresh cache: skip the slow live store check entirely.
-        if (hit && Date.now() - hit.refreshedAt <= CACHE_TTL_MS) return;
+        // Fresh cache (opened recently or prefetched): skip the slow live store check entirely.
+        if (isDetailLive(getCachedProductDetail(product.id))) return;
         const zip = await resolveShopZip();
         if (cancelled) return;
         const rows = await refreshProductStoreOffers(product, zip);
-        const prev = detailCache.get(product.id);
-        detailCache.set(product.id, {
-          offers: rows,
-          visaOffers: prev?.visaOffers ?? [],
-          cashbackBps: prev?.cashbackBps ?? null,
-          refreshedAt: Date.now(),
-        });
+        markProductOffersLoaded(product.id, rows, { live: true });
         if (!cancelled) setOffers(rows);
       } catch {
         // Keep cached offers already shown.
@@ -185,31 +186,19 @@ export function ProductDetailBody({ product, saleBadge, promotion, preferenceRul
 
     void (async () => {
       try {
-        const preferRequire = preferenceRules.filter(
+        const hasPreferRequire = preferenceRules.some(
           (rule) => rule.mode === 'prefer' || rule.mode === 'require',
         );
-        if (preferRequire.length === 0) {
+        if (!hasPreferRequire) {
           if (!cancelled) setMatchLabels([]);
           return;
         }
-        const [productTraits, catalog] = await Promise.all([
-          getProductTraitsForIds([product.id]),
-          listFoodTraits(),
+        const [catalog] = await Promise.all([
+          loadFoodTraits(),
+          loadProductTraits([product.id]),
         ]);
         if (cancelled) return;
-        const byId = new Map<string, FoodTrait>(catalog.map((t) => [t.id, t]));
-        const labels: string[] = [];
-        for (const rule of preferRequire) {
-          const hit = productTraits.some(
-            (trait) =>
-              trait.trait_id === rule.trait_id &&
-              (trait.relation === 'suitable' || trait.relation === 'certified'),
-          );
-          if (!hit) continue;
-          const name = byId.get(rule.trait_id)?.name;
-          if (name && !labels.includes(name)) labels.push(name);
-        }
-        setMatchLabels(labels.slice(0, 4));
+        setMatchLabels(computeMatchLabels(product.id, preferenceRules, catalog));
       } catch {
         if (!cancelled) setMatchLabels([]);
       }
@@ -354,7 +343,7 @@ export function ProductDetailBody({ product, saleBadge, promotion, preferenceRul
       cancelReport();
       const rows = await listProductStoreOffers(product.id);
       setOffers(rows);
-      detailCache.delete(product.id);
+      markProductOffersLoaded(product.id, rows);
     } catch {
       // runAction already toasts
     } finally {

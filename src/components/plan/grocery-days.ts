@@ -1,4 +1,4 @@
-export type GroceryDayReason = 'preferred' | 'bestPrice' | 'bestDeal' | 'staples';
+export type GroceryDayReason = 'preferred' | 'bestPrice' | 'bestDeal' | 'staples' | 'ordered';
 
 export type GroceryDayPlan = {
   /** Calendar window shown on the strip, starting today. */
@@ -42,6 +42,8 @@ export function buildGroceryDays(input: {
   bestShopYmd: string | null;
   bestDealYmd: string | null;
   stapleDueYmds: readonly string[];
+  /** Dates that already have a placed order; always shown as runs. */
+  orderedYmds?: readonly string[];
 }): GroceryDayPlan {
   const windowDays = input.windowDays ?? 14;
   const windowYmds = Array.from({ length: windowDays }, (_, i) => addDays(input.todayYmd, i));
@@ -64,6 +66,9 @@ export function buildGroceryDays(input: {
   }
   if (inWindow(input.bestShopYmd)) add(input.bestShopYmd, 'bestPrice');
   if (inWindow(input.bestDealYmd)) add(input.bestDealYmd, 'bestDeal');
+  for (const ymd of input.orderedYmds ?? []) {
+    if (inWindow(ymd)) add(ymd, 'ordered');
+  }
 
   const dues = [...new Set(input.stapleDueYmds.map((ymd) => (ymd < input.todayYmd ? input.todayYmd : ymd)))]
     .filter((ymd) => ymd <= lastYmd)
@@ -75,11 +80,17 @@ export function buildGroceryDays(input: {
     if (!covered) add(due, 'staples');
   }
 
-  if (reasons.size === 0) add(input.todayYmd, 'staples');
+  if (![...reasons.values()].some((list) => list.some((reason) => reason !== 'ordered'))) {
+    add(input.todayYmd, 'staples');
+  }
 
   const days = [...reasons.keys()].sort();
+  // Days that only exist because an order was already placed shouldn't collect new items.
+  const openDays = days.filter((ymd) => reasons.get(ymd)?.some((reason) => reason !== 'ordered'));
   const primaryYmd =
-    input.bestShopYmd && reasons.has(input.bestShopYmd) ? input.bestShopYmd : days[0];
+    input.bestShopYmd && reasons.has(input.bestShopYmd)
+      ? input.bestShopYmd
+      : (openDays[0] ?? days[0]);
 
   return { windowYmds, days, reasons, primaryYmd };
 }
