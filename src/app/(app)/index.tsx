@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Keyboard,
   Modal,
   Pressable,
   RefreshControl,
@@ -21,11 +22,14 @@ import { useGuestCart } from '@/auth/guest-cart-context';
 import { useSession } from '@/auth/session';
 import {
   addListItem,
+  applyCashbackToPriceMap,
   applyFoodFilters,
   ensureCatalogForTerm,
   formatPromotionBadge,
   getActiveListProductQtyMap,
   getCheapestPriceCentsByProductIds,
+  getEffectiveGroceryCashbackBps,
+  getGuestFavoriteIds,
   getMyDefaultList,
   getMyProfile,
   getProductPromotionMap,
@@ -36,20 +40,24 @@ import {
   listCampusPopularProducts,
   listCategories,
   listFoodTraits,
+  listMyFavoriteProductIds,
   listMyFoodRules,
   listMyListTargets,
   listMyLocations,
   listMyStapleProductIds,
+  listProductsGroupedByCategory,
   listTrending,
   messageFromUnknown,
   removeListItem,
   resolveShopZip,
   rulesFromUserFoodRules,
-  searchProducts,
+  setGuestFavorite,
+  setProductFavorite,
   showErrorToast,
   showSuccessToast,
   updateListItem,
   type ActiveListTarget,
+  type CategoryProductSection,
   type FoodTrait,
   type Product,
   type ProductCategory,
@@ -58,17 +66,42 @@ import {
   type ShopSort,
   type UserLocation,
 } from '@/backend';
+import { iconForCategory } from '@/components/shop/category-icons';
 import { ProductCard } from '@/components/shop/product-card';
 import { ProductDetailSheet } from '@/components/shop/product-detail-sheet';
 import { ShopFiltersDrawer } from '@/components/shop/shop-filters-drawer';
 import { ShopProfileDrawer } from '@/components/shop/shop-profile-drawer';
+import { TrendingBlobCard } from '@/components/shop/trending-blob-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Fonts, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
-const VISIBLE_CATEGORIES = 4;
-const SEARCH_DEBOUNCE_MS = 300;
+const VISIBLE_CATEGORIES = 8;
+
+type ShopListItem =
+  | { kind: 'section'; section: CategoryProductSection }
+  | { kind: 'row'; products: Product[] };
+
+function productMatchesSearch(product: Product, query: string): boolean {
+  const q = query.toLowerCase();
+  return (
+    product.name.toLowerCase().includes(q) ||
+    (product.brand?.toLowerCase().includes(q) ?? false)
+  );
+}
+
+function searchResultToast(count: number, term: string): void {
+  if (count === 0) {
+    showSuccessToast('No products found', `for “${term}”`);
+    return;
+  }
+  if (count === 1) {
+    showSuccessToast('Found 1 product', `for “${term}”`);
+    return;
+  }
+  showSuccessToast(`Found ${count} products`, `for “${term}”`);
+}
 
 export default function ShopScreen() {
   const theme = useTheme();
@@ -92,11 +125,16 @@ export default function ShopScreen() {
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [moreCategoriesOpen, setMoreCategoriesOpen] = useState(false);
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(() => new Set());
 
   const [staples, setStaples] = useState<Product[]>([]);
   const [staplesArePersonal, setStaplesArePersonal] = useState(false);
   const [trending, setTrending] = useState<{ product: Product; sponsored: boolean }[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [categorySections, setCategorySections] = useState<CategoryProductSection[]>([]);
+  const [expandedCategoryIds, setExpandedCategoryIds] = useState<Set<string>>(() => new Set());
+  const [expandingCategoryId, setExpandingCategoryId] = useState<string | null>(null);
   const [promotions, setPromotions] = useState<Map<string, Promotion>>(new Map());
   const [checkingStores, setCheckingStores] = useState(false);
 
@@ -109,17 +147,14 @@ export default function ShopScreen() {
   const [shellReady, setShellReady] = useState(false);
 
   const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedSearch(search.trim()), SEARCH_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [search]);
+  const searchQuery = search.trim();
+  const isSearching = searchQuery.length > 0;
 
   const guestQtyMap = useMemo(() => {
     const map = new Map<string, { listItemId: string; quantity: number }>();
@@ -202,6 +237,31 @@ export default function ShopScreen() {
 
   useEffect(() => {
     if (!shellReady) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        if (isGuest) {
+          if (!cancelled) setFavoriteIds(new Set(getGuestFavoriteIds()));
+          return;
+        }
+        const ids = await listMyFavoriteProductIds();
+        if (!cancelled) setFavoriteIds(new Set(ids));
+      } catch {
+        if (!cancelled) setFavoriteIds(new Set());
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isGuest, shellReady]);
+
+  const favoriteIdsKey = useMemo(
+    () => (favoritesOnly ? [...favoriteIds].sort().join(',') : ''),
+    [favoriteIds, favoritesOnly],
+  );
+
+  useEffect(() => {
+    if (!shellReady) return;
 
     let cancelled = false;
     void (async () => {
@@ -221,11 +281,12 @@ export default function ShopScreen() {
         setPromotions(promoMap);
         setCategories(cats);
 
+        // Personal staples only — campus popular folds into Trending below.
         if (stapleProductIds.length > 0) {
           setStaples(await getProductsByIds(stapleProductIds));
           setStaplesArePersonal(true);
         } else {
-          setStaples(popularCampus);
+          setStaples([]);
           setStaplesArePersonal(false);
         }
 
@@ -240,56 +301,111 @@ export default function ShopScreen() {
           .map((row) => ({
             product: byId.get(row.product_id as string)!,
             sponsored: row.source === 'sponsored',
-          }));
-        if (organicTrending.length > 0) {
-          setTrending(organicTrending);
-        } else if (stapleProductIds.length > 0 && popularCampus.length > 0) {
-          // Personal staples exist; use campus popular as the discovery band.
-          setTrending(popularCampus.map((product) => ({ product, sponsored: false })));
-        } else {
-          // Avoid duplicating the same Popular on campus carousel under staples.
-          setTrending([]);
+          }))
+          .sort((a, b) => Number(b.sponsored) - Number(a.sponsored));
+
+        // Sponsored + commonly bought first, then campus popular fill (deduped).
+        const mergedTrending: { product: Product; sponsored: boolean }[] = [];
+        const seenTrending = new Set<string>();
+        for (const row of organicTrending) {
+          if (seenTrending.has(row.product.id)) continue;
+          seenTrending.add(row.product.id);
+          mergedTrending.push(row);
         }
-
-        let rawProducts = debouncedSearch
-          ? await searchProducts(debouncedSearch)
-          : await listActiveProducts({ categoryId: selectedCategoryId, limit: 60 });
-        if (cancelled) return;
-
-        // Demand-driven ingest: only when the user searched and the catalog is thin.
-        if (debouncedSearch.length >= 2 && rawProducts.length < 3) {
-          setCheckingStores(true);
-          try {
-            const zip = await resolveShopZip();
-            if (cancelled) return;
-            rawProducts = await ensureCatalogForTerm(debouncedSearch, zip);
-          } catch (err) {
-            if (!cancelled) {
-              showErrorToast(err, 'Could not check nearby stores.');
-            }
-          } finally {
-            if (!cancelled) setCheckingStores(false);
-          }
-        } else if (!cancelled) {
-          setCheckingStores(false);
+        for (const product of popularCampus) {
+          if (seenTrending.has(product.id)) continue;
+          seenTrending.add(product.id);
+          mergedTrending.push({ product, sponsored: false });
         }
-        if (cancelled) return;
+        setTrending(mergedTrending);
 
-        const [traitsForProducts, priceMap] = await Promise.all([
-          getProductTraitsForIds(rawProducts.map((row) => row.id)),
-          getCheapestPriceCentsByProductIds(rawProducts.map((row) => row.id)),
-        ]);
-        if (cancelled) return;
+        const browseHome = !favoritesOnly && selectedCategoryId == null;
+        const stapleIds = new Set(stapleProductIds);
+        const promotionProductIds = new Set(promoMap.keys());
 
-        setProducts(
-          applyFoodFilters(rawProducts, sessionRules, indexTraitsByProduct(traitsForProducts), {
+        if (browseHome) {
+          const [grouped, catalogProducts] = await Promise.all([
+            listProductsGroupedByCategory({ limitPerCategory: 10 }),
+            listActiveProducts({ limit: 60 }),
+          ]);
+          if (cancelled) return;
+
+          const sectionIds = grouped.flatMap((section) => section.products.map((row) => row.id));
+          const catalogIds = catalogProducts.map((row) => row.id);
+          const allIds = [...new Set([...sectionIds, ...catalogIds])];
+          const [traitsForProducts, priceMap, cashbackBps] = await Promise.all([
+            getProductTraitsForIds(allIds),
+            getCheapestPriceCentsByProductIds(allIds),
+            getEffectiveGroceryCashbackBps(isGuest),
+          ]);
+          if (cancelled) return;
+          const netPriceMap = applyCashbackToPriceMap(priceMap, cashbackBps);
+
+          const traitsByProduct = indexTraitsByProduct(traitsForProducts);
+          const filterOpts = {
             sort,
-            stapleIds: new Set(stapleProductIds),
+            stapleIds,
             onSaleOnly,
-            promotionProductIds: new Set(promoMap.keys()),
-            priceCentsByProduct: priceMap,
-          }),
-        );
+            promotionProductIds,
+            priceCentsByProduct: netPriceMap,
+          };
+          setCategorySections(
+            grouped
+              .map((section) => ({
+                category: section.category,
+                products: applyFoodFilters(
+                  section.products,
+                  sessionRules,
+                  traitsByProduct,
+                  filterOpts,
+                ),
+              }))
+              .filter((section) => section.products.length > 0),
+          );
+          setProducts(
+            applyFoodFilters(catalogProducts, sessionRules, traitsByProduct, filterOpts),
+          );
+          setExpandedCategoryIds(new Set());
+          if (!cancelled) setCheckingStores(false);
+        } else {
+          setCategorySections([]);
+          setExpandedCategoryIds(new Set());
+
+          let rawProducts: Product[];
+          if (favoritesOnly) {
+            const ids = favoriteIdsKey ? favoriteIdsKey.split(',') : [];
+            rawProducts = ids.length > 0 ? await getProductsByIds(ids) : [];
+            if (selectedCategoryId) {
+              rawProducts = rawProducts.filter((row) => row.category_id === selectedCategoryId);
+            }
+          } else {
+            rawProducts = await listActiveProducts({
+              categoryId: selectedCategoryId,
+              limit: 60,
+            });
+          }
+          if (cancelled) return;
+
+          const [traitsForProducts, priceMap, cashbackBps] = await Promise.all([
+            getProductTraitsForIds(rawProducts.map((row) => row.id)),
+            getCheapestPriceCentsByProductIds(rawProducts.map((row) => row.id)),
+            getEffectiveGroceryCashbackBps(isGuest),
+          ]);
+          if (cancelled) return;
+          const netPriceMap = applyCashbackToPriceMap(priceMap, cashbackBps);
+
+          setProducts(
+            applyFoodFilters(rawProducts, sessionRules, indexTraitsByProduct(traitsForProducts), {
+              sort,
+              stapleIds,
+              onSaleOnly,
+              promotionProductIds,
+              priceCentsByProduct: netPriceMap,
+            }),
+          );
+          if (!cancelled) setCheckingStores(false);
+        }
+
         if (activeTarget) {
           await refreshQtyMap(activeTarget.list.id);
         }
@@ -306,7 +422,8 @@ export default function ShopScreen() {
     };
   }, [
     activeTarget,
-    debouncedSearch,
+    favoriteIdsKey,
+    favoritesOnly,
     isGuest,
     onSaleOnly,
     refreshQtyMap,
@@ -326,6 +443,89 @@ export default function ShopScreen() {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch {
       // Unsupported platforms no-op.
+    }
+  };
+
+  const handleSearchSubmit = async () => {
+    const term = search.trim();
+    Keyboard.dismiss();
+    if (!term) return;
+
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {
+      // Unsupported platforms no-op.
+    }
+
+    const localMatches = products.filter((row) => productMatchesSearch(row, term));
+    searchResultToast(localMatches.length, term);
+
+    if (favoritesOnly || term.length < 2 || localMatches.length >= 3) return;
+
+    setCheckingStores(true);
+    try {
+      const zip = await resolveShopZip();
+      let rawProducts = await ensureCatalogForTerm(term, zip);
+      if (selectedCategoryId) {
+        rawProducts = rawProducts.filter((row) => row.category_id === selectedCategoryId);
+      }
+      const [traitsForProducts, priceMap, cashbackBps] = await Promise.all([
+        getProductTraitsForIds(rawProducts.map((row) => row.id)),
+        getCheapestPriceCentsByProductIds(rawProducts.map((row) => row.id)),
+        getEffectiveGroceryCashbackBps(isGuest),
+      ]);
+      const netPriceMap = applyCashbackToPriceMap(priceMap, cashbackBps);
+      const filtered = applyFoodFilters(
+        rawProducts,
+        sessionRules,
+        indexTraitsByProduct(traitsForProducts),
+        {
+          sort,
+          stapleIds: new Set(staples.map((row) => row.id)),
+          onSaleOnly,
+          promotionProductIds: new Set(promotions.keys()),
+          priceCentsByProduct: netPriceMap,
+        },
+      );
+      setProducts(filtered);
+      searchResultToast(
+        filtered.filter((row) => productMatchesSearch(row, term)).length,
+        term,
+      );
+    } catch (err) {
+      showErrorToast(err, 'Could not check nearby stores.');
+    } finally {
+      setCheckingStores(false);
+    }
+  };
+
+  const handleToggleFavorite = async (productId: string) => {
+    const favored = !favoriteIds.has(productId);
+    setFavoriteIds((prev) => {
+      const next = new Set(prev);
+      if (favored) next.add(productId);
+      else next.delete(productId);
+      return next;
+    });
+    try {
+      if (isGuest) {
+        setGuestFavorite(productId, favored);
+      } else {
+        await setProductFavorite(productId, favored);
+      }
+      try {
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      } catch {
+        // Unsupported platforms no-op.
+      }
+    } catch (err) {
+      setFavoriteIds((prev) => {
+        const next = new Set(prev);
+        if (favored) next.delete(productId);
+        else next.add(productId);
+        return next;
+      });
+      showErrorToast(err, 'Could not update favorite.');
     }
   };
 
@@ -430,13 +630,100 @@ export default function ShopScreen() {
   const visibleCategories = categories.slice(0, VISIBLE_CATEGORIES);
   const extraCategories = categories.slice(VISIBLE_CATEGORIES);
 
-  const gridData = useMemo(() => {
-    const rows: Product[][] = [];
-    for (let i = 0; i < products.length; i += 2) {
-      rows.push(products.slice(i, i + 2));
+  const sectionedHome =
+    !favoritesOnly && !isSearching && selectedCategoryId == null;
+
+  const displayProducts = useMemo(() => {
+    if (!isSearching) return products;
+    return products.filter((row) => productMatchesSearch(row, searchQuery));
+  }, [isSearching, products, searchQuery]);
+
+  const displayTrending = useMemo(() => {
+    if (!selectedCategoryId) return trending;
+    return trending.filter((row) => row.product.category_id === selectedCategoryId);
+  }, [selectedCategoryId, trending]);
+
+  const displayStaples = useMemo(() => {
+    if (!selectedCategoryId) return staples;
+    return staples.filter((product) => product.category_id === selectedCategoryId);
+  }, [selectedCategoryId, staples]);
+
+  const listData = useMemo((): ShopListItem[] => {
+    if (sectionedHome) {
+      return categorySections.map((section) => ({
+        kind: 'section' as const,
+        section,
+      }));
     }
-    return rows;
-  }, [products]);
+    const rows: Product[][] = [];
+    for (let i = 0; i < displayProducts.length; i += 2) {
+      rows.push(displayProducts.slice(i, i + 2));
+    }
+    return rows.map((row) => ({ kind: 'row' as const, products: row }));
+  }, [categorySections, displayProducts, sectionedHome]);
+
+  const toggleCategoryExpand = async (categoryId: string) => {
+    if (expandedCategoryIds.has(categoryId)) {
+      setExpandedCategoryIds((prev) => {
+        const next = new Set(prev);
+        next.delete(categoryId);
+        return next;
+      });
+      return;
+    }
+
+    setExpandingCategoryId(categoryId);
+    try {
+      const rawProducts = await listActiveProducts({ categoryId, limit: 40 });
+      const [traitsForProducts, priceMap, cashbackBps] = await Promise.all([
+        getProductTraitsForIds(rawProducts.map((row) => row.id)),
+        getCheapestPriceCentsByProductIds(rawProducts.map((row) => row.id)),
+        getEffectiveGroceryCashbackBps(isGuest),
+      ]);
+      const netPriceMap = applyCashbackToPriceMap(priceMap, cashbackBps);
+      const stapleIds = new Set(staples.map((row) => row.id));
+      const filtered = applyFoodFilters(
+        rawProducts,
+        sessionRules,
+        indexTraitsByProduct(traitsForProducts),
+        {
+          sort,
+          stapleIds,
+          onSaleOnly,
+          promotionProductIds: new Set(promotions.keys()),
+          priceCentsByProduct: netPriceMap,
+        },
+      );
+      setCategorySections((prev) =>
+        prev.map((section) =>
+          section.category.id === categoryId ? { ...section, products: filtered } : section,
+        ),
+      );
+      setExpandedCategoryIds((prev) => new Set(prev).add(categoryId));
+    } catch (err) {
+      showErrorToast(err, 'Could not load more products.');
+    } finally {
+      setExpandingCategoryId(null);
+    }
+  };
+
+  const renderProductCard = (product: Product, compact?: boolean) => (
+    <ProductCard
+      key={product.id}
+      product={product}
+      compact={compact}
+      saleBadge={
+        promotions.has(product.id) ? formatPromotionBadge(promotions.get(product.id)!) : null
+      }
+      quantityOnList={effectiveQtyMap.get(product.id)?.quantity}
+      favorited={favoriteIds.has(product.id)}
+      onPress={() => openProduct(product)}
+      onAdd={() => void handleAdd(product)}
+      onIncrement={() => void handleIncrement(product)}
+      onDecrement={() => void handleDecrement(product)}
+      onToggleFavorite={() => void handleToggleFavorite(product.id)}
+    />
+  );
 
   if (isLoading && !shellReady) {
     return (
@@ -469,8 +756,13 @@ export default function ShopScreen() {
         <View style={[styles.edgeHitRight, { top: insets.top }]} />
       </GestureDetector>
       <FlatList
-          data={gridData}
-          keyExtractor={(_, index) => `row-${index}`}
+          data={listData}
+          extraData={`${selectedCategoryId ?? 'all'}:${favoritesOnly ? 'fav' : 'all'}:${searchQuery}:${[...favoriteIds].join(',')}:${[...expandedCategoryIds].join(',')}:${expandingCategoryId ?? ''}`}
+          keyExtractor={(item) =>
+            item.kind === 'section'
+              ? item.section.category.id
+              : item.products.map((product) => product.id).join('-') || 'empty'
+          }
           contentInsetAdjustmentBehavior="automatic"
           contentContainerStyle={[
             styles.listContent,
@@ -510,23 +802,33 @@ export default function ShopScreen() {
               </View>
 
               <View style={styles.searchRow}>
-                <TextInput
-                  value={search}
-                  onChangeText={setSearch}
-                  placeholder="Search products"
-                  placeholderTextColor={theme.textSecondary}
+                <View
                   style={[
-                    styles.searchInput,
+                    styles.searchField,
                     {
                       backgroundColor: theme.backgroundElement,
-                      color: theme.text,
                       borderColor: theme.border,
                     },
-                  ]}
-                  autoCorrect={false}
-                  autoCapitalize="none"
-                  clearButtonMode="while-editing"
-                />
+                  ]}>
+                  <SymbolView
+                    name={{ ios: 'magnifyingglass', android: 'search', web: 'search' }}
+                    size={18}
+                    tintColor={theme.textSecondary}
+                  />
+                  <TextInput
+                    value={search}
+                    onChangeText={setSearch}
+                    placeholder="Search products"
+                    placeholderTextColor={theme.textSecondary}
+                    style={[styles.searchInput, { color: theme.text }]}
+                    autoCorrect={false}
+                    autoCapitalize="none"
+                    clearButtonMode="while-editing"
+                    returnKeyType="search"
+                    onSubmitEditing={() => void handleSearchSubmit()}
+                    accessibilityLabel="Search products"
+                  />
+                </View>
                 <Pressable
                   onPress={openFilters}
                   style={[styles.iconBtn, { backgroundColor: theme.primary }]}
@@ -582,48 +884,153 @@ export default function ShopScreen() {
                 </ThemedText>
               )}
 
-              {trending.length > 0 ? (
+              <View style={styles.section}>
+                <ThemedText type="subtitle">Category</ThemedText>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.chipRow}>
+                  <Pressable
+                    onPress={() => {
+                      setSelectedCategoryId(null);
+                      setSearch('');
+                    }}
+                    style={[
+                      styles.chip,
+                      styles.chipWithIcon,
+                      {
+                        backgroundColor:
+                          selectedCategoryId == null && !favoritesOnly
+                            ? theme.primary
+                            : theme.backgroundElement,
+                      },
+                    ]}>
+                    <SymbolView
+                      name={{ ios: 'square.grid.2x2.fill', android: 'grid_view', web: 'grid_view' }}
+                      size={16}
+                      tintColor={
+                        selectedCategoryId == null && !favoritesOnly
+                          ? theme.primaryText
+                          : theme.text
+                      }
+                    />
+                    <ThemedText
+                      type="small"
+                      style={
+                        selectedCategoryId == null && !favoritesOnly
+                          ? { color: theme.primaryText }
+                          : undefined
+                      }>
+                      All
+                    </ThemedText>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => setFavoritesOnly((value) => !value)}
+                    style={[
+                      styles.chip,
+                      styles.chipWithIcon,
+                      {
+                        backgroundColor: favoritesOnly ? theme.primary : theme.backgroundElement,
+                      },
+                    ]}>
+                    <SymbolView
+                      name={{ ios: 'heart.fill', android: 'favorite', web: 'favorite' }}
+                      size={16}
+                      tintColor={favoritesOnly ? theme.primaryText : theme.text}
+                    />
+                    <ThemedText
+                      type="small"
+                      style={favoritesOnly ? { color: theme.primaryText } : undefined}>
+                      Favorites
+                    </ThemedText>
+                  </Pressable>
+                  {visibleCategories.map((category) => {
+                    const selected = selectedCategoryId === category.id;
+                    const symbol = iconForCategory(category.name);
+                    return (
+                      <Pressable
+                        key={category.id}
+                        onPress={() => {
+                          setSelectedCategoryId(category.id);
+                          setSearch('');
+                        }}
+                        style={[
+                          styles.chip,
+                          styles.chipWithIcon,
+                          {
+                            backgroundColor: selected ? theme.primary : theme.backgroundElement,
+                          },
+                        ]}>
+                        <SymbolView
+                          name={{ ios: symbol, android: 'label', web: 'label' }}
+                          size={16}
+                          tintColor={selected ? theme.primaryText : theme.text}
+                        />
+                        <ThemedText
+                          type="small"
+                          style={selected ? { color: theme.primaryText } : undefined}>
+                          {category.name}
+                        </ThemedText>
+                      </Pressable>
+                    );
+                  })}
+                  {extraCategories.length > 0 ? (
+                    <Pressable
+                      onPress={() => setMoreCategoriesOpen(true)}
+                      style={[
+                        styles.chip,
+                        styles.chipWithIcon,
+                        { backgroundColor: theme.backgroundElement },
+                      ]}>
+                      <SymbolView
+                        name={{ ios: 'ellipsis.circle', android: 'more_horiz', web: 'more_horiz' }}
+                        size={16}
+                        tintColor={theme.text}
+                      />
+                      <ThemedText type="small">More</ThemedText>
+                    </Pressable>
+                  ) : null}
+                </ScrollView>
+              </View>
+
+              {displayTrending.length > 0 && !favoritesOnly && !isSearching ? (
                 <View style={styles.section}>
-                  <ThemedText type="subtitle">
-                    {trending.every((row) => !row.sponsored) && staplesArePersonal
-                      ? 'Popular on campus'
-                      : 'Trending'}
-                  </ThemedText>
+                  <ThemedText type="subtitle">Trending</ThemedText>
                   <FlatList
                     horizontal
-                    data={trending}
+                    data={displayTrending}
                     keyExtractor={(item) => item.product.id}
                     showsHorizontalScrollIndicator={false}
                     contentContainerStyle={styles.carousel}
-                    renderItem={({ item }) => (
-                      <ProductCard
+                    renderItem={({ item, index }) => (
+                      <TrendingBlobCard
                         product={item.product}
-                        compact
+                        index={index}
                         sponsored={item.sponsored}
-                        saleBadge={
+                        priceLabel={
                           promotions.has(item.product.id)
                             ? formatPromotionBadge(promotions.get(item.product.id)!)
                             : null
                         }
                         quantityOnList={effectiveQtyMap.get(item.product.id)?.quantity}
+                        favorited={favoriteIds.has(item.product.id)}
                         onPress={() => openProduct(item.product)}
                         onAdd={() => void handleAdd(item.product)}
                         onIncrement={() => void handleIncrement(item.product)}
                         onDecrement={() => void handleDecrement(item.product)}
+                        onToggleFavorite={() => void handleToggleFavorite(item.product.id)}
                       />
                     )}
                   />
                 </View>
               ) : null}
 
-              {staples.length > 0 ? (
+              {staplesArePersonal && displayStaples.length > 0 && !favoritesOnly && !isSearching ? (
                 <View style={styles.section}>
-                  <ThemedText type="subtitle">
-                    {staplesArePersonal ? 'Your staples' : 'Popular on campus'}
-                  </ThemedText>
+                  <ThemedText type="subtitle">Your staples</ThemedText>
                   <FlatList
                     horizontal
-                    data={staples}
+                    data={displayStaples}
                     keyExtractor={(item) => item.id}
                     showsHorizontalScrollIndicator={false}
                     contentContainerStyle={styles.carousel}
@@ -637,78 +1044,40 @@ export default function ShopScreen() {
                             : null
                         }
                         quantityOnList={effectiveQtyMap.get(item.id)?.quantity}
+                        favorited={favoriteIds.has(item.id)}
                         onPress={() => openProduct(item)}
                         onAdd={() => void handleAdd(item)}
                         onIncrement={() => void handleIncrement(item)}
                         onDecrement={() => void handleDecrement(item)}
+                        onToggleFavorite={() => void handleToggleFavorite(item.id)}
                       />
                     )}
                   />
                 </View>
               ) : null}
 
-              <View style={styles.section}>
-                <ThemedText type="subtitle">Category</ThemedText>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.chipRow}>
-                  <Pressable
-                    onPress={() => setSelectedCategoryId(null)}
-                    style={[
-                      styles.chip,
-                      {
-                        backgroundColor:
-                          selectedCategoryId == null ? theme.primary : theme.backgroundElement,
-                      },
-                    ]}>
-                    <ThemedText
-                      type="small"
-                      style={selectedCategoryId == null ? { color: theme.primaryText } : undefined}>
-                      All
-                    </ThemedText>
-                  </Pressable>
-                  {visibleCategories.map((category) => {
-                    const selected = selectedCategoryId === category.id;
-                    return (
-                      <Pressable
-                        key={category.id}
-                        onPress={() => setSelectedCategoryId(category.id)}
-                        style={[
-                          styles.chip,
-                          {
-                            backgroundColor: selected ? theme.primary : theme.backgroundElement,
-                          },
-                        ]}>
-                        <ThemedText
-                          type="small"
-                          style={selected ? { color: theme.primaryText } : undefined}>
-                          {category.name}
-                        </ThemedText>
-                      </Pressable>
-                    );
-                  })}
-                  {extraCategories.length > 0 ? (
-                    <Pressable
-                      onPress={() => setMoreCategoriesOpen(true)}
-                      style={[styles.chip, { backgroundColor: theme.backgroundElement }]}>
-                      <ThemedText type="small">More</ThemedText>
-                    </Pressable>
+              {!sectionedHome ? (
+                <View style={styles.productsHeader}>
+                  <ThemedText type="subtitle">
+                    {isSearching
+                      ? `Results for “${searchQuery}”`
+                      : favoritesOnly
+                        ? 'Favorites'
+                        : selectedCategoryId
+                          ? (categories.find((row) => row.id === selectedCategoryId)?.name ??
+                            'Products')
+                          : 'Products'}
+                  </ThemedText>
+                  {checkingStores ? (
+                    <View style={styles.checkingRow}>
+                      <ActivityIndicator size="small" color={theme.primary} />
+                      <ThemedText type="small" themeColor="textSecondary">
+                        Checking nearby stores…
+                      </ThemedText>
+                    </View>
                   ) : null}
-                </ScrollView>
-              </View>
-
-              <View style={styles.productsHeader}>
-                <ThemedText type="subtitle">Products</ThemedText>
-                {checkingStores ? (
-                  <View style={styles.checkingRow}>
-                    <ActivityIndicator size="small" color={theme.primary} />
-                    <ThemedText type="small" themeColor="textSecondary">
-                      Checking nearby stores…
-                    </ThemedText>
-                  </View>
-                ) : null}
-              </View>
+                </View>
+              ) : null}
             </View>
           }
           ListEmptyComponent={
@@ -716,33 +1085,88 @@ export default function ShopScreen() {
               <ThemedText type="small" themeColor="textSecondary">
                 {checkingStores
                   ? 'Looking up products at nearby stores…'
-                  : debouncedSearch
-                    ? 'No products match. Try another search, Clear all in Filters, or another category.'
-                    : 'Catalog is empty. Run the campus staple bootstrap on the price proxy, then pull to refresh.'}
+                  : favoritesOnly && !isSearching
+                    ? 'No favorites yet. Tap the heart on a product to save it here.'
+                    : isSearching
+                      ? 'No products match. Try another search, Clear all in Filters, or another category.'
+                      : 'Catalog is empty. Run the campus staple bootstrap on the price proxy, then pull to refresh.'}
               </ThemedText>
             </ThemedView>
           }
-          renderItem={({ item: row }) => (
-            <View style={styles.gridRow}>
-              {row.map((product) => (
-                <ProductCard
-                  key={product.id}
-                  product={product}
-                  saleBadge={
-                    promotions.has(product.id)
-                      ? formatPromotionBadge(promotions.get(product.id)!)
-                      : null
-                  }
-                  quantityOnList={effectiveQtyMap.get(product.id)?.quantity}
-                  onPress={() => openProduct(product)}
-                  onAdd={() => void handleAdd(product)}
-                  onIncrement={() => void handleIncrement(product)}
-                  onDecrement={() => void handleDecrement(product)}
-                />
-              ))}
-              {row.length === 1 ? <View style={styles.gridSpacer} /> : null}
-            </View>
-          )}
+          renderItem={({ item }) => {
+            if (item.kind === 'section') {
+              const section = item.section;
+              const expanded = expandedCategoryIds.has(section.category.id);
+              const expanding = expandingCategoryId === section.category.id;
+              if (expanded) {
+                const rows: Product[][] = [];
+                for (let i = 0; i < section.products.length; i += 2) {
+                  rows.push(section.products.slice(i, i + 2));
+                }
+                return (
+                  <View style={styles.categorySection}>
+                    <View style={styles.sectionTitleRow}>
+                      <ThemedText type="subtitle" style={styles.flex}>
+                        {section.category.name}
+                      </ThemedText>
+                      <Pressable
+                        onPress={() => void toggleCategoryExpand(section.category.id)}
+                        hitSlop={8}>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          Show less
+                        </ThemedText>
+                      </Pressable>
+                    </View>
+                    {rows.map((row) => (
+                      <View
+                        key={row.map((product) => product.id).join('-')}
+                        style={styles.gridRow}>
+                        {row.map((product) => renderProductCard(product))}
+                        {row.length === 1 ? <View style={styles.gridSpacer} /> : null}
+                      </View>
+                    ))}
+                  </View>
+                );
+              }
+
+              return (
+                <View style={styles.categorySection}>
+                  <View style={styles.sectionTitleRow}>
+                    <ThemedText type="subtitle" style={styles.flex}>
+                      {section.category.name}
+                    </ThemedText>
+                    <Pressable
+                      onPress={() => void toggleCategoryExpand(section.category.id)}
+                      hitSlop={8}
+                      disabled={expanding}>
+                      {expanding ? (
+                        <ActivityIndicator size="small" color={theme.primary} />
+                      ) : (
+                        <ThemedText type="small" themeColor="textSecondary">
+                          See more
+                        </ThemedText>
+                      )}
+                    </Pressable>
+                  </View>
+                  <FlatList
+                    horizontal
+                    data={section.products}
+                    keyExtractor={(product) => product.id}
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.carousel}
+                    renderItem={({ item: product }) => renderProductCard(product, true)}
+                  />
+                </View>
+              );
+            }
+
+            return (
+              <View style={styles.gridRow}>
+                {item.products.map((product) => renderProductCard(product))}
+                {item.products.length === 1 ? <View style={styles.gridSpacer} /> : null}
+              </View>
+            );
+          }}
         />
 
         {filtersOpen ? (
@@ -799,9 +1223,13 @@ export default function ShopScreen() {
           quantityOnList={
             selectedProduct ? effectiveQtyMap.get(selectedProduct.id)?.quantity : undefined
           }
+          favorited={selectedProduct ? favoriteIds.has(selectedProduct.id) : false}
           onAdd={() => selectedProduct && void handleAdd(selectedProduct)}
           onIncrement={() => selectedProduct && void handleIncrement(selectedProduct)}
           onDecrement={() => selectedProduct && void handleDecrement(selectedProduct)}
+          onToggleFavorite={() =>
+            selectedProduct && void handleToggleFavorite(selectedProduct.id)
+          }
         />
 
         <Modal
@@ -813,17 +1241,26 @@ export default function ShopScreen() {
           <View style={[styles.moreSheet, { backgroundColor: theme.background }]}>
             <ThemedText type="subtitle">More categories</ThemedText>
             <ScrollView>
-              {extraCategories.map((category) => (
-                <Pressable
-                  key={category.id}
-                  onPress={() => {
-                    setSelectedCategoryId(category.id);
-                    setMoreCategoriesOpen(false);
-                  }}
-                  style={styles.moreRow}>
-                  <ThemedText>{category.name}</ThemedText>
-                </Pressable>
-              ))}
+              {extraCategories.map((category) => {
+                const symbol = iconForCategory(category.name);
+                return (
+                  <Pressable
+                    key={category.id}
+                    onPress={() => {
+                      setSelectedCategoryId(category.id);
+                      setSearch('');
+                      setMoreCategoriesOpen(false);
+                    }}
+                    style={styles.moreRow}>
+                    <SymbolView
+                      name={{ ios: symbol, android: 'label', web: 'label' }}
+                      size={20}
+                      tintColor={theme.text}
+                    />
+                    <ThemedText>{category.name}</ThemedText>
+                  </Pressable>
+                );
+              })}
             </ScrollView>
           </View>
         </Modal>
@@ -873,12 +1310,19 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     alignItems: 'center',
   },
-  searchInput: {
+  searchField: {
     flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
     borderWidth: 1,
     borderRadius: Spacing.three,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
+  },
+  searchInput: {
+    flex: 1,
+    padding: 0,
     fontFamily: Fonts.sans,
     fontSize: 16,
   },
@@ -899,7 +1343,21 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
     borderRadius: Spacing.three,
   },
+  chipWithIcon: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
+  },
   section: {
+    gap: Spacing.two,
+  },
+  categorySection: {
+    gap: Spacing.two,
+    marginBottom: Spacing.three,
+  },
+  sectionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: Spacing.two,
   },
   productsHeader: {
@@ -953,5 +1411,8 @@ const styles = StyleSheet.create({
   },
   moreRow: {
     paddingVertical: Spacing.three,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
   },
 });

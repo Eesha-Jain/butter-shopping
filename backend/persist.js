@@ -46,12 +46,29 @@ export async function assignProductCategories() {
   if (!canPersist()) throw new Error('Persist is not configured.');
   const categories = await rest('product_categories?parent_id=is.null&select=id,name');
   const byName = new Map((categories ?? []).map((row) => [String(row.name).toLowerCase(), row.id]));
-  const products = await rest(
-    'products?category_id=is.null&is_active=eq.true&select=id,name&limit=1000',
-  );
+  const pantryId = byName.get('pantry') ?? null;
+  const otherId = byName.get('other') ?? null;
+
+  // Null category_id, plus Pantry rows that should move to Other (non-food keywords / unmatched).
+  const [uncategorized, pantryRows] = await Promise.all([
+    rest('products?category_id=is.null&is_active=eq.true&select=id,name,category_id&limit=1000'),
+    pantryId
+      ? rest(
+          `products?category_id=eq.${pantryId}&is_active=eq.true&select=id,name,category_id&limit=1000`,
+        )
+      : Promise.resolve([]),
+  ]);
+
+  const seen = new Set();
+  const queue = [];
+  for (const product of [...(uncategorized ?? []), ...(pantryRows ?? [])]) {
+    if (!product?.id || seen.has(product.id)) continue;
+    seen.add(product.id);
+    queue.push(product);
+  }
+
   const byCategory = {};
   let updated = 0;
-  const queue = [...(products ?? [])];
   const workers = Array.from({ length: 8 }, async () => {
     while (queue.length > 0) {
       const product = queue.shift();
@@ -59,6 +76,9 @@ export async function assignProductCategories() {
       const categoryName = categoryForProductName(product.name);
       const categoryId = byName.get(String(categoryName).toLowerCase());
       if (!categoryId) continue;
+      // Only reclassify Pantry → Other (or null → mapped). Leave correct Pantry food alone.
+      if (product.category_id === pantryId && categoryId !== otherId) continue;
+      if (product.category_id === categoryId) continue;
       await rest(`products?id=eq.${product.id}`, {
         method: 'PATCH',
         headers: { Prefer: 'return=minimal' },
@@ -118,20 +138,109 @@ function absoluteImageUrl(value) {
   return /^https?:\/\//i.test(url) ? url : null;
 }
 
+function isStoragePath(value) {
+  return typeof value === 'string' && value.length > 0 && !/^https?:\/\//i.test(value.trim());
+}
+
+function extensionFromContentType(contentType, fallbackUrl) {
+  const type = String(contentType ?? '').toLowerCase();
+  if (type.includes('png')) return 'png';
+  if (type.includes('webp')) return 'webp';
+  if (type.includes('gif')) return 'gif';
+  if (type.includes('jpeg') || type.includes('jpg')) return 'jpg';
+  const fromUrl = String(fallbackUrl ?? '').match(/\.(png|jpe?g|webp|gif)(?:\?|$)/i);
+  if (fromUrl) return fromUrl[1].toLowerCase().replace('jpeg', 'jpg');
+  return 'jpg';
+}
+
+/**
+ * Downloads a retailer image and uploads it to the public-assets bucket.
+ * Returns a relative storage path, or null on failure.
+ */
+async function storeProductImage(imageUrl, observation) {
+  const config = supabaseConfig();
+  const source = absoluteImageUrl(imageUrl);
+  if (!config || !source) return null;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(source, {
+      signal: controller.signal,
+      headers: { Accept: 'image/*,*/*', 'User-Agent': 'butter-shopping/1.0' },
+    });
+    if (!res.ok) return null;
+    const buffer = Buffer.from(await res.arrayBuffer());
+    if (buffer.byteLength === 0 || buffer.byteLength > 2 * 1024 * 1024) return null;
+
+    const ext = extensionFromContentType(res.headers.get('content-type'), source);
+    const stem = String(observation.upc || observation.productRef || observation.productName || 'product')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 80);
+    const path = `products/${stem || 'product'}.${ext}`;
+    const contentType = res.headers.get('content-type') || `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+
+    const upload = await fetch(
+      `${config.url}/storage/v1/object/public-assets/${path}?upsert=true`,
+      {
+        method: 'POST',
+        headers: {
+          apikey: config.key,
+          Authorization: `Bearer ${config.key}`,
+          'Content-Type': contentType,
+          'x-upsert': 'true',
+        },
+        body: buffer,
+      },
+    );
+    if (!upload.ok) return null;
+    return path;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function resolveImagePath(observation, existingPath) {
+  const sourceUrl = absoluteImageUrl(observation.imageUrl);
+  const needsUpload =
+    Boolean(sourceUrl) && (!existingPath || !isStoragePath(existingPath) || absoluteImageUrl(existingPath));
+  if (!needsUpload) return isStoragePath(existingPath) ? existingPath : null;
+  const uploaded = await storeProductImage(sourceUrl, observation);
+  if (uploaded) return uploaded;
+  return isStoragePath(existingPath) ? existingPath : null;
+}
+
+async function categoryIdForName(productName) {
+  const categoryName = categoryForProductName(productName);
+  if (!categoryName) return null;
+  const rows = await rest(
+    `product_categories?name=eq.${encodeURIComponent(categoryName)}&select=id&limit=1`,
+  );
+  return rows?.[0]?.id ?? null;
+}
+
 /**
  * Patch an existing catalog product with better retailer fields.
- * Fills blanks; replaces image_path when a new absolute URL is available.
+ * Fills blanks; replaces image_path when a storage path is available.
  */
-async function updateExistingProduct(existing, observation, imageUrl) {
+async function updateExistingProduct(existing, observation, imagePath) {
   const patch = {};
-  if (imageUrl && existing.image_path !== imageUrl) {
-    patch.image_path = imageUrl;
+  if (imagePath && existing.image_path !== imagePath) {
+    patch.image_path = imagePath;
   }
   if (!existing.brand && observation.brand) {
     patch.brand = observation.brand;
   }
   if (!existing.upc && observation.upc) {
     patch.upc = observation.upc;
+  }
+  if (!existing.category_id) {
+    const categoryId = await categoryIdForName(observation.productName);
+    if (categoryId) patch.category_id = categoryId;
   }
   const nextName = String(observation.productName ?? '').trim();
   if (nextName && (!existing.name || existing.name.length < nextName.length)) {
@@ -181,11 +290,12 @@ export async function saveObservedPrice(observation) {
   const storeId = stores?.[0]?.id;
   if (!storeId) throw new Error('Store save did not return a row.');
 
-  const imageUrl = absoluteImageUrl(observation.imageUrl);
   const existing = await findProduct(observation);
   let productId = existing?.id ?? null;
+  const imagePath = await resolveImagePath(observation, existing?.image_path ?? null);
 
   if (!productId) {
+    const categoryId = await categoryIdForName(observation.productName);
     const created = await rest('products', {
       method: 'POST',
       headers: { Prefer: 'return=representation' },
@@ -193,12 +303,13 @@ export async function saveObservedPrice(observation) {
         name: observation.productName,
         brand: observation.brand,
         upc: observation.upc,
-        ...(imageUrl ? { image_path: imageUrl } : {}),
+        ...(imagePath ? { image_path: imagePath } : {}),
+        ...(categoryId ? { category_id: categoryId } : {}),
       }),
     });
     productId = created?.[0]?.id;
   } else {
-    productId = await updateExistingProduct(existing, observation, imageUrl);
+    productId = await updateExistingProduct(existing, observation, imagePath);
   }
   if (!productId) throw new Error('Product save did not return a row.');
 

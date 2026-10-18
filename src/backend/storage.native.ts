@@ -7,6 +7,9 @@ const KEYS = {
   hasSignedIn: 'butter.hasSignedIn',
   isGuest: 'butter.isGuest',
   guestCart: 'butter.guestCart',
+  guestFavorites: 'butter.guestFavorites',
+  onboardingCompleted: 'butter.onboardingCompleted',
+  groceryCashbackBps: 'butter.groceryCashbackBps',
 } as const;
 
 export type StorageKey = keyof typeof KEYS;

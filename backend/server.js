@@ -19,6 +19,7 @@ import {
   searchQfcProducts,
 } from "./qfc.js";
 import { findSafewayStores, searchSafewayProducts } from "./safeway.js";
+import { listVisaOffers } from "./visa-offers.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 dotenv.config({ path: path.join(root, "src/backend/.env") });
@@ -122,7 +123,28 @@ app.get("/api/health", (_req, res) => {
     qfc: Boolean(process.env.KROGER_CLIENT_ID && process.env.KROGER_CLIENT_SECRET),
     safeway: true,
     persist: canPersist(),
+    visa: Boolean(
+      process.env.VISA_USER_ID &&
+        process.env.VISA_PASSWORD &&
+        process.env.VISA_CERT_PATH &&
+        process.env.VISA_KEY_PATH,
+    ),
   });
+});
+
+/**
+ * Visa Merchant Offers (VMORC) for grocery chains.
+ * Query: merchant (optional filter, e.g. Safeway). Falls back to demo offers
+ * when sandbox mTLS credentials are not configured.
+ */
+app.get("/api/visa/offers", async (req, res) => {
+  try {
+    const merchant = req.query.merchant ? String(req.query.merchant) : null;
+    const result = await listVisaOffers(merchant);
+    res.json(result);
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 app.get("/api/kroger/locations", async (req, res) => {
@@ -288,7 +310,9 @@ app.get("/api/prices", async (req, res) => {
   }
 
   const zip = req.query.zip ? String(req.query.zip) : "";
-  const cached = readIngestCache(zip, query);
+  const forceRefresh =
+    req.query.refresh === "1" || req.query.refresh === "true" || req.query.fresh === "1";
+  const cached = forceRefresh ? null : readIngestCache(zip, query);
   if (cached) {
     res.status(200).json({ ...cached, cooledDown: true });
     return;

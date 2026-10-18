@@ -13,10 +13,12 @@ type Props = {
   quantityOnList?: number;
   sponsored?: boolean;
   compact?: boolean;
+  favorited?: boolean;
   onPress: () => void;
   onAdd: () => void;
   onIncrement: () => void;
   onDecrement: () => void;
+  onToggleFavorite?: () => void;
 };
 
 export function ProductCard({
@@ -25,10 +27,12 @@ export function ProductCard({
   quantityOnList,
   sponsored,
   compact,
+  favorited,
   onPress,
   onAdd,
   onIncrement,
   onDecrement,
+  onToggleFavorite,
 }: Props) {
   const theme = useTheme();
   const imageUrl = publicImageUrl('public-assets', product.image_path);
@@ -53,6 +57,16 @@ export function ProductCard({
               {saleBadge}
             </ThemedText>
           </View>
+        ) : null}
+        {onToggleFavorite ? (
+          <Pressable
+            onPress={onToggleFavorite}
+            hitSlop={8}
+            style={[styles.heartBtn, { backgroundColor: theme.background }]}>
+            <ThemedText type="smallBold" style={{ color: favorited ? theme.error : theme.textSecondary }}>
+              {favorited ? '♥' : '♡'}
+            </ThemedText>
+          </Pressable>
         ) : null}
         {imageUrl ? (
           <Image source={{ uri: imageUrl }} style={styles.image} contentFit="cover" />
@@ -143,6 +157,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.two,
     paddingVertical: Spacing.half,
     borderRadius: Spacing.one,
+  },
+  heartBtn: {
+    position: 'absolute',
+    top: Spacing.one,
+    right: Spacing.one,
+    zIndex: 1,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   body: {
     gap: 2,

@@ -70,6 +70,7 @@ export {
   listActiveProducts,
   listCampusPopularProducts,
   listCategories,
+  listProductsGroupedByCategory,
   listProductStoreOffers,
   listCurrentPromotions,
   listReportedOffers,
@@ -82,7 +83,7 @@ export {
   searchCategories,
   searchProducts,
 } from './catalog';
-export type { ProductStoreOffer } from './catalog';
+export type { CategoryProductSection, ProductStoreOffer } from './catalog';
 export {
   applyFoodFilters,
   groupTraitsForFilterUi,
@@ -131,6 +132,7 @@ export { getProductSafety, traitsChangedSince } from './safety';
 export { registerPushToken, removePushToken, sendOrderConfirmationPush } from './notifications';
 export { analyzeRipeness } from './ripeness';
 export type { RipenessResult } from './ripeness';
+export { listMyFavoriteProductIds, setProductFavorite } from './favorites';
 export type {
   FulfillmentMethod,
   GroupKind,

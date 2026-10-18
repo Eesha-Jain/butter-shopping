@@ -92,7 +92,9 @@ The Shop tab **reads** Supabase only. Real products are written by the Node pric
 
 | Path | When | What happens |
 | --- | --- | --- |
-| Staple bootstrap | Ops / before demo | `npm run bootstrap:uw` hits `/api/prices` for campus staple terms (ZIP `98195`), upserts products + prices, then assigns categories |
+| Staple bootstrap | Ops / before demo | `npm run bootstrap:uw` hits `/api/prices` for campus staple terms (ZIP `98195`), upserts products + prices, then assigns categories. Re-run with `refresh=1` after deploy so product photos are re-downloaded into Storage |
+| Product photos | On every successful price persist | Proxy downloads the retailer image and uploads it to the `public-assets` bucket under `products/{upc-or-id}.{ext}`; `products.image_path` stores that relative path (not the CDN URL) |
+| Categories | Ingest + `POST /api/admin/assign-categories` | Keyword map assigns food aisles; unmatched / household SKUs go to **Other**. Default Shop browse hides Other (open via the Other chip). Re-run assign after deploy to move misfiled Pantry non-food into Other |
 | Shop search miss | User search with fewer than 3 local hits | App calls `/api/prices` for that term + resolved ZIP, then re-queries Supabase |
 | Planning | `planLowestTrip` | Same proxy path per list item |
 | Barcode | `findOrIngestProductByUpc` | QFC lookup by UPC via `/api/products/by-upc`, optional OFF enrich |

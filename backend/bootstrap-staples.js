@@ -78,7 +78,8 @@ async function main() {
   async function worker() {
     while (index < terms.length) {
       const term = terms[index++];
-      const url = `${base}/api/prices?term=${encodeURIComponent(term)}&zip=${zip}`;
+      // refresh=1 bypasses the proxy cooldown so re-runs update prices/photos.
+      const url = `${base}/api/prices?term=${encodeURIComponent(term)}&zip=${zip}&refresh=1`;
       try {
         const res = await fetch(url);
         const json = await res.json().catch(() => ({}));
