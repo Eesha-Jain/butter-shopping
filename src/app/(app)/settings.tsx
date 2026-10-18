@@ -359,6 +359,12 @@ export default function SettingsScreen() {
             ) : null}
           </>
         )}
+        <Pressable
+          onPress={() => router.push('/privacy')}
+          accessibilityRole="button"
+          accessibilityLabel="Privacy policy">
+          <ThemedText type="linkPrimary">Privacy policy</ThemedText>
+        </Pressable>
       </ScrollView>
     </SafeAreaView>
   );

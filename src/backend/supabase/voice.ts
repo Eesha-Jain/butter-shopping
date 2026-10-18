@@ -134,7 +134,32 @@ async function parseVoiceOrderResponse(response: Response): Promise<VoiceOrderRe
  * @param fileUri local file uri from expo-audio's recorder, e.g.
  *   recorder.uri after stop() (an .m4a/.caf file).
  */
-export async function voiceOrder(fileUri: string, context?: string): Promise<VoiceOrderResult> {
+export type VoiceOrderExtras = {
+  /** Saved address, or the phone's place when location is already allowed. */
+  location?: string | null;
+  /** Last three voice texts on this device, newest first. */
+  recentTexts?: string[];
+};
+
+function voicePrivacyHeaders(extras?: VoiceOrderExtras): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const location = extras?.location?.trim();
+  if (location) headers['x-butter-location'] = encodeURIComponent(location.slice(0, 180));
+  const recent = (extras?.recentTexts ?? [])
+    .map((row) => row.trim())
+    .filter(Boolean)
+    .slice(0, 3);
+  if (recent.length > 0) {
+    headers['x-butter-recent'] = encodeURIComponent(JSON.stringify(recent).slice(0, 700));
+  }
+  return headers;
+}
+
+export async function voiceOrder(
+  fileUri: string,
+  context?: string,
+  extras?: VoiceOrderExtras,
+): Promise<VoiceOrderResult> {
   if (!fileUri) return silenceResult();
   const token = await getAuthToken();
 
@@ -152,6 +177,7 @@ export async function voiceOrder(fileUri: string, context?: string): Promise<Voi
       headers: {
         Authorization: `Bearer ${token}`,
         'x-butter-voice': getAiVoice(),
+        ...voicePrivacyHeaders(extras),
         ...(context?.trim()
           ? { 'x-butter-context': encodeURIComponent(context.trim().slice(0, 500)) }
           : {}),
@@ -195,7 +221,11 @@ export async function speakAssistant(text: string): Promise<string | null> {
   return payload?.replyAudioBase64 ?? null;
 }
 
-export async function voiceOrderFromText(transcript: string, clarify?: string): Promise<VoiceOrderResult> {
+export async function voiceOrderFromText(
+  transcript: string,
+  clarify?: string,
+  extras?: VoiceOrderExtras,
+): Promise<VoiceOrderResult> {
   const trimmed = transcript.trim();
   const note = clarify?.trim().slice(0, 240) ?? '';
   if (!trimmed) fail('Type something to add first.');
@@ -207,6 +237,7 @@ export async function voiceOrderFromText(transcript: string, clarify?: string): 
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
+      ...voicePrivacyHeaders(extras),
     },
     body: JSON.stringify({
       transcript: trimmed,

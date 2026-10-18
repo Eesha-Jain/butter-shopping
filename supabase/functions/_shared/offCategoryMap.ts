@@ -43,12 +43,25 @@ export function categoryFromOffProduct(off: OffLike | null | undefined): string 
     return "Bakery";
   }
 
-  if (text.includes("en:fruit-juices") || (text.includes("juice") && text.includes("beverage"))) {
+  // Drink forms beat fruit tags (smoothies, sparkling water, juices, soft drinks).
+  const drinkForm =
+    text.includes("en:fruit-juices") ||
+    text.includes("en:smoothies") ||
+    text.includes("en:sparkling-waters") ||
+    text.includes("sparkling-water") ||
+    text.includes("en:soft-drinks") ||
+    text.includes("en:lemonades") ||
+    text.includes("en:kombuchas") ||
+    (text.includes("juice") && text.includes("beverage")) ||
+    /\b(smoothies?|sparkling|lemonades?|kombuchas?|nectars?|soft-drinks|sodas?)\b/.test(text);
+  if (drinkForm) {
     return "Beverages";
   }
+  // Generic beverage aisle — do not steal fresh produce (or plant-based-foods-and-beverages).
   if (
-    (/\b(beverages?|soft-drinks|sodas?|waters?|teas?|coffees?)\b/.test(text) ||
-      text.includes("en:beverages")) &&
+    (text.includes("en:beverages") ||
+      /\b(soft-drinks|sodas?|teas?|coffees?)\b/.test(text) ||
+      (/\bwaters?\b/.test(text) && !text.includes("en:fruits") && !text.includes("en:vegetables"))) &&
     !text.includes("en:fresh-fruits") &&
     !text.includes("en:fruits")
   ) {

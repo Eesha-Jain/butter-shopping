@@ -60,8 +60,8 @@ export async function fetchProductByUpc(upc) {
  * Sets category_id on active products that still have none, using the keyword map.
  * Also reclassifies:
  * - Pantry → Other (non-food keywords)
- * - Fruits / Vegetables / Produce → Snacks or Other when the map disagrees
- *   (e.g. avocado chips, Banana Boat sunscreen), skipping category_source=manual.
+ * - Fruits / Vegetables / Produce → Snacks, Beverages, or Other when the map disagrees
+ *   (e.g. avocado chips, mango smoothie, Banana Boat sunscreen), skipping category_source=manual.
  * Returns { updated, byCategory }.
  */
 export async function assignProductCategories() {
@@ -71,12 +71,13 @@ export async function assignProductCategories() {
   const pantryId = byName.get("pantry") ?? null;
   const otherId = byName.get("other") ?? null;
   const snacksId = byName.get("snacks") ?? null;
+  const beveragesId = byName.get("beverages") ?? null;
   const produceFamilyIds = ["fruits", "vegetables", "produce"]
     .map((name) => byName.get(name))
     .filter(Boolean);
 
   const select = "id,name,category_id,category_source";
-  // Null category_id, Pantry → Other candidates, and produce-family rows that may be snacks/sunscreen.
+  // Null category_id, Pantry → Other candidates, and produce-family rows that may be snacks/drinks/sunscreen.
   const [uncategorized, pantryRows, ...produceBatches] = await Promise.all([
     rest(`products?category_id=is.null&is_active=eq.true&select=${select}&limit=1000`),
     pantryId
@@ -112,12 +113,13 @@ export async function assignProductCategories() {
       const categoryId = byName.get(String(categoryName).toLowerCase());
       if (!categoryId) continue;
       const inProduceFamily = produceFamilyIds.includes(product.category_id);
-      // Pantry → only Other; produce family → only Snacks or Other; null → any mapped.
+      // Pantry → only Other; produce family → Snacks / Beverages / Other; null → any mapped.
       if (product.category_id === pantryId && categoryId !== otherId) continue;
       if (
         inProduceFamily &&
         categoryId !== otherId &&
-        categoryId !== snacksId
+        categoryId !== snacksId &&
+        categoryId !== beveragesId
       ) {
         continue;
       }

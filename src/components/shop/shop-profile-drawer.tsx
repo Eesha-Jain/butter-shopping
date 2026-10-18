@@ -428,13 +428,13 @@ export function ShopProfileDrawer({
             </View>
             <ThemedText type="smallBold">AI voice</ThemedText>
             <ThemedText type="small" themeColor="textSecondary">
-              Woman and man read the reply.
+              Female and male read the reply. Cow plays a real moo. The words stay on screen.
             </ThemedText>
             <View style={styles.cashbackRow}>
               {(
                 [
-                  ['female', 'Woman'],
-                  ['male', 'Man'],
+                  ['female', 'Female'],
+                  ['male', 'Male'],
                   ['cow', 'Cow'],
                 ] as const
               ).map(([id, label]) => (
