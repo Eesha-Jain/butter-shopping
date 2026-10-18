@@ -11,8 +11,9 @@
     "ios": {
       "icon": "./assets/images/icon.png",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "Used for push-to-talk ordering.", 
         "NSSpeechRecognitionUsageDescription": "Used to transcribe your push-to-talk order.",
+        "NSMicrophoneUsageDescription": "Butter uses your microphone so you can talk to your grocery shopping assistant.",
+        "NSLocationWhenInUseUsageDescription": "We use your location to find the best deals and products near you.",
         "ITSAppUsesNonExemptEncryption": false
       },
       "bitcode": false,
@@ -49,7 +50,13 @@
       "expo-status-bar",
       "expo-web-browser",
       "expo-speech-recognition",
-      "expo-audio"
+      "expo-audio",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "We use your location to find the best deals and products near you."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

@@ -25,6 +25,11 @@ export default function AppTabs() {
         />
       </NativeTabs.Trigger>
 
+      <NativeTabs.Trigger name="nearby">
+        <NativeTabs.Trigger.Label>Nearby</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf="mappin.and.ellipse" md="location_on" />
+      </NativeTabs.Trigger>
+
       <NativeTabs.Trigger name="days">
         <NativeTabs.Trigger.Label>Days</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf="calendar" md="calendar_month" />

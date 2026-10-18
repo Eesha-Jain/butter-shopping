@@ -19,55 +19,25 @@ export {
   signUp
 } from './auth';
 export {
-  findProductByUpc,
-  getCurrentPrice,
-  getStore,
-  listCurrentPromotions,
-  nearbyStores,
-  productWarnings,
-  reportPrice,
-  searchCategories,
-  searchProducts
+  findProductByUpc, findProductByUpc, getCurrentPrice, getCurrentPrice, getStore, getStore, listCurrentPromotions, listCurrentPromotions,
+  nearbyShops, nearbyStores,
+  productWarnings, productWarnings, reportPrice, reportPrice, searchCategories, searchCategories, searchProducts, searchProducts
 } from './catalog';
 export { nextPreferredGroceryDate } from './dates';
 export {
-  createGroup,
-  joinGroup,
-  leaveGroup,
-  listGroupBalances,
-  listGroupMembers,
-  listMyGroups,
-  updateGroup
+  createGroup, createGroup, joinGroup, joinGroup, leaveGroup, leaveGroup, listGroupBalances, listGroupBalances, listGroupMembers, listGroupMembers, listMyGroups, listMyGroups, updateGroup, updateGroup
 } from './groups';
 export {
-  addListItem,
-  addRecipeToList,
-  createList,
-  listGroupLists,
-  listResolvedItems,
-  removeListItem,
-  setListItemDone,
-  updateListItem
+  addListItem, addListItem, addRecipeToList, addRecipeToList, createList, createList, listGroupLists, listGroupLists, listResolvedItems, listResolvedItems, removeListItem, removeListItem, setListItemDone, setListItemDone, updateListItem, updateListItem
 } from './lists';
+export { fetchNearbyShops, getUserCoords } from './locationService';
 export { evenShareCents, payerRemainderCents } from './money';
 export { registerPushToken, removePushToken, sendOrderConfirmationPush } from './notifications';
 export {
-  cancelOrder,
-  confirmOrder,
-  createTripFromList,
-  finalizeOrder,
-  getTrip,
-  listOrderItems,
-  listOrderShares,
-  markSharePaid,
-  previewEvenSplit,
-  requestCheckoutLink
+  cancelOrder, cancelOrder, confirmOrder, confirmOrder, createTripFromList, createTripFromList, finalizeOrder, finalizeOrder, getTrip, getTrip, listOrderItems, listOrderItems, listOrderShares, listOrderShares, markSharePaid, markSharePaid, previewEvenSplit, previewEvenSplit, requestCheckoutLink, requestCheckoutLink
 } from './orders';
 export {
-  getWeeklyBudgetCents,
-  priceOptions,
-  recommendShoppingPlan,
-  suggestGroceryDate
+  getWeeklyBudgetCents, getWeeklyBudgetCents, priceOptions, priceOptions, recommendShoppingPlan, recommendShoppingPlan, suggestGroceryDate, suggestGroceryDate
 } from './planning';
 export {
   getMyProfile,
