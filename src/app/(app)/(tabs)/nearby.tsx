@@ -1,7 +1,7 @@
 import { BottomSheet, Column, Host, Text as UIText } from '@expo/ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import MapView, { Marker, PROVIDER_GOOGLE, type Region } from 'react-native-maps';
+import MapView, { Circle, Marker, PROVIDER_GOOGLE, type Region } from 'react-native-maps';
 
 import {
   fetchNearbyShops,
@@ -17,7 +17,8 @@ import { Fonts, Radius, Spacing } from '@/constants/theme';
 import { useSnapOptedIn } from '@/hooks/use-snap-opted-in';
 import { useTheme } from '@/hooks/use-theme';
 
-const SEARCH_DELTA = 0.2;
+const SEARCH_DELTA = 0.18;
+const RADIUS_METERS = 10_000;
 const LABEL_ZOOM_DELTA = 0.05;
 const FALLBACK_REGION: Region = {
   latitude: 47.6062,
@@ -131,6 +132,15 @@ export default function NearbyScreen() {
         showsUserLocation={origin != null}
         showsMyLocationButton={false}
         onRegionChangeComplete={(next) => setLatitudeDelta(next.latitudeDelta)}>
+        {origin ? (
+          <Circle
+            center={origin}
+            radius={RADIUS_METERS}
+            strokeColor={theme.primary}
+            strokeWidth={2}
+            fillColor={`${theme.primary}22`}
+          />
+        ) : null}
         {pins.map((shop) => (
           <Marker
             key={shop.id}
@@ -139,20 +149,22 @@ export default function NearbyScreen() {
               longitude: shop.longitude as number,
             }}
             title={shop.name}
-            anchor={showNames ? { x: 0.5, y: 0 } : undefined}
+            anchor={{ x: 0.5, y: 0 }}
             tracksViewChanges={showNames}
             onPress={() => setSelected(shop)}>
-            {showNames ? (
-              <View style={styles.pin}>
-                <View style={[styles.pinDot, { backgroundColor: theme.primary, borderColor: theme.background }]} />
+            <View style={styles.pin} pointerEvents="none">
+              <View style={[styles.pinDot, { backgroundColor: theme.primary, borderColor: theme.background }]} />
+              {showNames ? (
                 <View style={styles.pinLabelRow}>
-                  <Text style={[styles.pinLabel, { color: theme.text, backgroundColor: theme.background }]} numberOfLines={2}>
+                  <Text
+                    style={[styles.pinLabel, { color: theme.text, backgroundColor: theme.background }]}
+                    numberOfLines={2}>
                     {shop.name}
                   </Text>
                   {snapOptedIn && shop.accepts_snap ? <SnapBadge size="sm" /> : null}
                 </View>
-              </View>
-            ) : null}
+              ) : null}
+            </View>
           </Marker>
         ))}
       </MapView>

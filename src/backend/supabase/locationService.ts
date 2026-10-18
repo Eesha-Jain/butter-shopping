@@ -2,10 +2,12 @@ import * as Location from 'expo-location';
 
 import { CAMPUS_DEFAULT_ZIP } from '../../api/config';
 import type { NearbyStore } from '../types';
-import { nearbyShops } from './catalog';
+import { supabase } from './client';
 import { listMyLocations } from './profiles';
+import { unwrap } from './query';
 
 const NEARBY_RADIUS_KM = 10;
+const KM_PER_DEGREE = 111.32;
 
 export type SearchCoords = { latitude: number; longitude: number };
 
@@ -86,15 +88,54 @@ export async function resolveSearchCoords(): Promise<SearchCoords | null> {
   return fallbackCoords();
 }
 
-/** Shops within 10 km of the device, or of the saved default address if GPS is denied. */
+function distanceKm(from: SearchCoords, latitude: number, longitude: number): number {
+  const toRad = (degrees: number) => (degrees * Math.PI) / 180;
+  const dLat = toRad(latitude - from.latitude);
+  const dLng = toRad(longitude - from.longitude);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(from.latitude)) * Math.cos(toRad(latitude)) * Math.sin(dLng / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/**
+ * Shops within 10 km of the device, or of the saved default address if GPS is denied.
+ * Map pins use store coordinates even when the store has no priced products yet.
+ */
 export async function fetchNearbyShops(origin?: SearchCoords | null): Promise<NearbyStore[]> {
   const coords = origin === undefined ? await resolveSearchCoords() : origin;
   if (!coords) {
     return [];
   }
-  return nearbyShops({
-    latitude: coords.latitude,
-    longitude: coords.longitude,
-    radiusKm: NEARBY_RADIUS_KM,
-  });
+
+  const latDelta = NEARBY_RADIUS_KM / KM_PER_DEGREE;
+  const cosLat = Math.max(Math.cos((coords.latitude * Math.PI) / 180), 0.01);
+  const lngDelta = NEARBY_RADIUS_KM / (KM_PER_DEGREE * cosLat);
+
+  const rows = unwrap(
+    await supabase
+      .from('stores')
+      .select(
+        'id, name, chain_id, college_id, address_line1, city, region, postal_code, latitude, longitude, accepts_snap',
+      )
+      .not('latitude', 'is', null)
+      .not('longitude', 'is', null)
+      .gte('latitude', coords.latitude - latDelta)
+      .lte('latitude', coords.latitude + latDelta)
+      .gte('longitude', coords.longitude - lngDelta)
+      .lte('longitude', coords.longitude + lngDelta),
+  );
+
+  return rows
+    .flatMap((row) => {
+      if (row.latitude == null || row.longitude == null) {
+        return [];
+      }
+      const km = distanceKm(coords, row.latitude, row.longitude);
+      if (km > NEARBY_RADIUS_KM) {
+        return [];
+      }
+      return [{ ...row, distance_km: km }];
+    })
+    .sort((a, b) => Number(a.distance_km) - Number(b.distance_km));
 }
