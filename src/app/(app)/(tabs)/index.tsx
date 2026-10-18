@@ -82,6 +82,7 @@ import {
   type NearbyStore,
   type Product,
   type ProductCategory,
+  type ProductTrait,
   type Promotion,
   type SessionFoodRule,
   type ShopSort,
@@ -136,18 +137,118 @@ function chunkProducts(products: Product[], size = 2): Product[][] {
   return rows;
 }
 
+const SHOP_HOME_CACHE_VERSION = 2;
+const HOME_SCOPE_KEY = 'home';
+
+/** Raw (unfiltered) home catalog; food rules / sort are re-applied on read. */
 type ShopHomeCache = {
+  v: typeof SHOP_HOME_CACHE_VERSION;
   categories: ProductCategory[];
   sections: CategoryProductSection[];
   products: Product[];
-  trending: { product: Product; sponsored: boolean }[];
+  traits: ProductTrait[];
   prices: [string, number][];
+  stripPrices: [string, number][];
+  trending: { product: Product; sponsored: boolean }[];
 };
 
 function readShopHomeCache(): ShopHomeCache | null {
   const cached = getJson<ShopHomeCache>('shopHomeCache');
-  if (!cached || !Array.isArray(cached.products) || !Array.isArray(cached.sections)) return null;
+  if (
+    !cached ||
+    cached.v !== SHOP_HOME_CACHE_VERSION ||
+    !Array.isArray(cached.products) ||
+    !Array.isArray(cached.sections) ||
+    !Array.isArray(cached.traits)
+  ) {
+    return null;
+  }
   return cached;
+}
+
+type ShopScope = {
+  key: string;
+  kind: 'home' | 'aisle' | 'favorites' | 'stores';
+  categoryId: string | null;
+  favorites: boolean;
+  favoriteIds: string[];
+  storeIds: string[];
+};
+
+/** Unfiltered rows for one shop view; `priceMap` is gross shelf price (before cashback). */
+type ScopeData = {
+  products: Product[];
+  sections: CategoryProductSection[] | null;
+  priceMap: Map<string, number>;
+  traits: ProductTrait[];
+  nonce: number;
+  requestedIds?: string[];
+  fromDisk?: boolean;
+};
+
+function isScopeFresh(data: ScopeData, scope: ShopScope, nonce: number): boolean {
+  if (data.nonce !== nonce) return false;
+  if (!scope.favorites) return true;
+  const requested = new Set(data.requestedIds ?? []);
+  return scope.favoriteIds.every((id) => requested.has(id));
+}
+
+async function fetchShopScope(
+  scope: ShopScope,
+  geo: OpenPricesGeo | null,
+): Promise<Omit<ScopeData, 'nonce'>> {
+  let products: Product[];
+  let sections: CategoryProductSection[] | null = null;
+  let priceMap: Map<string, number> | null = null;
+
+  if (scope.favorites) {
+    products = scope.favoriteIds.length > 0 ? await getProductsByIds(scope.favoriteIds) : [];
+    if (scope.kind === 'stores') {
+      priceMap = await getStorePriceCentsForStores(
+        scope.storeIds,
+        products.map((row) => row.id),
+      );
+      const stocked = priceMap;
+      products = products.filter((row) => stocked.has(row.id));
+    }
+  } else if (scope.kind === 'stores') {
+    const shelf = await listShelfForStores(scope.storeIds, {
+      limit: 60,
+      categoryId: scope.categoryId,
+    });
+    products = shelf.map((row) => row.product);
+    priceMap = new Map(shelf.map((row) => [row.product.id, row.priceCents]));
+  } else if (scope.kind === 'home') {
+    const [grouped, catalog] = await Promise.all([
+      listProductsGroupedByCategory({ limitPerCategory: AISLE_PREVIEW_COUNT }),
+      listActiveProducts({ limit: 60 }),
+    ]);
+    sections = grouped;
+    products = catalog;
+  } else {
+    products = await listActiveProducts({ categoryId: scope.categoryId, limit: 60 });
+  }
+
+  const allIds = [
+    ...new Set([
+      ...products.map((row) => row.id),
+      ...(sections ?? []).flatMap((section) => section.products.map((row) => row.id)),
+    ]),
+  ];
+  const [traits, cheapest] = await Promise.all([
+    getProductTraitsForIds(allIds).catch(() => [] as ProductTrait[]),
+    priceMap
+      ? Promise.resolve(priceMap)
+      : getCheapestPriceCentsByProductIds(allIds, geo).catch(() => new Map<string, number>()),
+  ]);
+
+  return {
+    products,
+    sections,
+    priceMap: cheapest,
+    traits,
+    requestedIds: scope.favorites ? scope.favoriteIds : undefined,
+  };
 }
 
 const AISLE_PREVIEW_COUNT = 10;
@@ -191,7 +292,6 @@ export default function ShopScreen() {
     opacity: pinProgress.value,
   }));
   const seededPrefsRef = useRef(false);
-  const openPricesGeoRef = useRef<OpenPricesGeo | null>(null);
   const contentOpacity = useSharedValue(1);
   const [showScrollTop, setShowScrollTop] = useState(false);
 
@@ -213,12 +313,30 @@ export default function ShopScreen() {
     () => initialCache?.trending ?? [],
   );
   const [trendingPrices, setTrendingPrices] = useState<Map<string, number>>(
-    () => new Map(initialCache?.prices ?? []),
+    () => new Map(initialCache?.stripPrices ?? []),
   );
-  const [products, setProducts] = useState<Product[]>(() => initialCache?.products ?? []);
-  const [categorySections, setCategorySections] = useState<CategoryProductSection[]>(
-    () => initialCache?.sections ?? [],
+  const [stripPrices, setStripPrices] = useState<Map<string, number>>(
+    () => new Map(initialCache?.stripPrices ?? []),
   );
+  const [scopeCache, setScopeCache] = useState<Map<string, ScopeData>>(() => {
+    const map = new Map<string, ScopeData>();
+    if (initialCache) {
+      map.set(HOME_SCOPE_KEY, {
+        products: initialCache.products,
+        sections: initialCache.sections,
+        priceMap: new Map(initialCache.prices),
+        traits: initialCache.traits,
+        nonce: -1,
+        fromDisk: true,
+      });
+    }
+    return map;
+  });
+  const scopeCacheRef = useRef(scopeCache);
+  const inFlightRef = useRef(new Set<string>());
+  const geoPromiseRef = useRef<Promise<OpenPricesGeo | null> | null>(null);
+  const [settledTokens, setSettledTokens] = useState<Set<string>>(() => new Set());
+  const [dataNonce, setDataNonce] = useState(0);
   const [promotions, setPromotions] = useState<Map<string, Promotion>>(new Map());
   const [checkingStores, setCheckingStores] = useState(false);
   const [nearbyStores, setNearbyStores] = useState<NearbyStore[]>([]);
@@ -230,9 +348,6 @@ export default function ShopScreen() {
   );
   const hasStoreFilter = selectedStoreIds.length > 0;
   const selectedStoreKey = selectedStoreIds.join(',');
-  const [shelfPrices, setShelfPrices] = useState<Map<string, number>>(
-    () => new Map(initialCache?.prices ?? []),
-  );
   const [cashbackBps, setCashbackBps] = useState<number | null>(null);
 
   const [traits, setTraits] = useState<FoodTrait[]>([]);
@@ -250,7 +365,6 @@ export default function ShopScreen() {
   const [peekClosing, setPeekClosing] = useState(false);
 
   const [isLoading, setIsLoading] = useState(true);
-  const [productsLoading, setProductsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const searchQuery = search.trim();
@@ -408,39 +522,60 @@ export default function ShopScreen() {
     [favoriteIds, favoritesOnly],
   );
 
+  const getOpenPricesGeo = useCallback(() => {
+    geoPromiseRef.current ??= resolveSearchCoords()
+      .then((coords) =>
+        coords != null
+          ? { latitude: coords.latitude, longitude: coords.longitude, radiusKm: 80 }
+          : null,
+      )
+      .catch(() => null);
+    return geoPromiseRef.current;
+  }, []);
+
+  const putScope = useCallback((key: string, data: ScopeData) => {
+    const existing = scopeCacheRef.current.get(key);
+    if (existing && existing.nonce > data.nonce) return;
+    const next = new Map(scopeCacheRef.current);
+    next.set(key, data);
+    scopeCacheRef.current = next;
+    setScopeCache(next);
+  }, []);
+
+  // Shared shop context (promos, categories, staples, trending, cashback) — not tied to the view.
+  const activeGroupId = activeTarget?.group.id ?? null;
   useEffect(() => {
     if (!shellReady) return;
 
     let cancelled = false;
     void (async () => {
-      setProductsLoading(true);
       try {
-        const collegeId = isGuest ? null : (await getMyProfile()).college_id;
-        const groupId = activeTarget?.group.id;
-        const coords = await resolveSearchCoords().catch(() => null);
-        const openPricesGeo =
-          coords != null
-            ? { latitude: coords.latitude, longitude: coords.longitude, radiusKm: 80 }
-            : null;
-        openPricesGeoRef.current = openPricesGeo;
+        const collegeId = isGuest
+          ? null
+          : ((await getMyProfile().catch(() => null))?.college_id ?? null);
 
-        const [promoMap, cats, stapleProductIds, trendingRows, popularCampus] = await Promise.all([
-          getProductPromotionMap().catch(() => new Map<string, Promotion>()),
-          listCategories().catch(() => null),
-          groupId
-            ? listMyStapleProductIds(groupId).catch(() => [] as string[])
-            : Promise.resolve([] as string[]),
-          listTrending(collegeId).catch(() => []),
-          listCampusPopularProducts({ limit: 12 }).catch(() => [] as Product[]),
-        ]);
+        const [promoMap, cats, stapleProductIds, trendingRows, popularCampus, nextCashbackBps] =
+          await Promise.all([
+            getProductPromotionMap().catch(() => new Map<string, Promotion>()),
+            listCategories().catch(() => null),
+            activeGroupId
+              ? listMyStapleProductIds(activeGroupId).catch(() => [] as string[])
+              : Promise.resolve([] as string[]),
+            listTrending(collegeId).catch(() => []),
+            listCampusPopularProducts({ limit: 12 }).catch(() => [] as Product[]),
+            getEffectiveGroceryCashbackBps(isGuest).catch(() => null),
+          ]);
         if (cancelled) return;
 
         setPromotions(promoMap);
+        setCashbackBps(nextCashbackBps);
         if (cats && cats.length > 0) setCategories(cats);
 
         // Personal staples only — campus popular folds into Trending below.
         if (stapleProductIds.length > 0) {
-          setStaples(await getProductsByIds(stapleProductIds).catch(() => []));
+          const stapleProducts = await getProductsByIds(stapleProductIds).catch(() => []);
+          if (cancelled) return;
+          setStaples(stapleProducts);
           setStaplesArePersonal(true);
         } else {
           setStaples([]);
@@ -477,202 +612,185 @@ export default function ShopScreen() {
           mergedTrending.push({ product, sponsored: false });
         }
         if (mergedTrending.length > 0) setTrending(mergedTrending);
-        // Carousel prices (staples + trending) merge into every grid price map below.
+
+        const geo = await getOpenPricesGeo();
         const stripPriceMap = await getCheapestPriceCentsByProductIds(
           [...stapleProductIds, ...mergedTrending.map((row) => row.product.id)],
-          openPricesGeo,
+          geo,
         ).catch(() => new Map<string, number>());
         if (cancelled) return;
         setTrendingPrices(stripPriceMap);
-        setShelfPrices((prev) => {
-          const next = new Map(prev);
-          for (const [id, cents] of stripPriceMap) next.set(id, cents);
-          return next;
-        });
-        const withStripPrices = (gridPrices: Map<string, number>, bps: number | null) =>
-          applyCashbackToPriceMap(new Map([...stripPriceMap, ...gridPrices]), bps);
-
-        const browseHome = !favoritesOnly && selectedCategoryId == null && !hasStoreFilter;
-        const stapleIds = new Set(stapleProductIds);
-        const promotionProductIds = new Set(promoMap.keys());
-
-        if (hasStoreFilter) {
-          const storeIds = selectedStoreKey.split(',');
-          setCategorySections([]);
-          let rawProducts: Product[];
-          let priceMap: Map<string, number>;
-          if (favoritesOnly) {
-            const ids = favoriteIdsKey ? favoriteIdsKey.split(',') : [];
-            rawProducts = ids.length > 0 ? await getProductsByIds(ids) : [];
-            if (selectedCategoryId) {
-              rawProducts = rawProducts.filter((row) => row.category_id === selectedCategoryId);
-            }
-            priceMap = await getStorePriceCentsForStores(
-              storeIds,
-              rawProducts.map((row) => row.id),
-            );
-            rawProducts = rawProducts.filter((row) => priceMap.has(row.id));
-          } else {
-            const shelf = await listShelfForStores(storeIds, {
-              limit: 60,
-              categoryId: selectedCategoryId,
-            });
-            rawProducts = shelf.map((row) => row.product);
-            priceMap = new Map(shelf.map((row) => [row.product.id, row.priceCents]));
-          }
-          if (cancelled) return;
-          const [traitsForProducts, nextCashbackBps] = await Promise.all([
-            getProductTraitsForIds(rawProducts.map((row) => row.id)),
-            getEffectiveGroceryCashbackBps(isGuest),
-          ]);
-          if (cancelled) return;
-          const netPriceMap = applyCashbackToPriceMap(priceMap, nextCashbackBps);
-          setCashbackBps(nextCashbackBps);
-          setShelfPrices(withStripPrices(priceMap, nextCashbackBps));
-          setProducts(
-            applyFoodFilters(rawProducts, sessionRules, indexTraitsByProduct(traitsForProducts), {
-              sort,
-              stapleIds,
-              onSaleOnly,
-              promotionProductIds,
-              priceCentsByProduct: netPriceMap,
-            }),
-          );
-          if (!cancelled) setCheckingStores(false);
-        } else if (browseHome) {
-          const [grouped, catalogProducts] = await Promise.all([
-            listProductsGroupedByCategory({ limitPerCategory: 10 }),
-            listActiveProducts({ limit: 60 }),
-          ]);
-          if (cancelled) return;
-
-          const sectionIds = grouped.flatMap((section) => section.products.map((row) => row.id));
-          const catalogIds = catalogProducts.map((row) => row.id);
-          const allIds = [...new Set([...sectionIds, ...catalogIds])];
-          const [traitsForProducts, priceMap, nextCashbackBps] = await Promise.all([
-            getProductTraitsForIds(allIds).catch(() => []),
-            getCheapestPriceCentsByProductIds(allIds, openPricesGeo).catch(
-              () => new Map<string, number>(),
-            ),
-            getEffectiveGroceryCashbackBps(isGuest).catch(() => null),
-          ]);
-          if (cancelled) return;
-          const netPriceMap = applyCashbackToPriceMap(priceMap, nextCashbackBps);
-          setCashbackBps(nextCashbackBps);
-          setShelfPrices(withStripPrices(priceMap, nextCashbackBps));
-
-          const traitsByProduct = indexTraitsByProduct(traitsForProducts);
-          const filterOpts = {
-            sort,
-            stapleIds,
-            onSaleOnly,
-            promotionProductIds,
-            priceCentsByProduct: netPriceMap,
-          };
-          const nextSections = grouped
-            .map((section) => ({
-              category: section.category,
-              products: applyFoodFilters(
-                section.products,
-                sessionRules,
-                traitsByProduct,
-                filterOpts,
-              ),
-            }))
-            .filter((section) => section.products.length > 0);
-          const nextProducts = applyFoodFilters(
-            catalogProducts,
-            sessionRules,
-            traitsByProduct,
-            filterOpts,
-          );
-          // Keep what is already on screen (cached or previous) if the network returned nothing.
-          if (nextSections.length > 0 || nextProducts.length > 0 || sessionRules.length > 0) {
-            setCategorySections(nextSections);
-            setProducts(nextProducts);
-          }
-          // Cache what the user actually sees on the default home (their saved prefs applied).
-          if (nextSections.length > 0 && sort === 'default' && !onSaleOnly) {
-            setJson('shopHomeCache', {
-              categories: cats ?? initialCache?.categories ?? [],
-              sections: nextSections,
-              products: nextProducts,
-              trending: mergedTrending,
-              prices: [...withStripPrices(priceMap, nextCashbackBps)],
-            } satisfies ShopHomeCache);
-          }
-          if (!cancelled) setCheckingStores(false);
-        } else {
-          setCategorySections([]);
-
-          let rawProducts: Product[];
-          if (favoritesOnly) {
-            const ids = favoriteIdsKey ? favoriteIdsKey.split(',') : [];
-            rawProducts = ids.length > 0 ? await getProductsByIds(ids) : [];
-            if (selectedCategoryId) {
-              rawProducts = rawProducts.filter((row) => row.category_id === selectedCategoryId);
-            }
-          } else {
-            rawProducts = await listActiveProducts({
-              categoryId: selectedCategoryId,
-              limit: 60,
-            });
-          }
-          if (cancelled) return;
-
-          const [traitsForProducts, priceMap, nextCashbackBps] = await Promise.all([
-            getProductTraitsForIds(rawProducts.map((row) => row.id)),
-            getCheapestPriceCentsByProductIds(rawProducts.map((row) => row.id), openPricesGeo),
-            getEffectiveGroceryCashbackBps(isGuest),
-          ]);
-          if (cancelled) return;
-          const netPriceMap = applyCashbackToPriceMap(priceMap, nextCashbackBps);
-          setCashbackBps(nextCashbackBps);
-          setShelfPrices(withStripPrices(priceMap, nextCashbackBps));
-
-          setProducts(
-            applyFoodFilters(rawProducts, sessionRules, indexTraitsByProduct(traitsForProducts), {
-              sort,
-              stapleIds,
-              onSaleOnly,
-              promotionProductIds,
-              priceCentsByProduct: netPriceMap,
-            }),
-          );
-          if (!cancelled) setCheckingStores(false);
-        }
-
-        if (activeTarget) {
-          await refreshQtyMap(activeTarget.list.id);
-        }
+        setStripPrices(stripPriceMap);
       } catch (err) {
-        if (!cancelled) {
-          setCheckingStores(false);
-          // Cached products stay visible; only surface the error when there is nothing to show.
-          if (!initialCache) showErrorToast(err, 'Could not update products.');
-        }
-      } finally {
-        if (!cancelled) setProductsLoading(false);
+        if (!cancelled && !initialCache) showErrorToast(err, 'Could not update products.');
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [
-    activeTarget,
-    favoriteIdsKey,
-    favoritesOnly,
-    initialCache,
-    isGuest,
-    onSaleOnly,
-    refreshQtyMap,
-    selectedCategoryId,
-    selectedStoreKey,
-    sessionRules,
-    shellReady,
-    sort,
-  ]);
+  }, [activeGroupId, dataNonce, getOpenPricesGeo, initialCache, isGuest, shellReady]);
+
+  // What the grid is showing. Category / favorites / store changes only swap this key; raw rows
+  // are cached per key so going back (or re-opening an aisle) is instant.
+  const scope = useMemo<ShopScope>(() => {
+    const favIds = favoriteIdsKey ? favoriteIdsKey.split(',') : [];
+    const base = {
+      categoryId: selectedCategoryId,
+      favorites: favoritesOnly,
+      favoriteIds: favIds,
+      storeIds: selectedStoreKey ? selectedStoreKey.split(',') : [],
+    };
+    if (selectedStoreKey) {
+      return {
+        ...base,
+        kind: 'stores',
+        key: favoritesOnly
+          ? `stores:${selectedStoreKey}:fav`
+          : `stores:${selectedStoreKey}:${selectedCategoryId ?? ''}`,
+      };
+    }
+    if (favoritesOnly) return { ...base, kind: 'favorites', key: 'fav' };
+    if (selectedCategoryId) return { ...base, kind: 'aisle', key: `aisle:${selectedCategoryId}` };
+    return { ...base, kind: 'home', key: HOME_SCOPE_KEY };
+  }, [favoriteIdsKey, favoritesOnly, selectedCategoryId, selectedStoreKey]);
+
+  useEffect(() => {
+    if (!shellReady) return;
+    const existing = scopeCacheRef.current.get(scope.key);
+    if (existing && isScopeFresh(existing, scope, dataNonce)) return;
+    const token = `${dataNonce}|${scope.key}|${scope.favoriteIds.join(',')}`;
+    if (inFlightRef.current.has(token)) return;
+    inFlightRef.current.add(token);
+
+    // Results are cached even if the user navigates away before they land.
+    void (async () => {
+      try {
+        const geo = await getOpenPricesGeo();
+        const fetched = await fetchShopScope(scope, geo);
+        const prev = scopeCacheRef.current.get(scope.key);
+        const emptyHome =
+          scope.kind === 'home' &&
+          fetched.products.length === 0 &&
+          (fetched.sections?.length ?? 0) === 0;
+        // Keep what is already on screen (cached or previous) if the network returned nothing.
+        if (emptyHome && prev) {
+          putScope(scope.key, { ...prev, nonce: dataNonce });
+        } else {
+          putScope(scope.key, { ...fetched, nonce: dataNonce });
+        }
+      } catch (err) {
+        if (!scopeCacheRef.current.has(scope.key)) {
+          showErrorToast(err, 'Could not update products.');
+        }
+      } finally {
+        inFlightRef.current.delete(token);
+        setSettledTokens((prev) => new Set(prev).add(token));
+      }
+    })();
+  }, [dataNonce, getOpenPricesGeo, putScope, scope, shellReady]);
+
+  const homeData = scopeCache.get(HOME_SCOPE_KEY) ?? null;
+
+  const scopeData = useMemo((): ScopeData | null => {
+    const hit = scopeCache.get(scope.key);
+    if (hit) return hit;
+    // Aisle not loaded yet: show what home already has for it while the full aisle loads.
+    if (scope.kind === 'aisle' && homeData) {
+      const seen = new Set<string>();
+      const rows: Product[] = [];
+      const sectionRows =
+        homeData.sections?.find((section) => section.category.id === scope.categoryId)
+          ?.products ?? [];
+      for (const row of [...sectionRows, ...homeData.products]) {
+        if (row.category_id !== scope.categoryId || seen.has(row.id)) continue;
+        seen.add(row.id);
+        rows.push(row);
+      }
+      return { ...homeData, products: rows, sections: null, nonce: -1 };
+    }
+    return null;
+  }, [homeData, scope, scopeCache]);
+
+  const scopeToken = `${dataNonce}|${scope.key}|${scope.favoriteIds.join(',')}`;
+  const productsLoading =
+    !settledTokens.has(scopeToken) &&
+    !(scopeData && isScopeFresh(scopeData, scope, dataNonce)) &&
+    (scopeData?.products.length ?? 0) === 0;
+
+  const shelfPrices = useMemo(
+    () =>
+      applyCashbackToPriceMap(
+        new Map([
+          ...stripPrices,
+          ...(homeData?.priceMap ?? []),
+          ...(scopeData?.priceMap ?? []),
+        ]),
+        cashbackBps,
+      ),
+    [cashbackBps, homeData, scopeData, stripPrices],
+  );
+
+  const traitsByProduct = useMemo(
+    () => indexTraitsByProduct(scopeData?.traits ?? []),
+    [scopeData],
+  );
+
+  const filterOptions = useMemo(
+    () => ({
+      sort,
+      stapleIds: new Set(staples.map((row) => row.id)),
+      onSaleOnly,
+      promotionProductIds: new Set(promotions.keys()),
+      priceCentsByProduct: shelfPrices,
+    }),
+    [onSaleOnly, promotions, shelfPrices, sort, staples],
+  );
+
+  // Food rules, sort and on-sale are applied on-device — no refetch when they change.
+  const products = useMemo(() => {
+    if (!scopeData) return [];
+    let rows = scopeData.products;
+    if (scope.favorites) {
+      const ids = new Set(scope.favoriteIds);
+      rows = rows.filter(
+        (row) =>
+          ids.has(row.id) && (!scope.categoryId || row.category_id === scope.categoryId),
+      );
+    }
+    return applyFoodFilters(rows, sessionRules, traitsByProduct, filterOptions);
+  }, [filterOptions, scope, scopeData, sessionRules, traitsByProduct]);
+
+  const categorySections = useMemo((): CategoryProductSection[] => {
+    if (scope.kind !== 'home' || !scopeData?.sections) return [];
+    return scopeData.sections
+      .map((section) => ({
+        category: section.category,
+        products: applyFoodFilters(section.products, sessionRules, traitsByProduct, filterOptions),
+      }))
+      .filter((section) => section.products.length > 0);
+  }, [filterOptions, scope.kind, scopeData, sessionRules, traitsByProduct]);
+
+  // Persist the raw home catalog so the next launch paints instantly.
+  useEffect(() => {
+    if (!homeData || homeData.fromDisk || !homeData.sections?.length) return;
+    setJson('shopHomeCache', {
+      v: SHOP_HOME_CACHE_VERSION,
+      categories,
+      sections: homeData.sections,
+      products: homeData.products,
+      traits: homeData.traits,
+      prices: [...homeData.priceMap],
+      stripPrices: [...stripPrices],
+      trending,
+    } satisfies ShopHomeCache);
+  }, [categories, homeData, stripPrices, trending]);
+
+  const refreshShop = useCallback(() => {
+    geoPromiseRef.current = null;
+    setDataNonce((n) => n + 1);
+    void loadShell(true);
+  }, [loadShell]);
 
   const hapticSuccess = async () => {
     try {
@@ -724,30 +842,37 @@ export default function ShopScreen() {
           )
         : getCheapestPriceCentsByProductIds(
             rawProducts.map((row) => row.id),
-            openPricesGeoRef.current,
+            await getOpenPricesGeo(),
           ));
       if (hasStoreFilter) {
         rawProducts = rawProducts.filter((row) => priceMap.has(row.id));
       }
-      const [traitsForProducts, cashbackBps] = await Promise.all([
-        getProductTraitsForIds(rawProducts.map((row) => row.id)),
-        getEffectiveGroceryCashbackBps(isGuest),
-      ]);
-      const netPriceMap = applyCashbackToPriceMap(priceMap, cashbackBps);
-      setShelfPrices((prev) => new Map([...prev, ...netPriceMap]));
+      const traitsForProducts = await getProductTraitsForIds(rawProducts.map((row) => row.id));
       const filtered = applyFoodFilters(
         rawProducts,
         sessionRules,
         indexTraitsByProduct(traitsForProducts),
         {
-          sort,
-          stapleIds: new Set(staples.map((row) => row.id)),
-          onSaleOnly,
-          promotionProductIds: new Set(promotions.keys()),
-          priceCentsByProduct: netPriceMap,
+          ...filterOptions,
+          priceCentsByProduct: applyCashbackToPriceMap(priceMap, cashbackBps),
         },
       );
-      setProducts(filtered);
+
+      // Fold results into the current view; filters/sort re-apply on render.
+      const base: ScopeData = scopeCacheRef.current.get(scope.key) ??
+        scopeData ?? { products: [], sections: null, priceMap: new Map(), traits: [], nonce: -1 };
+      const seen = new Set<string>();
+      const mergedProducts = [...rawProducts, ...base.products].filter((row) => {
+        if (seen.has(row.id)) return false;
+        seen.add(row.id);
+        return true;
+      });
+      putScope(scope.key, {
+        ...base,
+        products: mergedProducts,
+        priceMap: new Map([...base.priceMap, ...priceMap]),
+        traits: [...base.traits, ...traitsForProducts],
+      });
       searchResultToast(
         filtered.filter((row) => productMatchesSearch(row, term)).length,
         term,
@@ -1243,7 +1368,7 @@ export default function ShopScreen() {
           refreshControl={
             <RefreshControl
               refreshing={isRefreshing}
-              onRefresh={() => void loadShell(true)}
+              onRefresh={refreshShop}
               tintColor={theme.text}
             />
           }
@@ -1588,7 +1713,7 @@ export default function ShopScreen() {
                       hitSlop={8}
                       accessibilityRole="button"
                       accessibilityLabel={`Open ${section.category.name} aisle`}>
-                      <CategoryIcon name={section.category.name} size={16} color={theme.text} />
+                      <CategoryIcon name={section.category.name} size={20} color={theme.text} />
                       <ThemedText type="smallBold" style={styles.aisleTitle}>
                         {section.category.name}
                       </ThemedText>

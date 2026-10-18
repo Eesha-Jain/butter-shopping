@@ -585,6 +585,8 @@ export type RecipeIngredient = {
   recipe_id: string;
   raw_text: string;
   category_id: string | null;
+  /** Catalog product to order. Null when the name did not match. */
+  product_id: string | null;
   amount_base: number | null;
   created_at: string;
   updated_at: string;

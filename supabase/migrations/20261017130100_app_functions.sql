@@ -310,7 +310,7 @@ begin
   end if;
 
   insert into public.groups (name, kind, invite_code, created_by)
-  values (btrim(p_name), p_kind, encode(gen_random_bytes(6), 'hex'), auth.uid())
+  values (btrim(p_name), p_kind, substr(replace(gen_random_uuid()::text, '-', ''), 1, 12), auth.uid())
   returning id into v_group_id;
 
   insert into public.group_members (group_id, user_id, role)

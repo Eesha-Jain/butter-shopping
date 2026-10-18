@@ -163,23 +163,31 @@ async function grokParseRecipe(input: {
     });
   }
   const payload = (await completion.json()) as {
-    choices?: { message?: { tool_calls?: { function?: { name?: string; arguments?: string } }[] } }[];
+    choices?: {
+      message?: {
+        content?: string | null;
+        tool_calls?: { function?: { name?: string; arguments?: string } }[];
+      };
+    }[];
   };
-  const call = payload.choices?.[0]?.message?.tool_calls?.find(
-    (t) => t.function?.name === 'set_ingredients',
-  );
-  let parsed: ParsedRecipe = { title: 'Imported recipe', ingredients: [] };
-  try {
-    const args = JSON.parse(call?.function?.arguments ?? '{}') as {
-      title?: string;
-      ingredients?: {
-        rawText?: string;
-        canonicalName?: string;
-        amountBase?: number;
-        unit?: string;
-      }[];
-    };
-    parsed = {
+  const message = payload.choices?.[0]?.message;
+  const call = message?.tool_calls?.find((t) => t.function?.name === 'set_ingredients');
+  if (!call?.function?.arguments) {
+    console.warn(
+      '[recipe-import] Missing set_ingredients tool_calls; trying message.content fallback',
+    );
+  }
+
+  function normalizeArgs(args: {
+    title?: string;
+    ingredients?: {
+      rawText?: string;
+      canonicalName?: string;
+      amountBase?: number;
+      unit?: string;
+    }[];
+  }): ParsedRecipe {
+    return {
       title: (args.title ?? 'Imported recipe').trim() || 'Imported recipe',
       ingredients: (args.ingredients ?? [])
         .map((row) => ({
@@ -190,10 +198,56 @@ async function grokParseRecipe(input: {
         }))
         .filter((row) => row.rawText && row.canonicalName),
     };
+  }
+
+  let parsed: ParsedRecipe = { title: 'Imported recipe', ingredients: [] };
+  try {
+    if (call?.function?.arguments) {
+      parsed = normalizeArgs(JSON.parse(call.function.arguments) as Parameters<typeof normalizeArgs>[0]);
+    }
   } catch {
     parsed = { title: 'Imported recipe', ingredients: [] };
   }
+
+  // Some Grok responses put JSON in content instead of tool_calls.
+  if (parsed.ingredients.length === 0 && typeof message?.content === 'string') {
+    const raw = message.content.trim();
+    const jsonSlice = raw.startsWith('{')
+      ? raw
+      : (raw.match(/\{[\s\S]*"ingredients"[\s\S]*\}/)?.[0] ?? '');
+    if (jsonSlice) {
+      try {
+        const fromContent = normalizeArgs(JSON.parse(jsonSlice) as Parameters<typeof normalizeArgs>[0]);
+        if (fromContent.ingredients.length > 0) parsed = fromContent;
+      } catch {
+        // keep empty / tool-call parse
+      }
+    }
+  }
+
   return parsed;
+}
+
+/** Prefer an exact product name, otherwise the shortest name that contains the term. */
+async function resolveProductId(
+  supabase: ReturnType<typeof userClient>,
+  canonicalName: string,
+): Promise<string | null> {
+  const term = canonicalName.replace(/[%_,]/g, '').trim();
+  if (term.length < 2) return null;
+  const rows = await supabase
+    .from('products')
+    .select('id, name')
+    .eq('is_active', true)
+    .ilike('name', `%${term}%`)
+    .limit(20);
+  const matches = rows.data ?? [];
+  if (matches.length === 0) return null;
+  const needle = term.toLowerCase();
+  const exact = matches.find((row) => row.name.trim().toLowerCase() === needle);
+  if (exact) return exact.id;
+  const shortest = [...matches].sort((a, b) => a.name.length - b.name.length)[0];
+  return shortest?.id ?? null;
 }
 
 async function resolveCategoryId(
@@ -245,7 +299,7 @@ async function persistRecipe(input: {
     if (existing.data?.id) {
       const rows = await input.supabase
         .from('recipe_ingredients')
-        .select('id, raw_text, category_id, amount_base')
+        .select('id, raw_text, category_id, product_id, amount_base')
         .eq('recipe_id', existing.data.id);
       return {
         recipeId: existing.data.id,
@@ -290,12 +344,14 @@ async function persistRecipe(input: {
 
   for (const ingredient of input.ingredients) {
     const categoryId = await resolveCategoryId(input.supabase, ingredient.canonicalName);
+    const productId = await resolveProductId(input.supabase, ingredient.canonicalName);
     const inserted = await input.supabase
       .from('recipe_ingredients')
       .insert({
         recipe_id: created.data.id,
         raw_text: ingredient.rawText.slice(0, 500),
         category_id: categoryId,
+        product_id: productId,
         amount_base: ingredient.amountBase,
       })
       .select('id, raw_text, category_id, amount_base')
