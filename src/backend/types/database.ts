@@ -128,6 +128,14 @@ export type Database = {
         Returns: string;
       };
       add_due_habit_items: { Args: Record<string, never>; Returns: number };
+      recommend_discount_date: {
+        Args: {
+          p_latitude?: number | null;
+          p_longitude?: number | null;
+          p_radius_km?: number | null;
+        };
+        Returns: string | null;
+      };
       list_reportable_stores: { Args: Record<string, never>; Returns: ReportableStore[] };
       register_reportable_store: {
         Args: {
@@ -188,6 +196,7 @@ export type Store = AddressFields & {
   name: string;
   chain_id: string | null;
   college_id: string | null;
+  accepts_snap: boolean;
   source: string;
   source_ref: string;
   created_at: string;
@@ -271,6 +280,8 @@ export type Promotion = {
   discount_value: number;
   requires_group: string | null;
   weekdays: number[] | null;
+  month_days: number[] | null;
+  month_ordinals: number[] | null;
   starts_at: string;
   ends_at: string;
   created_at: string;

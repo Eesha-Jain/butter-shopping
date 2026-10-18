@@ -1,18 +1,29 @@
 import * as Device from 'expo-device';
-import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
-import { supabase } from './client';
 import { fail } from '../errors';
+import { supabase } from './client';
 import { unwrapVoid } from './query';
+
+/** Expo Go does not include the push native module. A missing module returns null. */
+async function loadNotifications() {
+  try {
+    return await import('expo-notifications');
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Registers this device's Expo push token. The token is only an address.
  * The database does not store notification history. Call this after the user
  * grants notification permission and again on later launches because tokens rotate.
+ * Returns null in Expo Go, where remote push is unavailable.
  */
 export async function registerPushToken(): Promise<string | null> {
   if (!Device.isDevice) return null;
+  const Notifications = await loadNotifications();
+  if (!Notifications) return null;
   const permission = await Notifications.getPermissionsAsync();
   const granted =
     permission.granted ||

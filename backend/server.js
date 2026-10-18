@@ -168,44 +168,83 @@ app.get("/api/safeway/products", async (req, res) => {
   }
 });
 
+function asOffer(product, storeName) {
+  return {
+    store: storeName,
+    name: product.name,
+    brand: product.brand ?? null,
+    priceCents: product.priceCents ?? null,
+    source: product.source,
+    productId: product.productId ?? null,
+    upc: product.upc ?? null,
+  };
+}
+
+function lowestOffer(offers) {
+  const priced = offers.filter((offer) => Number.isInteger(offer.priceCents));
+  if (priced.length === 0) return null;
+  return priced.reduce((best, offer) => (offer.priceCents < best.priceCents ? offer : best));
+}
+
 app.get("/api/prices", async (req, res) => {
-  const term = String(req.query.term ?? "");
-  let qfc = [];
-  let safeway = [];
+  const offers = [];
   let qfcError = null;
   let safewayError = null;
-  let store = null;
+
+  let query = "";
+  try {
+    query = assertTerm(req.query.term);
+  } catch (error) {
+    res.status(502).json({
+      offers: [],
+      lowest: null,
+      qfcError: error.message,
+      safewayError: error.message,
+      persisted: canPersist(),
+    });
+    return;
+  }
+
+  if (req.query.zip) {
+    try {
+      const stores = await findSafewayStores(req.query.zip);
+      const safewayStore = stores[0];
+      if (!safewayStore) throw new Error("No Safeway store was found for that ZIP code.");
+      const products = await searchSafewayProducts(query, safewayStore.storeId);
+      await rememberAll(products, { ...safewayStore, chain: "Safeway" }, "scrape", "safeway");
+      for (const product of products) offers.push(asOffer(product, "Safeway"));
+    } catch (error) {
+      safewayError = error.message;
+    }
+  } else {
+    safewayError = "A ZIP code is required to search Safeway.";
+  }
 
   try {
-    const query = assertTerm(term);
     let locationId = req.query.locationId;
+    let store = null;
     if (!locationId && req.query.zip) {
       const stores = await findQfcStores(req.query.zip);
       store = stores[0] ?? null;
       locationId = store?.locationId;
     }
-    if (locationId) {
-      qfc = await searchQfcProducts(query, locationId);
-      if (store) await rememberAll(qfc, { ...store, chain: "QFC" }, "api", "kroger");
-    }
+    if (!locationId) throw new Error("No QFC store was found for that ZIP code.");
+    const products = await searchQfcProducts(query, locationId);
+    if (store) await rememberAll(products, { ...store, chain: "QFC" }, "api", "kroger");
+    for (const product of products) offers.push(asOffer(product, "QFC"));
   } catch (error) {
     qfcError = error.message;
   }
 
-  if (qfc.length === 0 && req.query.zip) {
-    try {
-      const stores = await findSafewayStores(req.query.zip);
-      const safewayStore = stores[0];
-      if (!safewayStore) throw new Error("No Safeway store was found for that ZIP code.");
-      safeway = await searchSafewayProducts(assertTerm(term), safewayStore.storeId);
-      await rememberAll(safeway, { ...safewayStore, chain: "Safeway" }, "scrape", "safeway");
-    } catch (error) {
-      safewayError = error.message;
-    }
-  }
-
-  const status = qfc.length > 0 || safeway.length > 0 || (!qfcError && !safewayError) ? 200 : 502;
-  res.status(status).json({ qfc, safeway, store, qfcError, safewayError, persisted: canPersist() });
+  const lowest = lowestOffer(offers);
+  const status = offers.length > 0 || (!qfcError && !safewayError) ? 200 : 502;
+  res.status(status).json({
+    offers,
+    lowest,
+    qfcError,
+    safewayError,
+    persisted: canPersist(),
+  });
 });
 
 app.listen(3000, () => {

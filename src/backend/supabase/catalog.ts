@@ -130,6 +130,63 @@ export async function registerReportableStore(input: {
   );
 }
 
+export type ReportedOffer = {
+  store: string;
+  name: string;
+  brand: string | null;
+  priceCents: number;
+  source: 'user_report';
+};
+
+/**
+ * Saved shelf prices at Trader Joe's and campus stores whose product name matches.
+ * Returns an empty list when nobody is signed in.
+ */
+export async function listReportedOffers(term: string): Promise<ReportedOffer[]> {
+  const user = await supabase.auth.getUser();
+  if (!user.data.user) return [];
+  const products = await searchProducts(term);
+  if (products.length === 0) return [];
+  const stores = await listReportableStores();
+  const storeNames = new Map(stores.map((store) => [store.id, store.name]));
+  const listings = unwrap(
+    await supabase
+      .from('store_products')
+      .select('id, store_id, product_id')
+      .in(
+        'product_id',
+        products.map((product) => product.id),
+      ),
+  );
+  const relevant = listings.filter((listing) => storeNames.has(listing.store_id));
+  if (relevant.length === 0) return [];
+  const prices = unwrap(
+    await supabase
+      .from('current_prices')
+      .select('store_product_id, price_cents')
+      .in(
+        'store_product_id',
+        relevant.map((listing) => listing.id),
+      ),
+  );
+  const priceByListing = new Map(prices.map((price) => [price.store_product_id, price.price_cents]));
+  const productById = new Map(products.map((product) => [product.id, product]));
+  return relevant.flatMap((listing) => {
+    const priceCents = priceByListing.get(listing.id);
+    const product = productById.get(listing.product_id);
+    if (priceCents == null || !product) return [];
+    return [
+      {
+        store: storeNames.get(listing.store_id) ?? 'Reported store',
+        name: product.name,
+        brand: product.brand,
+        priceCents,
+        source: 'user_report' as const,
+      },
+    ];
+  });
+}
+
 /**
  * Appends a student-reported shelf price in cents at a Trader Joe's or campus store.
  * Creates the product and the store listing when they do not exist yet.

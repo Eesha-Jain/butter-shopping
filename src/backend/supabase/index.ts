@@ -54,6 +54,7 @@ export {
   getCurrentPrice,
   getStore,
   listCurrentPromotions,
+  listReportedOffers,
   listReportableStores,
   nearbyStores,
   productWarnings,
@@ -65,8 +66,10 @@ export {
 } from './catalog';
 export {
   getWeeklyBudgetCents,
+  planLowestTrip,
   priceOptions,
   recommendShoppingPlan,
+  suggestDiscountDate,
   suggestGroceryDate,
 } from './planning';
 export {
