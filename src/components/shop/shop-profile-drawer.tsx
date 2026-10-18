@@ -12,6 +12,7 @@ import {
   Platform,
   Pressable,
   StyleSheet,
+  Switch,
   View,
   useWindowDimensions,
 } from 'react-native';
@@ -20,8 +21,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   clearLocalData,
   getEffectiveGroceryCashbackBps,
+  isAiTextReplyAudioEnabled,
   publicImageUrl,
   removeMyAvatar,
+  setAiTextReplyAudioEnabled,
   setGroceryCashbackBps,
   showErrorToast,
   showSuccessToast,
@@ -66,6 +69,7 @@ export function ShopProfileDrawer({
   const panelWidth = Math.min(320, Math.round(width * 0.82));
   const [uploading, setUploading] = useState(false);
   const [cashbackBps, setCashbackBps] = useState<number | null>(null);
+  const [aiTextAudio, setAiTextAudio] = useState(true);
   const [closing, setClosing] = useState(false);
   const [translateX] = useState(() => new Animated.Value(-panelWidth));
   const [backdropOpacity] = useState(() => new Animated.Value(0));
@@ -95,6 +99,7 @@ export function ShopProfileDrawer({
   useEffect(() => {
     if (!visible) return;
     void getEffectiveGroceryCashbackBps(isGuest).then(setCashbackBps).catch(() => setCashbackBps(null));
+    setAiTextAudio(isAiTextReplyAudioEnabled());
   }, [visible, isGuest]);
 
   const requestClose = (afterClose?: () => void) => {
@@ -396,6 +401,27 @@ export function ShopProfileDrawer({
             </View>
           </View>
 
+          <View style={[styles.card, { backgroundColor: theme.backgroundElement, gap: Spacing.two }]}>
+            <View style={styles.settingRow}>
+              <View style={styles.settingCopy}>
+                <ThemedText type="smallBold">AI text reply sounds</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  When you type to Butter AI, play a spoken reply. Push-to-talk always speaks.
+                </ThemedText>
+              </View>
+              <Switch
+                value={aiTextAudio}
+                onValueChange={(next) => {
+                  setAiTextAudio(next);
+                  setAiTextReplyAudioEnabled(next);
+                }}
+                trackColor={{ false: theme.border, true: theme.primary }}
+                thumbColor={theme.background}
+                accessibilityLabel="AI text reply sounds"
+              />
+            </View>
+          </View>
+
           {isGuest ? (
             <View style={styles.authActions}>
               <ButterButton
@@ -458,6 +484,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.two,
+  },
+  settingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  settingCopy: {
+    flex: 1,
+    gap: Spacing.one,
   },
   avatarBlock: {
     alignItems: 'center',

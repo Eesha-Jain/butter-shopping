@@ -80,3 +80,16 @@ export function setLocalGroceryCashbackBps(bps: number | null): void {
   }
   setItem('groceryCashbackBps', String(bps));
 }
+
+/**
+ * Whether typed Butter AI replies should play TTS / speech.
+ * Push-to-talk always speaks; this only gates the text-input path.
+ * Defaults to on when unset.
+ */
+export function isAiTextReplyAudioEnabled(): boolean {
+  return getItem('aiTextReplyAudio') !== '0';
+}
+
+export function setAiTextReplyAudioEnabled(enabled: boolean): void {
+  setItem('aiTextReplyAudio', enabled ? '1' : '0');
+}

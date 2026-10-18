@@ -142,6 +142,7 @@ export default function RecipeImportScreen() {
         contentType = result.assets[0].mimeType ?? 'image/jpeg';
       }
 
+      if (!uri) return;
       setBusy(true);
       const imageBase64 = await FileSystem.readAsStringAsync(uri, {
         encoding: FileSystem.EncodingType.Base64,

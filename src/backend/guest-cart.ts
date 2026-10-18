@@ -99,13 +99,6 @@ export async function mergeGuestCartIntoDefaultList(): Promise<number> {
         quantity: item.quantity,
       });
       merged += 1;
-    } else if (item.customName) {
-      await addListItem({
-        listId: list.id,
-        customName: item.customName,
-        quantity: item.quantity,
-      });
-      merged += 1;
     }
   }
   clearGuestCart();
