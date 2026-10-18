@@ -5,6 +5,8 @@
 
 const KEYS = {
   hasSignedIn: 'butter.hasSignedIn',
+  isGuest: 'butter.isGuest',
+  guestCart: 'butter.guestCart',
 } as const;
 
 export type StorageKey = keyof typeof KEYS;

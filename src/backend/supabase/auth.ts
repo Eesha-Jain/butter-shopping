@@ -4,7 +4,7 @@ import { Platform } from 'react-native';
 import type { Session, Subscription } from '@supabase/supabase-js';
 
 import { fail } from '../errors';
-import { markHasSignedIn } from '../preferences';
+import { clearGuest, markHasSignedIn } from '../preferences';
 import { supabase } from './client';
 import { unwrapVoid } from './query';
 
@@ -17,6 +17,7 @@ const redirectTo = makeRedirectUri({
 
 function noteSignedIn(): void {
   markHasSignedIn();
+  clearGuest();
 }
 
 function getAuthParams(url: string): { errorCode: string | null; params: Record<string, string> } {

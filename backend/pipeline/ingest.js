@@ -2,6 +2,7 @@
  * Validate → Match → write for shelf and promotion envelopes.
  */
 
+import { categoryForProductName } from "../category-map.js";
 import { promotionOffer, shelfOffer } from "./envelope.js";
 import { nullOnlyProductPatch, shouldAppendAutomatedPrice } from "./refreshPriority.js";
 
@@ -54,6 +55,15 @@ async function findProduct({ upc, productName, brand }) {
   const rows = await rest(`products?name=eq.${name}&select=id,brand&limit=20`);
   const brandValue = String(brand ?? "");
   return (rows ?? []).find((row) => String(row.brand ?? "") === brandValue)?.id ?? null;
+}
+
+async function categoryIdForProductName(productName) {
+  const categoryName = categoryForProductName(productName);
+  if (!categoryName) return null;
+  const rows = await rest(
+    `product_categories?name=eq.${encodeURIComponent(categoryName)}&parent_id=is.null&select=id&limit=1`,
+  );
+  return rows?.[0]?.id ?? null;
 }
 
 async function loadTrustedPrice(storeProductId) {
@@ -168,6 +178,7 @@ export async function ingestShelf(raw) {
 
   let productId = await findProduct(offer);
   if (!productId) {
+    const categoryId = await categoryIdForProductName(offer.productName);
     const created = await rest("products", {
       method: "POST",
       headers: { Prefer: "return=representation" },
@@ -175,6 +186,7 @@ export async function ingestShelf(raw) {
         name: offer.productName,
         brand: offer.brand,
         upc: offer.upc,
+        ...(categoryId ? { category_id: categoryId } : {}),
       }),
     });
     productId = created?.[0]?.id;

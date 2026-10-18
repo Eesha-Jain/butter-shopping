@@ -12,8 +12,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { useSession } from '@/auth/session';
 import { runAction, showSuccessToast, signIn, signInWithGoogle, signUp } from '@/backend';
-import { MaxContentWidth, Radius, Spacing } from '@/constants/theme';
+import { Fonts, MaxContentWidth, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 export type AuthMode = 'signUp' | 'logIn';
@@ -22,11 +23,9 @@ type AuthFormProps = {
   initialMode?: AuthMode;
 };
 
-const FONT_REGULAR = 'ComicNeue_400Regular';
-const FONT_BOLD = 'ComicNeue_700Bold';
-
 export function AuthForm({ initialMode = 'signUp' }: AuthFormProps) {
   const theme = useTheme();
+  const { continueAsGuest } = useSession();
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -243,6 +242,16 @@ export function AuthForm({ initialMode = 'signUp' }: AuthFormProps) {
                 {mode === 'signUp' ? 'Already have an account? Log in' : 'Need an account? Sign up'}
               </Text>
             </Pressable>
+
+            <Pressable
+              disabled={busy}
+              onPress={continueAsGuest}
+              hitSlop={8}
+              style={styles.linkWrap}>
+              <Text style={[styles.guestLink, { color: theme.textSecondary }]}>
+                Continue as guest
+              </Text>
+            </Pressable>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -279,7 +288,7 @@ const styles = StyleSheet.create({
     height: 88,
   },
   title: {
-    fontFamily: FONT_BOLD,
+    fontFamily: Fonts.sansBold,
     fontSize: 36,
     textAlign: 'center',
   },
@@ -290,11 +299,11 @@ const styles = StyleSheet.create({
     gap: Spacing.one,
   },
   label: {
-    fontFamily: FONT_REGULAR,
+    fontFamily: Fonts.sans,
     fontSize: 14,
   },
   input: {
-    fontFamily: FONT_REGULAR,
+    fontFamily: Fonts.sans,
     fontSize: 16,
     borderWidth: 2,
     borderRadius: Radius.input,
@@ -302,11 +311,11 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two + 4,
   },
   error: {
-    fontFamily: FONT_REGULAR,
+    fontFamily: Fonts.sans,
     fontSize: 13,
   },
   terms: {
-    fontFamily: FONT_REGULAR,
+    fontFamily: Fonts.sans,
     fontSize: 13,
     marginTop: Spacing.one,
   },
@@ -317,7 +326,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   buttonLabel: {
-    fontFamily: FONT_BOLD,
+    fontFamily: Fonts.sansBold,
     fontSize: 16,
   },
   dividerRow: {
@@ -330,7 +339,7 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
   },
   or: {
-    fontFamily: FONT_REGULAR,
+    fontFamily: Fonts.sans,
     fontSize: 13,
   },
   googleButton: {
@@ -347,7 +356,7 @@ const styles = StyleSheet.create({
     height: 20,
   },
   googleLabel: {
-    fontFamily: FONT_BOLD,
+    fontFamily: Fonts.sansBold,
     fontSize: 16,
   },
   linkWrap: {
@@ -355,8 +364,12 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.one,
   },
   link: {
-    fontFamily: FONT_REGULAR,
+    fontFamily: Fonts.sans,
     fontSize: 13,
     textDecorationLine: 'underline',
+  },
+  guestLink: {
+    fontFamily: Fonts.sans,
+    fontSize: 14,
   },
 });

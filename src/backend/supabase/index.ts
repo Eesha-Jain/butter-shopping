@@ -42,17 +42,35 @@ export {
 export {
   addListItem,
   addRecipeToList,
+  buildStandardList,
   createList,
+  getActiveListProductQtyMap,
+  getDefaultGroceryList,
+  getMyDefaultList,
   listGroupLists,
+  listListItems,
+  listMyListTargets,
   listResolvedItems,
   removeListItem,
   setListItemDone,
   updateListItem,
 } from './lists';
+export type { ActiveListTarget } from './lists';
 export {
+  ensureCatalogForTerm,
+  findOrIngestProductByUpc,
   findProductByUpc,
+  formatPromotionBadge,
+  getCheapestPriceCentsByProductIds,
   getCurrentPrice,
+  getProductPromotionMap,
+  getProductTraitsForIds,
+  getProductsByIds,
   getStore,
+  listActiveProducts,
+  listCampusPopularProducts,
+  listCategories,
+  listProductStoreOffers,
   listCurrentPromotions,
   listReportedOffers,
   listReportableStores,
@@ -64,7 +82,15 @@ export {
   searchCategories,
   searchProducts,
 } from './catalog';
-export { fetchNearbyShops, getUserCoords } from './locationService';
+export type { ProductStoreOffer } from './catalog';
+export {
+  applyFoodFilters,
+  groupTraitsForFilterUi,
+  indexTraitsByProduct,
+  rulesFromUserFoodRules,
+} from './foodFilters';
+export type { SessionFoodRule, ShopSort } from './foodFilters';
+export { fetchNearbyShops, getUserCoords, resolveShopZip } from './locationService';
 export {
   getWeeklyBudgetCents,
   planLowestTrip,
@@ -89,6 +115,7 @@ export {
   addDueHabitItems,
   listExpiringPurchases,
   listHabits,
+  listMyStapleProductIds,
   listPurchases,
   recordPurchase,
   saveHabit,

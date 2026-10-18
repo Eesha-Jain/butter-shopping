@@ -3,12 +3,15 @@ import {
   ComicNeue_700Bold,
   useFonts,
 } from '@expo-google-fonts/comic-neue';
+import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { requireOptionalNativeModule } from 'expo';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useMemo } from 'react';
 import { ImageBackground, StyleSheet, useColorScheme } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { GuestCartProvider } from '@/auth/guest-cart-context';
 import { SessionProvider, useSession } from '@/auth/session';
 import { Colors } from '@/constants/theme';
 
@@ -51,18 +54,24 @@ export default function RootLayout() {
   const navigationTheme = useMemo(() => transparentNavigationTheme[scheme], [scheme]);
 
   return (
-    <SessionProvider>
-      <ThemeProvider value={navigationTheme}>
-        <ImageBackground
-          source={require('@/assets/images/background.png')}
-          style={[styles.background, { backgroundColor: Colors[scheme].background }]}
-          imageStyle={styles.backgroundImage}
-          resizeMode="cover">
-          <SplashScreenController fontsReady={fontsLoaded || !!fontError} />
-          {fontsLoaded || fontError ? <RootNavigator /> : null}
-        </ImageBackground>
-      </ThemeProvider>
-    </SessionProvider>
+    <GestureHandlerRootView style={styles.background}>
+      <SessionProvider>
+        <GuestCartProvider>
+          <BottomSheetModalProvider>
+            <ThemeProvider value={navigationTheme}>
+              <ImageBackground
+                source={require('@/assets/images/background.png')}
+                style={[styles.background, { backgroundColor: Colors[scheme].background }]}
+                imageStyle={styles.backgroundImage}
+                resizeMode="cover">
+                <SplashScreenController fontsReady={fontsLoaded || !!fontError} />
+                {fontsLoaded || fontError ? <RootNavigator /> : null}
+              </ImageBackground>
+            </ThemeProvider>
+          </BottomSheetModalProvider>
+        </GuestCartProvider>
+      </SessionProvider>
+    </GestureHandlerRootView>
   );
 }
 
@@ -79,7 +88,7 @@ function SplashScreenController({ fontsReady }: { fontsReady: boolean }) {
 }
 
 function RootNavigator() {
-  const { session, isLoading } = useSession();
+  const { canUseApp, isLoading } = useSession();
 
   if (isLoading) {
     return null;
@@ -91,10 +100,10 @@ function RootNavigator() {
         headerShown: false,
         contentStyle: { backgroundColor: 'transparent' },
       }}>
-      <Stack.Protected guard={!!session}>
+      <Stack.Protected guard={canUseApp}>
         <Stack.Screen name="(app)" />
       </Stack.Protected>
-      <Stack.Protected guard={!session}>
+      <Stack.Protected guard={!canUseApp}>
         <Stack.Screen name="(auth)" />
       </Stack.Protected>
     </Stack>

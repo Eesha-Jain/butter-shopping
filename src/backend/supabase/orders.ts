@@ -30,6 +30,10 @@ export async function createTripFromList(input: {
   latitude?: number | null;
   longitude?: number | null;
 }): Promise<string> {
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth.user) {
+    fail('Sign up or log in to place an order.');
+  }
   const method = input.fulfillmentMethod ?? 'self_pickup';
   if (method === 'delivery' && !input.deliveryLocationId) {
     fail('Delivery needs one of your saved addresses.');

@@ -1,6 +1,14 @@
 import type { Group, GroupBalance, GroupKind, GroupMember } from '../types';
+import { fail } from '../errors';
 import { supabase } from './client';
 import { unwrap, unwrapOne, unwrapVoid } from './query';
+
+async function requireSignedIn(message: string): Promise<void> {
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data.user) {
+    fail(message);
+  }
+}
 
 /**
  * Groups the caller belongs to, including the personal group created at signup.
@@ -18,6 +26,7 @@ export async function createGroup(input: {
   name: string;
   kind: Extract<GroupKind, 'household' | 'event'>;
 }): Promise<string> {
+  await requireSignedIn('Sign up or log in to create a shared grocery party.');
   return unwrap(
     await supabase.rpc('create_group', { p_name: input.name, p_kind: input.kind }),
   );
@@ -28,6 +37,7 @@ export async function createGroup(input: {
  * are not copied from the other members.
  */
 export async function joinGroup(inviteCode: string): Promise<string> {
+  await requireSignedIn('Sign up or log in to join a shared grocery party.');
   return unwrap(await supabase.rpc('join_group', { p_invite_code: inviteCode }));
 }
 

@@ -70,6 +70,25 @@ function productLists(json) {
   ].find(Array.isArray) ?? [];
 }
 
+function pickSafewayImageUrl(product) {
+  const candidates = [
+    product.imageUrl,
+    product.imageURL,
+    product.image,
+    product.primaryImage,
+    product.thumbnail,
+    product.smallImageUrl,
+    product.mediumImageUrl,
+    Array.isArray(product.imageUrls) ? product.imageUrls[0] : null,
+    Array.isArray(product.images) ? product.images[0]?.url ?? product.images[0] : null,
+  ];
+  for (const value of candidates) {
+    const url = String(value ?? "").trim();
+    if (/^https?:\/\//i.test(url)) return url;
+  }
+  return null;
+}
+
 export function mapSafewayProduct(product) {
   const price =
     product.price?.regular ??
@@ -87,6 +106,7 @@ export function mapSafewayProduct(product) {
     priceCents: cents,
     regularPriceCents: cents,
     promoPriceCents: null,
+    imageUrl: pickSafewayImageUrl(product),
     store: "Safeway",
     source: "scrape",
     productUrl: product.productUrl ?? product.url ?? null,
