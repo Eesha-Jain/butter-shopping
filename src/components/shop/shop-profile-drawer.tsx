@@ -17,8 +17,10 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
+  getEffectiveGroceryCashbackBps,
   publicImageUrl,
   removeMyAvatar,
+  setGroceryCashbackBps,
   showErrorToast,
   showSuccessToast,
   uploadMyAvatar,
@@ -58,6 +60,7 @@ export function ShopProfileDrawer({
   const { width } = useWindowDimensions();
   const panelWidth = Math.min(320, Math.round(width * 0.82));
   const [uploading, setUploading] = useState(false);
+  const [cashbackBps, setCashbackBps] = useState<number | null>(null);
   const [closing, setClosing] = useState(false);
   const [translateX] = useState(() => new Animated.Value(-panelWidth));
   const [backdropOpacity] = useState(() => new Animated.Value(0));
@@ -83,6 +86,11 @@ export function ShopProfileDrawer({
       }),
     ]).start();
   }, [backdropOpacity, panelWidth, translateX]);
+
+  useEffect(() => {
+    if (!visible) return;
+    void getEffectiveGroceryCashbackBps(isGuest).then(setCashbackBps).catch(() => setCashbackBps(null));
+  }, [visible, isGuest]);
 
   const requestClose = (afterClose?: () => void) => {
     if (closing) return;
@@ -237,8 +245,16 @@ export function ShopProfileDrawer({
           ]}>
           <View style={styles.header}>
             <ThemedText type="subtitle">Profile</ThemedText>
-            <Pressable onPress={() => requestClose()}>
-              <ThemedText type="linkPrimary">Close</ThemedText>
+            <Pressable
+              onPress={() => requestClose()}
+              hitSlop={12}
+              accessibilityRole="button"
+              accessibilityLabel="Close">
+              <SymbolView
+                name={{ ios: 'xmark', android: 'close', web: 'close' }}
+                size={20}
+                tintColor={theme.text}
+              />
             </Pressable>
           </View>
 
@@ -291,6 +307,43 @@ export function ShopProfileDrawer({
             </ThemedText>
           </View>
 
+          <View style={[styles.card, { backgroundColor: theme.backgroundElement, gap: Spacing.two }]}>
+            <ThemedText type="smallBold">
+              Grocery cash back
+              {cashbackBps != null ? `: ${cashbackBps / 100}%` : ': off'}
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              Used with Visa offers when comparing stores. No card numbers stored.
+            </ThemedText>
+            <View style={styles.cashbackRow}>
+              {[100, 200, 300].map((bps) => (
+                <Pressable
+                  key={bps}
+                  onPress={() => {
+                    void (async () => {
+                      const next = cashbackBps === bps ? null : bps;
+                      setCashbackBps(next);
+                      try {
+                        await setGroceryCashbackBps(next, isGuest);
+                      } catch (err) {
+                        showErrorToast(err, 'Could not save cash back.');
+                      }
+                    })();
+                  }}
+                  style={[
+                    styles.cashbackChip,
+                    {
+                      borderColor: theme.border,
+                      backgroundColor:
+                        cashbackBps === bps ? theme.backgroundSelected : theme.background,
+                    },
+                  ]}>
+                  <ThemedText type="smallBold">{bps / 100}%</ThemedText>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+
           {isGuest ? (
             <Pressable
               onPress={() => requestClose(onSignIn)}
@@ -331,6 +384,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+  },
+  cashbackRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.two,
+  },
+  cashbackChip: {
+    borderWidth: 1,
+    borderRadius: Spacing.three,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
   },
   avatarBlock: {
     alignItems: 'center',

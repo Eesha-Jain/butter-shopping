@@ -78,17 +78,103 @@ export async function listCategories(input?: { limit?: number }): Promise<Produc
   return ordered.slice(0, limit);
 }
 
+/**
+ * Spreads browse results so one brand/name cluster (e.g. every pasta SKU)
+ * cannot dominate the first screen.
+ */
+function diversifyProducts(rows: Product[], limit: number): Product[] {
+  if (rows.length <= limit) return rows;
+
+  const groupKey = (product: Product) => {
+    const brand = product.brand?.trim().toLowerCase();
+    if (brand) return `b:${brand}`;
+    const token = product.name.trim().toLowerCase().split(/\s+/)[0] ?? product.id;
+    return `n:${token}`;
+  };
+
+  const buckets = new Map<string, Product[]>();
+  for (const row of rows) {
+    const key = groupKey(row);
+    const list = buckets.get(key) ?? [];
+    list.push(row);
+    buckets.set(key, list);
+  }
+
+  const queues = [...buckets.values()];
+  const picked: Product[] = [];
+  let progressed = true;
+  while (picked.length < limit && progressed) {
+    progressed = false;
+    for (const queue of queues) {
+      if (picked.length >= limit) break;
+      const next = queue.shift();
+      if (!next) continue;
+      picked.push(next);
+      progressed = true;
+    }
+  }
+  return picked;
+}
+
+const DEFAULT_EXCLUDE_CATEGORY_NAMES = ['Other'];
+
+function filterBrowseCategories(
+  categories: ProductCategory[],
+  excludeCategoryNames: string[] = DEFAULT_EXCLUDE_CATEGORY_NAMES,
+): ProductCategory[] {
+  const excluded = new Set(excludeCategoryNames.map((name) => name.toLowerCase()));
+  return categories.filter((row) => !excluded.has(row.name.toLowerCase()));
+}
+
+export type CategoryProductSection = {
+  category: ProductCategory;
+  products: Product[];
+};
+
+/**
+ * Food-first home sections: one product list per top-level category.
+ * Other (non-food) is excluded by default.
+ */
+export async function listProductsGroupedByCategory(input?: {
+  limitPerCategory?: number;
+  excludeCategoryNames?: string[];
+}): Promise<CategoryProductSection[]> {
+  const limitPerCategory = input?.limitPerCategory ?? 10;
+  const categories = filterBrowseCategories(
+    await listCategories({ limit: 20 }),
+    input?.excludeCategoryNames ?? DEFAULT_EXCLUDE_CATEGORY_NAMES,
+  );
+  if (categories.length === 0) return [];
+
+  const batches = await Promise.all(
+    categories.map(async (category) => {
+      const rows = unwrap(
+        await supabase
+          .from('products')
+          .select('*')
+          .eq('is_active', true)
+          .eq('category_id', category.id)
+          .order('created_at', { ascending: false })
+          .limit(Math.max(limitPerCategory * 3, 24)),
+      );
+      return {
+        category,
+        products: diversifyProducts(rows, limitPerCategory),
+      };
+    }),
+  );
+
+  return batches.filter((section) => section.products.length > 0);
+}
+
 /** Active catalog products for browse. Optional category filter (Produce includes children). */
 export async function listActiveProducts(input?: {
   limit?: number;
   categoryId?: string | null;
+  excludeCategoryNames?: string[];
 }): Promise<Product[]> {
-  let query = supabase
-    .from('products')
-    .select('*')
-    .eq('is_active', true)
-    .order('name')
-    .limit(input?.limit ?? 60);
+  const limit = input?.limit ?? 60;
+
   if (input?.categoryId) {
     const children = unwrap(
       await supabase
@@ -97,9 +183,61 @@ export async function listActiveProducts(input?: {
         .eq('parent_id', input.categoryId),
     );
     const ids = [input.categoryId, ...children.map((row) => row.id)];
-    query = query.in('category_id', ids);
+    const rows = unwrap(
+      await supabase
+        .from('products')
+        .select('*')
+        .eq('is_active', true)
+        .in('category_id', ids)
+        .order('name')
+        .limit(Math.max(limit * 4, 80)),
+    );
+    return diversifyProducts(rows, limit);
   }
-  return unwrap(await query);
+
+
+  // Home browse: pull from each food category (skip Other) so pasta/dairy cannot fill the grid.
+  const categories = filterBrowseCategories(
+    await listCategories({ limit: 12 }),
+    input?.excludeCategoryNames ?? DEFAULT_EXCLUDE_CATEGORY_NAMES,
+  );
+  if (categories.length === 0) {
+    const rows = unwrap(
+      await supabase.from('products').select('*').eq('is_active', true).order('name').limit(limit * 3),
+    );
+    return diversifyProducts(rows, limit);
+  }
+
+  const perCategoryFetch = Math.max(6, Math.ceil((limit * 2) / categories.length));
+  const batches = await Promise.all(
+    categories.map(async (category) =>
+      unwrap(
+        await supabase
+          .from('products')
+          .select('*')
+          .eq('is_active', true)
+          .eq('category_id', category.id)
+          .order('created_at', { ascending: false })
+          .limit(perCategoryFetch),
+      ),
+    ),
+  );
+
+  const queues = batches.map((batch) => [...batch]);
+  const interleaved: Product[] = [];
+  let progressed = true;
+  while (interleaved.length < limit * 2 && progressed) {
+    progressed = false;
+    for (const queue of queues) {
+      if (interleaved.length >= limit * 2) break;
+      const next = queue.shift();
+      if (!next) continue;
+      interleaved.push(next);
+      progressed = true;
+    }
+  }
+
+  return diversifyProducts(interleaved, limit);
 }
 
 /** Hydrates product rows by id. Order follows the input ids when possible. */
@@ -183,16 +321,23 @@ export function formatPromotionBadge(promo: Promotion): string {
 }
 
 /** Searches active products by name or brand. Inactive products are recalled or discontinued. */
-export async function searchProducts(query: string): Promise<Product[]> {
+export async function searchProducts(
+  query: string,
+  input?: { categoryId?: string | null; limit?: number },
+): Promise<Product[]> {
   const term = safeSearch(query);
-  return unwrap(
-    await supabase
-      .from('products')
-      .select('*')
-      .eq('is_active', true)
-      .or(`name.ilike.%${term}%,brand.ilike.%${term}%`)
-      .limit(30),
-  );
+  let request = supabase
+    .from('products')
+    .select('*')
+    .eq('is_active', true)
+    .or(`name.ilike.%${term}%,brand.ilike.%${term}%`)
+    .order('name')
+    .limit(input?.limit ?? 40);
+  if (input?.categoryId) {
+    request = request.eq('category_id', input.categoryId);
+  }
+  const rows = unwrap(await request);
+  return diversifyProducts(rows, input?.limit ?? 40);
 }
 
 /**

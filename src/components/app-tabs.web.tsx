@@ -25,9 +25,6 @@ export default function AppTabs() {
           <TabTrigger name="home" href={'/' as Href} asChild>
             <TabButton>Shop</TabButton>
           </TabTrigger>
-          <TabTrigger name="days" href={'/days' as Href} asChild>
-            <TabButton>Days</TabButton>
-          </TabTrigger>
           <TabTrigger name="agent" href={'/agent' as Href} asChild>
             <TabButton>AI</TabButton>
           </TabTrigger>

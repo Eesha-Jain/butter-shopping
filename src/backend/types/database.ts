@@ -60,6 +60,7 @@ export type Database = {
       recipe_ingredients: Table<RecipeIngredient>;
       sponsorships: Table<Sponsorship>;
       push_tokens: Table<PushToken>;
+      product_favorites: Table<ProductFavorite>;
     };
     Views: {
       current_prices: View<CurrentPrice>;
@@ -234,6 +235,12 @@ export type Product = {
   updated_at: string;
 };
 
+export type ProductFavorite = {
+  user_id: string;
+  product_id: string;
+  created_at: string;
+};
+
 export type StoreProduct = {
   id: string;
   store_id: string;
@@ -321,6 +328,10 @@ export type Profile = {
   preferred_days: number[] | null;
   max_stores_per_trip: number | null;
   transport_mode: 'walk' | 'bike' | 'drive' | 'transit' | 'rideshare' | null;
+  /** Grocery cashback in basis points (e.g. 300 = 3%). Never a card number. */
+  grocery_cashback_bps: number | null;
+  /** When Eat/Save/Shop onboarding was finished or skipped. */
+  onboarding_completed_at: string | null;
   created_at: string;
   updated_at: string;
 };

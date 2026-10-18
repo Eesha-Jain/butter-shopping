@@ -33,6 +33,7 @@ export type {
   PriceOption,
   Product,
   ProductCategory,
+  ProductFavorite,
   ProductTrait,
   Profile,
   Promotion,

@@ -88,11 +88,19 @@ function SplashScreenController({ fontsReady }: { fontsReady: boolean }) {
 }
 
 function RootNavigator() {
-  const { canUseApp, isLoading } = useSession();
+  const { canUseApp, isLoading, needsOnboardingFlow } = useSession();
 
   if (isLoading) {
     return null;
   }
+
+  // Wait for onboarding gate once the user can enter the app.
+  if (canUseApp && needsOnboardingFlow == null) {
+    return null;
+  }
+
+  const showOnboarding = canUseApp && needsOnboardingFlow === true;
+  const showApp = canUseApp && needsOnboardingFlow === false;
 
   return (
     <Stack
@@ -100,7 +108,10 @@ function RootNavigator() {
         headerShown: false,
         contentStyle: { backgroundColor: 'transparent' },
       }}>
-      <Stack.Protected guard={canUseApp}>
+      <Stack.Protected guard={showOnboarding}>
+        <Stack.Screen name="(onboarding)" />
+      </Stack.Protected>
+      <Stack.Protected guard={showApp}>
         <Stack.Screen name="(app)" />
       </Stack.Protected>
       <Stack.Protected guard={!canUseApp}>

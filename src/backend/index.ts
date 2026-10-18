@@ -10,11 +10,31 @@ export { AppError, fail, runAction } from './errors';
 export { showErrorToast, showSuccessToast, messageFromUnknown } from './toast';
 export {
   clearGuest,
+  getLocalGroceryCashbackBps,
+  hasCompletedOnboardingLocally,
   hasSignedInBefore,
   isGuest,
   markHasSignedIn,
   markIsGuest,
+  markOnboardingCompletedLocally,
+  setLocalGroceryCashbackBps,
 } from './preferences';
+export {
+  completeOnboarding,
+  getEffectiveGroceryCashbackBps,
+  mergeGuestCashbackIntoProfile,
+  needsOnboarding,
+  setGroceryCashbackBps,
+} from './cashback';
+export {
+  applyCashbackToPriceMap,
+  computeNetPrice,
+  pickBestVisaOffer,
+  visaOfferMatchesChain,
+} from './net-price';
+export type { NetPriceBreakdown, VisaMerchantOffer } from './net-price';
+export { fetchVisaMerchantOffers } from './visa-offers';
+export type { VisaOffersResponse } from './visa-offers';
 export {
   addGuestCartItem,
   clearGuestCart,
@@ -24,6 +44,13 @@ export {
   updateGuestCartQuantity,
   type GuestCartItem,
 } from './guest-cart';
+export {
+  clearGuestFavorites,
+  getGuestFavoriteIds,
+  isGuestFavorite,
+  mergeGuestFavoritesIntoAccount,
+  setGuestFavorite,
+} from './guest-favorites';
 export {
   getItem,
   getJson,
@@ -81,6 +108,7 @@ export {
   listActiveProducts,
   listCampusPopularProducts,
   listCategories,
+  listProductsGroupedByCategory,
   listProductStoreOffers,
   refreshProductStoreOffers,
   listCurrentPromotions,
@@ -92,6 +120,7 @@ export {
   listGroupMembers,
   listHabits,
   listMyDiscountEligibilities,
+  listMyFavoriteProductIds,
   listMyFoodRules,
   listMyGroups,
   listMyListTargets,
@@ -137,6 +166,7 @@ export {
   setDiscountEligibility,
   setListItemDone,
   setMyFoodRules,
+  setProductFavorite,
   signIn,
   signInWithGoogle,
   signOut,
@@ -153,6 +183,7 @@ export {
 
 export type {
   ActiveListTarget,
+  CategoryProductSection,
   ProductStoreOffer,
   RipenessResult,
   SearchCoords,
