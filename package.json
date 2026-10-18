@@ -66,7 +66,7 @@
     "typescript": "~6.0.3"
   },
   "scripts": {
-    "start": "expo start --go",
+    "start": "expo start --clear",
     "start:dev": "expo start --dev-client --host lan",
     "start:dev:tunnel": "expo start --dev-client --tunnel",
     "start:tunnel": "expo start --tunnel --go --clear",
