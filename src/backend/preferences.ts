@@ -5,7 +5,9 @@ const ALL_STORAGE_KEYS: StorageKey[] = [
   'isGuest',
   'guestCart',
   'guestFavorites',
+  'guestOnboarding',
   'onboardingCompleted',
+  'hasSeenWelcome',
   'groceryCashbackBps',
 ];
 
@@ -51,6 +53,15 @@ export function hasCompletedOnboardingLocally(): boolean {
 
 export function markOnboardingCompletedLocally(): void {
   setItem('onboardingCompleted', '1');
+}
+
+/** Whether this install has already shown the welcome screen. */
+export function hasSeenWelcome(): boolean {
+  return getItem('hasSeenWelcome') === '1';
+}
+
+export function markWelcomeSeen(): void {
+  setItem('hasSeenWelcome', '1');
 }
 
 /** Guest (or device) grocery cashback in basis points. */

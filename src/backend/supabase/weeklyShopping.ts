@@ -23,6 +23,7 @@ export type WeeklyBoardChip = {
   productId: string;
   name: string;
   brand: string | null;
+  imagePath: string | null;
 };
 
 export type WeeklyBoardColumn = {
@@ -152,10 +153,11 @@ function eligiblePromos(
 }
 
 function toChips(products: Product[]): WeeklyBoardChip[] {
-  return products.slice(0, 2).map((product) => ({
+  return products.slice(0, 4).map((product) => ({
     productId: product.id,
     name: product.name,
     brand: product.brand,
+    imagePath: product.image_path,
   }));
 }
 

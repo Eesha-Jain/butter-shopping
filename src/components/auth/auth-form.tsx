@@ -272,15 +272,18 @@ export function AuthForm({
           </Text>
         </Pressable>
 
-        <Pressable
-          disabled={busy}
-          onPress={() => void onGuest()}
-          hitSlop={8}
-          style={styles.linkWrap}>
-          <Text style={[styles.guestLink, { color: theme.textSecondary }]}>
-            Continue as guest
-          </Text>
-        </Pressable>
+        {/* Onboarding embeds AuthForm and already has Continue as guest in the top bar. */}
+        {!embedded ? (
+          <Pressable
+            disabled={busy}
+            onPress={() => void onGuest()}
+            hitSlop={8}
+            style={styles.linkWrap}>
+            <Text style={[styles.guestLink, { color: theme.textSecondary }]}>
+              Continue as guest
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
     </ScrollView>
   );

@@ -1,11 +1,12 @@
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
+import { SymbolView } from 'expo-symbols';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import type { Product } from '@/backend';
 import { publicImageUrl } from '@/backend';
 import { ThemedText } from '@/components/themed-text';
-import { Radius, Spacing } from '@/constants/theme';
+import { Fonts, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 type Props = {
@@ -22,6 +23,10 @@ type Props = {
   onDecrement: () => void;
   onToggleFavorite?: () => void;
 };
+
+function formatPrice(cents: number): string {
+  return `$${(cents / 100).toFixed(cents % 100 === 0 ? 0 : 2)}`;
+}
 
 export function ProductCard({
   product,
@@ -53,10 +58,15 @@ export function ProductCard({
           borderWidth: onList ? 2.5 : 2,
         },
       ]}>
-      <View style={[styles.imageWrap, compact && styles.imageWrapCompact]}>
+      <View
+        style={[
+          styles.imageWrap,
+          compact && styles.imageWrapCompact,
+          { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+        ]}>
         {saleBadge ? (
           <View style={[styles.badge, { backgroundColor: theme.primary, borderColor: theme.borderInk }]}>
-            <ThemedText type="smallBold" style={{ color: theme.primaryText }}>
+            <ThemedText type="smallBold" style={{ color: theme.primaryText, fontSize: 11 }}>
               {saleBadge}
             </ThemedText>
           </View>
@@ -66,38 +76,58 @@ export function ProductCard({
             onPress={onToggleFavorite}
             hitSlop={8}
             style={[styles.heartBtn, { backgroundColor: theme.background, borderColor: theme.borderInk }]}>
-            <ThemedText type="smallBold" style={{ color: favorited ? theme.error : theme.textSecondary }}>
-              {favorited ? '♥' : '♡'}
-            </ThemedText>
+            <SymbolView
+              name={favorited ? 'heart.fill' : 'heart'}
+              size={14}
+              tintColor={favorited ? theme.error : theme.textSecondary}
+            />
           </Pressable>
         ) : null}
         {imageUrl ? (
-          <Image source={{ uri: imageUrl }} style={styles.image} contentFit="cover" />
+          <Image source={{ uri: imageUrl }} style={styles.image} contentFit="contain" />
         ) : (
-          <View style={[styles.imagePlaceholder, { backgroundColor: theme.backgroundElement }]} />
+          <View style={styles.imagePlaceholder}>
+            <ThemedText type="smallBold" themeColor="textSecondary">
+              {product.name.slice(0, 1).toUpperCase()}
+            </ThemedText>
+          </View>
         )}
       </View>
+
       <View style={styles.body}>
-        <ThemedText type="smallBold" numberOfLines={2}>
+        <ThemedText type="smallBold" numberOfLines={2} style={styles.name}>
           {product.name}
         </ThemedText>
-        {product.brand ? (
-          <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-            {product.brand}
-          </ThemedText>
-        ) : null}
-        {priceCents != null ? (
-          <ThemedText type="smallBold">${(priceCents / 100).toFixed(2)}</ThemedText>
-        ) : null}
+        <View style={styles.metaRow}>
+          {product.brand ? (
+            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.brand}>
+              {product.brand}
+            </ThemedText>
+          ) : null}
+          {priceCents != null ? (
+            <ThemedText type="smallBold" style={styles.price}>
+              {product.brand ? ' · ' : ''}
+              {formatPrice(priceCents)}
+            </ThemedText>
+          ) : null}
+        </View>
         {sponsored ? (
           <ThemedText type="small" themeColor="textSecondary">
             Sponsored
           </ThemedText>
         ) : null}
       </View>
+
       <View style={styles.actions}>
         {onList ? (
-          <View style={[styles.stepper, { backgroundColor: theme.secondary }]}>
+          <View
+            style={[
+              styles.stepper,
+              {
+                backgroundColor: theme.backgroundSelected,
+                borderColor: theme.borderInk,
+              },
+            ]}>
             <Pressable
               onPress={() => {
                 void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -105,13 +135,9 @@ export function ProductCard({
               }}
               hitSlop={8}
               style={styles.stepBtn}>
-              <ThemedText type="smallBold" style={{ color: theme.primary }}>
-                −
-              </ThemedText>
+              <ThemedText type="smallBold">−</ThemedText>
             </Pressable>
-            <ThemedText type="smallBold" style={{ color: theme.primary }}>
-              {quantityOnList}
-            </ThemedText>
+            <ThemedText type="smallBold">{quantityOnList}</ThemedText>
             <Pressable
               onPress={() => {
                 void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -119,9 +145,7 @@ export function ProductCard({
               }}
               hitSlop={8}
               style={styles.stepBtn}>
-              <ThemedText type="smallBold" style={{ color: theme.primary }}>
-                +
-              </ThemedText>
+              <ThemedText type="smallBold">+</ThemedText>
             </Pressable>
           </View>
         ) : (
@@ -131,8 +155,10 @@ export function ProductCard({
               onAdd();
             }}
             style={[styles.addBtn, { backgroundColor: theme.secondary }]}
-            hitSlop={8}>
-            <ThemedText type="smallBold" style={{ color: theme.primary }}>
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Add to list">
+            <ThemedText type="smallBold" style={{ color: theme.primary, fontFamily: Fonts.sansBold }}>
               +
             </ThemedText>
           </Pressable>
@@ -157,8 +183,12 @@ const styles = StyleSheet.create({
   },
   imageWrap: {
     height: 96,
-    borderRadius: Spacing.two,
+    borderRadius: Radius.button,
     overflow: 'hidden',
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: Spacing.one,
   },
   imageWrapCompact: {
     height: 80,
@@ -169,6 +199,8 @@ const styles = StyleSheet.create({
   },
   imagePlaceholder: {
     flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   badge: {
     position: 'absolute',
@@ -196,6 +228,20 @@ const styles = StyleSheet.create({
     gap: 2,
     flex: 1,
   },
+  name: {
+    lineHeight: 18,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+  },
+  brand: {
+    flexShrink: 1,
+  },
+  price: {
+    fontSize: 15,
+  },
   actions: {
     alignItems: 'flex-end',
   },
@@ -210,6 +256,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderRadius: 18,
+    borderWidth: 2,
     paddingHorizontal: Spacing.one,
     gap: Spacing.two,
     minHeight: 36,

@@ -2,8 +2,9 @@ import { router, type Href } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { goToOnboardingAccount } from '@/auth/finish-onboarding';
+import { completeOnboardingWithDraft } from '@/auth/finish-onboarding';
 import { useOnboardingDraft } from '@/auth/onboarding-draft';
+import { useSession } from '@/auth/session';
 import {
   groupTraitsForFilterUi,
   listFoodTraits,
@@ -17,13 +18,19 @@ import {
 } from '@/components/onboarding/onboarding-shell';
 import { Fonts, Spacing } from '@/constants/theme';
 
-const AVOID_LIMIT = 8;
-const PREFER_LIMIT = 6;
-
 export default function OnboardingEatScreen() {
+  const { isGuest, finishOnboarding } = useSession();
   const draft = useOnboardingDraft();
   const [traits, setTraits] = useState<FoodTrait[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const finishPrefs = () => {
+    void completeOnboardingWithDraft({
+      isGuest,
+      finishOnboarding,
+      draft: draft.toPayload(),
+    });
+  };
 
   useEffect(() => {
     let active = true;
@@ -42,9 +49,10 @@ export default function OnboardingEatScreen() {
     };
   }, []);
 
+  // Avoid / prefer chips come from food_traits in Supabase — no hard-coded list.
   const grouped = useMemo(() => groupTraitsForFilterUi(traits), [traits]);
-  const avoidTraits = grouped.avoid.slice(0, AVOID_LIMIT);
-  const preferTraits = grouped.requirePrefer.slice(0, PREFER_LIMIT);
+  const avoidTraits = grouped.avoid;
+  const preferTraits = grouped.requirePrefer;
 
   const selected = (traitId: string, mode: SessionFoodRule['mode']) =>
     draft.foodRules.some((rule) => rule.trait_id === traitId && rule.mode === mode);
@@ -57,10 +65,10 @@ export default function OnboardingEatScreen() {
 
   return (
     <OnboardingShell
-      step={2}
+      step={3}
       title="Anything you avoid or prefer?"
       subtitle="Tap a few — you can change this later."
-      onSkip={goToOnboardingAccount}
+      onSkip={finishPrefs}
       onContinue={() => router.push('/(onboarding)/save' as Href)}>
       {loading ? (
         <ActivityIndicator color="#000000" />

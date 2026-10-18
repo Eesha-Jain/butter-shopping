@@ -17,6 +17,7 @@ import {
 import { mergeGuestCashbackIntoProfile, needsOnboarding } from '@/backend/cashback';
 import { mergeGuestCartIntoDefaultList } from '@/backend/guest-cart';
 import { mergeGuestFavoritesIntoAccount } from '@/backend/guest-favorites';
+import { mergeGuestOnboardingIntoAccount } from '@/backend/guest-onboarding';
 import {
   getSession,
   onAuthStateChange,
@@ -32,7 +33,7 @@ type SessionContextValue = {
   /** Signed in or continuing as guest. */
   canUseApp: boolean;
   /**
-   * Whether onboarding (prefs + account) should show.
+   * Whether onboarding (welcome → auth → prefs) should show.
    * null while resolving. First open shows onboarding even before sign-in.
    */
   needsOnboardingFlow: boolean | null;
@@ -116,6 +117,9 @@ export function SessionProvider({ children }: PropsWithChildren) {
         });
         void mergeGuestFavoritesIntoAccount().catch(() => {
           // Same for favorites.
+        });
+        void mergeGuestOnboardingIntoAccount().catch(() => {
+          // Same for onboarding food rules / discounts / transport.
         });
         void mergeGuestCashbackIntoProfile().catch(() => {
           // Same for cashback prefs.

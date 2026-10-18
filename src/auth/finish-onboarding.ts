@@ -3,7 +3,9 @@ import { router, type Href } from 'expo-router';
 import type { SessionFoodRule } from '@/backend';
 import {
   completeOnboarding,
+  markOnboardingCompletedLocally,
   resolveCollegeId,
+  saveGuestOnboardingDraft,
   setDiscountEligibility,
   setGroceryCashbackBps,
   setMyFoodRules,
@@ -12,7 +14,7 @@ import {
 
 import type { OnboardingDraftPayload, TransportMode } from './onboarding-draft';
 
-const ACCOUNT_HREF = '/(onboarding)/account' as Href;
+const EAT_HREF = '/(onboarding)/eat' as Href;
 
 /** Persist whatever the draft holds, then mark onboarding complete. */
 export async function persistOnboardingDraft(
@@ -30,6 +32,16 @@ export async function persistOnboardingDraft(
   } = input;
 
   if (isGuest) {
+    // Keep prefs on-device; mergeGuestOnboardingIntoAccount writes them after sign-up.
+    saveGuestOnboardingDraft({
+      foodRules,
+      discountCodes,
+      cashbackBps,
+      collegeId,
+      collegeName,
+      transportModes,
+      maxStores,
+    });
     await setGroceryCashbackBps(cashbackBps, true);
     await completeOnboarding(true);
     return;
@@ -55,6 +67,8 @@ export async function persistOnboardingDraft(
 
   const primaryMode: TransportMode | null = transportModes[0] ?? null;
 
+  // Mark local first so a concurrent auth-gate refresh cannot reopen onboarding.
+  markOnboardingCompletedLocally();
   await updateMyProfile({
     college_id: resolvedCollegeId,
     transport_mode: primaryMode,
@@ -65,14 +79,14 @@ export async function persistOnboardingDraft(
   });
 }
 
-/** Jump to the account step (last onboarding screen) without finishing the flow. */
-export function goToOnboardingAccount(): void {
-  router.push(ACCOUNT_HREF);
+/** Auth → eat / save / shop prefs. */
+export function goToOnboardingPrefs(): void {
+  router.push(EAT_HREF);
 }
 
 /**
- * Finish onboarding after account step: persist prefs, then close the gate.
- * Call after sign-in or continue-as-guest.
+ * Finish prefs onboarding: persist draft, then close the gate.
+ * Call after eat/save/shop continue or skip-all.
  */
 export async function completeOnboardingWithDraft(input: {
   isGuest: boolean;

@@ -30,7 +30,8 @@ import {
 import type { AuthMode } from '@/auth/auth-mode';
 import { ThemedText } from '@/components/themed-text';
 import { ButterButton } from '@/components/ui/butter-button';
-import { Spacing } from '@/constants/theme';
+import { ButterChip } from '@/components/ui/butter-chip';
+import { Radius, SheetChrome, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 const SLIDE_MS = 280;
@@ -275,12 +276,14 @@ export function ShopProfileDrawer({
               backgroundColor: theme.background,
               paddingTop: insets.top + Spacing.three,
               paddingBottom: insets.bottom + Spacing.three,
-              borderRightColor: theme.border,
+              borderRightColor: theme.borderInk,
               transform: [{ translateX }],
             },
           ]}>
           <View style={styles.header}>
-            <ThemedText type="subtitle">Profile</ThemedText>
+            <ThemedText type="smallBold" style={styles.title}>
+              Profile
+            </ThemedText>
             <Pressable
               onPress={() => requestClose()}
               hitSlop={12}
@@ -298,7 +301,13 @@ export function ShopProfileDrawer({
             <Pressable
               onPress={handleChangePhoto}
               disabled={uploading || isGuest}
-              style={[styles.avatarRing, { backgroundColor: theme.backgroundElement }]}
+              style={[
+                styles.avatarRing,
+                {
+                  backgroundColor: theme.backgroundElement,
+                  borderColor: theme.borderInk,
+                },
+              ]}
               accessibilityRole="button"
               accessibilityLabel={isGuest ? 'Guest account' : 'Change profile photo'}>
               {avatarUrl ? (
@@ -334,7 +343,11 @@ export function ShopProfileDrawer({
             ) : null}
           </View>
 
-          <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
+          <View
+            style={[
+              styles.card,
+              { backgroundColor: theme.backgroundElement, borderColor: theme.borderInk },
+            ]}>
             <ThemedText type="smallBold">
               {isGuest ? 'Guest account' : displayName?.trim() || 'Butter shopper'}
             </ThemedText>
@@ -345,7 +358,15 @@ export function ShopProfileDrawer({
             </ThemedText>
           </View>
 
-          <View style={[styles.card, { backgroundColor: theme.backgroundElement, gap: Spacing.two }]}>
+          <View
+            style={[
+              styles.card,
+              {
+                backgroundColor: theme.backgroundElement,
+                borderColor: theme.borderInk,
+                gap: Spacing.two,
+              },
+            ]}>
             <ThemedText type="smallBold">
               Grocery cash back
               {cashbackBps != null ? `: ${cashbackBps / 100}%` : ': off'}
@@ -355,8 +376,10 @@ export function ShopProfileDrawer({
             </ThemedText>
             <View style={styles.cashbackRow}>
               {[100, 200, 300].map((bps) => (
-                <Pressable
+                <ButterChip
                   key={bps}
+                  label={`${bps / 100}%`}
+                  selected={cashbackBps === bps}
                   onPress={() => {
                     void (async () => {
                       const next = cashbackBps === bps ? null : bps;
@@ -368,16 +391,7 @@ export function ShopProfileDrawer({
                       }
                     })();
                   }}
-                  style={[
-                    styles.cashbackChip,
-                    {
-                      borderColor: theme.border,
-                      backgroundColor:
-                        cashbackBps === bps ? theme.backgroundSelected : theme.background,
-                    },
-                  ]}>
-                  <ThemedText type="smallBold">{bps / 100}%</ThemedText>
-                </Pressable>
+                />
               ))}
             </View>
           </View>
@@ -424,11 +438,11 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    backgroundColor: SheetChrome.scrim,
   },
   panel: {
     height: '100%',
-    borderRightWidth: StyleSheet.hairlineWidth,
+    borderRightWidth: 2,
     paddingHorizontal: Spacing.three,
     gap: Spacing.three,
   },
@@ -437,16 +451,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  title: {
+    fontSize: Type.section,
+  },
   cashbackRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.two,
-  },
-  cashbackChip: {
-    borderWidth: 1,
-    borderRadius: Spacing.three,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
   },
   avatarBlock: {
     alignItems: 'center',
@@ -459,6 +470,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
+    borderWidth: 2,
   },
   avatarImage: {
     width: '100%',
@@ -466,12 +478,13 @@ const styles = StyleSheet.create({
   },
   avatarOverlay: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    backgroundColor: SheetChrome.scrim,
     alignItems: 'center',
     justifyContent: 'center',
   },
   card: {
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
+    borderWidth: 2,
     padding: Spacing.three,
     gap: Spacing.one,
   },
@@ -481,7 +494,7 @@ const styles = StyleSheet.create({
   outlineBtn: {
     alignItems: 'center',
     paddingVertical: Spacing.three,
-    borderRadius: Spacing.three,
-    borderWidth: 1,
+    borderRadius: Radius.button,
+    borderWidth: 2,
   },
 });

@@ -13,11 +13,13 @@ export {
   clearLocalData,
   getLocalGroceryCashbackBps,
   hasCompletedOnboardingLocally,
+  hasSeenWelcome,
   hasSignedInBefore,
   isGuest,
   markHasSignedIn,
   markIsGuest,
   markOnboardingCompletedLocally,
+  markWelcomeSeen,
   setLocalGroceryCashbackBps,
 } from './preferences';
 export {
@@ -52,6 +54,14 @@ export {
   mergeGuestFavoritesIntoAccount,
   setGuestFavorite,
 } from './guest-favorites';
+export {
+  clearGuestOnboardingDraft,
+  getGuestFoodRules,
+  getGuestOnboardingDraft,
+  mergeGuestOnboardingIntoAccount,
+  saveGuestOnboardingDraft,
+  type GuestOnboardingDraft,
+} from './guest-onboarding';
 export {
   getItem,
   getJson,
@@ -91,8 +101,10 @@ export {
   getStorePriceCentsByProductIds,
   getCurrentPrice,
   getDefaultGroceryList,
+  getGroup,
   getMyDefaultList,
   getMyProfile,
+  getOptionalUserId,
   getProductPromotionMap,
   getProductSafety,
   getProductTraitsForIds,
@@ -121,6 +133,7 @@ export {
   listGroupLists,
   listListItems,
   listGroupMembers,
+  listGroupMembersWithProfiles,
   listHabits,
   listMyDiscountEligibilities,
   listMyFavoriteProductIds,
@@ -192,6 +205,7 @@ export type {
   ActiveListTarget,
   BestShopDay,
   CategoryProductSection,
+  GroupMemberWithProfile,
   ProductStoreOffer,
   RipenessResult,
   SearchCoords,

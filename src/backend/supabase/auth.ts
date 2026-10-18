@@ -91,6 +91,16 @@ export async function getSession(): Promise<Session | null> {
 }
 
 /**
+ * Signed-in user id, or null for guests / signed-out.
+ * Does not toast — Supabase's "Auth session missing!" is expected without a session.
+ */
+export async function getOptionalUserId(): Promise<string | null> {
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data.user) return null;
+  return data.user.id;
+}
+
+/**
  * Subscribes to sign-in, sign-out, and token refresh. Call the returned
  * function when the screen unmounts.
  */

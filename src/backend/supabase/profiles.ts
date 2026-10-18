@@ -1,4 +1,5 @@
 import type { DiscountEligibility, FoodTrait, Profile, UserFoodRule, UserLocation } from '../types';
+import { getOptionalUserId } from './auth';
 import { supabase } from './client';
 import { fail } from '../errors';
 import { unwrap, unwrapOne, unwrapVoid } from './query';
@@ -118,7 +119,8 @@ export async function setMyFoodRules(
  * shared planning uses them only inside recommend_shopping_plan.
  */
 export async function listMyFoodRules(): Promise<UserFoodRule[]> {
-  const userId = await requireUserId();
+  const userId = await getOptionalUserId();
+  if (!userId) return [];
   return unwrap(await supabase.from('user_food_rules').select('*').eq('user_id', userId));
 }
 
@@ -157,7 +159,8 @@ export async function setDiscountEligibility(groupCode: string, optedIn: boolean
 
 /** The caller's saved discount opt-ins. */
 export async function listMyDiscountEligibilities(): Promise<DiscountEligibility[]> {
-  const userId = await requireUserId();
+  const userId = await getOptionalUserId();
+  if (!userId) return [];
   return unwrap(await supabase.from('discount_eligibilities').select('*').eq('user_id', userId));
 }
 
@@ -186,7 +189,8 @@ export async function saveMyLocation(
 
 /** Addresses saved by the caller. */
 export async function listMyLocations(): Promise<UserLocation[]> {
-  const userId = await requireUserId();
+  const userId = await getOptionalUserId();
+  if (!userId) return [];
   return unwrap(await supabase.from('user_locations').select('*').eq('user_id', userId));
 }
 
@@ -205,9 +209,7 @@ export async function unpreferStore(storeId: string): Promise<void> {
 }
 
 async function requireUserId(): Promise<string> {
-  const result = await supabase.auth.getUser();
-  if (result.error || !result.data.user) {
-    fail(result.error ?? 'Sign in first.');
-  }
-  return result.data.user.id;
+  const userId = await getOptionalUserId();
+  if (!userId) fail('Sign in first.');
+  return userId;
 }

@@ -1,6 +1,6 @@
 import type { GroceryList, Group, ListItem, ResolvedListItem } from '../types';
 import { supabase } from './client';
-import { fail } from '../errors';
+import { AppError, fail } from '../errors';
 import { unwrap, unwrapOne, unwrapVoid } from './query';
 import { listMyGroups } from './groups';
 import { addDueHabitItems, listHabits } from './purchases';
@@ -9,6 +9,14 @@ export type ActiveListTarget = {
   group: Group;
   list: GroceryList;
 };
+
+/**
+ * Expected empty state (guest / signup race). Throws without toasting so callers
+ * can fall back quietly; use fail() only for unexpected failures.
+ */
+function missingListError(message: string): never {
+  throw new AppError(message);
+}
 
 /**
  * Lists in a group. Every group has one default list created with the group.
@@ -23,7 +31,7 @@ export async function getMyDefaultList(): Promise<ActiveListTarget> {
   const personal = targets.find((row) => row.group.kind === 'personal');
   if (personal) return personal;
   if (targets[0]) return targets[0];
-  fail('No grocery list found. New accounts receive a personal list at signup.');
+  missingListError('No grocery list found. New accounts receive a personal list at signup.');
 }
 
 /** Default list for each group the caller belongs to (list switcher). */
@@ -155,12 +163,13 @@ export async function getDefaultGroceryList(): Promise<{ group: Group; list: Gro
   const groups = await listMyGroups();
   const group = groups.find((row) => row.kind === 'personal') ?? groups[0];
   if (!group) {
-    fail('No grocery group yet. Sign in again after signup finishes.');
+    // Guests and brand-new sessions have no group yet — not a user-facing failure.
+    missingListError('No grocery group yet. Sign in again after signup finishes.');
   }
   const lists = await listGroupLists(group.id);
   const list = lists.find((row) => row.is_default) ?? lists[0];
   if (!list) {
-    fail('This group has no grocery list.');
+    missingListError('This group has no grocery list.');
   }
   return { group, list };
 }
@@ -176,11 +185,28 @@ export async function listListItems(listId: string): Promise<ListItem[]> {
 }
 
 /**
- * Adds staples (habits) and optional recipe ingredients to the default list.
+ * Adds staples (habits) and optional recipe ingredients to a list.
+ * Pass listId to target the active group list; otherwise uses the personal default.
  * Skips a target that already has an open row. Does not use listResolvedItems.
  */
-export async function buildStandardList(input?: { recipeIds?: string[] }): Promise<number> {
-  const { group, list } = await getDefaultGroceryList();
+export async function buildStandardList(input?: {
+  listId?: string;
+  recipeIds?: string[];
+}): Promise<number> {
+  let group: Group;
+  let list: GroceryList;
+  if (input?.listId) {
+    list = unwrapOne(
+      await supabase.from('lists').select('*').eq('id', input.listId).maybeSingle(),
+      'List not found.',
+    );
+    group = unwrapOne(
+      await supabase.from('groups').select('*').eq('id', list.group_id).maybeSingle(),
+      'Group not found for that list.',
+    );
+  } else {
+    ({ group, list } = await getDefaultGroceryList());
+  }
   const existing = await listListItems(list.id);
   const keys = new Set(
     existing.map(openItemKey).filter((key): key is string => key != null),

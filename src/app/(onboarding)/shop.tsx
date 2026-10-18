@@ -1,7 +1,8 @@
 import { StyleSheet, View } from 'react-native';
 
-import { goToOnboardingAccount } from '@/auth/finish-onboarding';
+import { completeOnboardingWithDraft } from '@/auth/finish-onboarding';
 import { useOnboardingDraft, type TransportMode } from '@/auth/onboarding-draft';
+import { useSession } from '@/auth/session';
 import {
   Chip,
   OnboardingLabel,
@@ -25,16 +26,25 @@ const STORE_CAPS = [
 ] as const;
 
 export default function OnboardingShopScreen() {
+  const { isGuest, finishOnboarding } = useSession();
   const draft = useOnboardingDraft();
+
+  const finishPrefs = () => {
+    void completeOnboardingWithDraft({
+      isGuest,
+      finishOnboarding,
+      draft: draft.toPayload(),
+    });
+  };
 
   return (
     <OnboardingShell
-      step={4}
+      step={5}
       title="How do you usually get groceries?"
       subtitle="Pick every mode you use — so I can prefer stores that fit your trip."
-      continueLabel="Continue"
-      onSkip={goToOnboardingAccount}
-      onContinue={goToOnboardingAccount}>
+      continueLabel="Finish"
+      onSkip={finishPrefs}
+      onContinue={finishPrefs}>
       <OnboardingLabel>I usually</OnboardingLabel>
       <View style={styles.chips}>
         {TRANSPORT.map((row) => (

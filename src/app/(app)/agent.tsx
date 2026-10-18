@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -9,7 +9,6 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  useColorScheme,
   View,
 } from 'react-native';
 import {
@@ -24,21 +23,11 @@ import * as Speech from 'expo-speech';
 import { voiceOrder, voiceOrderFromText, type VoiceOrderResult } from '@/backend/supabase/voice';
 import { useRequireAccount } from '@/auth/require-account';
 import { useSession } from '@/auth/session';
-import { Fonts, Radius, Spacing } from '@/constants/theme';
+import { ButterButton } from '@/components/ui/butter-button';
+import { Fonts, Radius, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 type Phase = 'idle' | 'listening' | 'processing';
-
-const PALETTE = {
-  light: {
-    bg: '#fff', text: '#111', hint: '#555', border: '#bbb',
-    inputBg: '#f2f2f2', placeholder: '#888', debugBg: '#0000000d', debugText: '#111',
-  },
-  dark: {
-    bg: '#000', text: '#f5f5f5', hint: '#aaa', border: '#555',
-    inputBg: '#1c1c1e', placeholder: '#999', debugBg: '#ffffff14', debugText: '#f5f5f5',
-  },
-};
 
 export default function AgentScreen() {
   const { session } = useSession();
@@ -51,21 +40,16 @@ export default function AgentScreen() {
   // prompt instead of letting an unauthenticated user hit a confusing error.
   if (!session) {
     return (
-      <View style={styles.gate}>
+      <View style={[styles.gate, { backgroundColor: theme.background }]}>
         <Text style={[styles.gateTitle, { color: theme.text }]}>Butter AI</Text>
         <Text style={[styles.gateBody, { color: theme.textSecondary }]}>
           Create an account to chat with the shopping assistant.
         </Text>
-        <Pressable
-          onPress={() => {
-            requireAccount('Sign up or log in to use Butter AI.');
-          }}
-          style={({ pressed }) => [
-            styles.cta,
-            { backgroundColor: theme.primary, opacity: pressed ? 0.85 : 1 },
-          ]}>
-          <Text style={[styles.ctaLabel, { color: theme.primaryText }]}>Sign up</Text>
-        </Pressable>
+        <ButterButton
+          label="Sign up"
+          variant="ink"
+          onPress={() => requireAccount('Sign up or log in to use Butter AI.')}
+        />
       </View>
     );
   }
@@ -94,8 +78,7 @@ export default function AgentScreen() {
  * extract order items, writes them to the default list, and sends a push.
  */
 function VoiceAgent() {
-  const scheme = useColorScheme();
-  const c = PALETTE[scheme === 'dark' ? 'dark' : 'light'];
+  const theme = useTheme();
   const [phase, setPhase] = useState<Phase>('idle');
   const [reply, setReply] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<string | null>(null);
@@ -107,9 +90,9 @@ function VoiceAgent() {
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const replyPlayer = useAudioPlayer();
 
-  const wave1 = useRef(new Animated.Value(0)).current;
-  const wave2 = useRef(new Animated.Value(0)).current;
-  const wave3 = useRef(new Animated.Value(0)).current;
+  const [wave1] = useState(() => new Animated.Value(0));
+  const [wave2] = useState(() => new Animated.Value(0));
+  const [wave3] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     if (phase !== 'listening') {
@@ -141,9 +124,9 @@ function VoiceAgent() {
     transform: [{ scale: val.interpolate({ inputRange: [0, 1], outputRange: [1, 2.1] }) }],
   });
 
-  const squish = useRef(new Animated.Value(0)).current;
-  const wobbleA = useRef(new Animated.Value(0)).current;
-  const wobbleB = useRef(new Animated.Value(0)).current;
+  const [squish] = useState(() => new Animated.Value(0));
+  const [wobbleA] = useState(() => new Animated.Value(0));
+  const [wobbleB] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     const loopA = Animated.loop(
@@ -286,20 +269,29 @@ function VoiceAgent() {
 
   return (
     <ScrollView
-      contentContainerStyle={[styles.container, { backgroundColor: c.bg }]}
-      style={{ backgroundColor: c.bg }}
+      contentContainerStyle={[styles.container, { backgroundColor: theme.background }]}
+      style={{ backgroundColor: theme.background }}
       keyboardShouldPersistTaps="handled">
-      <Text style={[styles.title, { color: c.text }]}>Butter Voice Assistant</Text>
-      <Text style={[styles.hint, { color: c.hint }]}>
+      <Text style={[styles.title, { color: theme.text }]}>Butter AI</Text>
+      <Text style={[styles.hint, { color: theme.textSecondary }]}>
         {phase === 'idle' ? 'Tap the spot, say what to add.' : ' '}
       </Text>
 
       <View style={styles.buttonWrap}>
         {phase === 'listening' && (
           <>
-            <Animated.View style={[styles.ring, ringStyle(wave1)]} pointerEvents="none" />
-            <Animated.View style={[styles.ring, ringStyle(wave2)]} pointerEvents="none" />
-            <Animated.View style={[styles.ring, ringStyle(wave3)]} pointerEvents="none" />
+            <Animated.View
+              style={[styles.ring, { borderColor: theme.primary }, ringStyle(wave1)]}
+              pointerEvents="none"
+            />
+            <Animated.View
+              style={[styles.ring, { borderColor: theme.primary }, ringStyle(wave2)]}
+              pointerEvents="none"
+            />
+            <Animated.View
+              style={[styles.ring, { borderColor: theme.primary }, ringStyle(wave3)]}
+              pointerEvents="none"
+            />
           </>
         )}
 
@@ -307,41 +299,72 @@ function VoiceAgent() {
           <Animated.View
             style={[
               styles.blobBase,
-              phase === 'listening' && styles.blobBaseActive,
+              {
+                backgroundColor:
+                  phase === 'listening' ? theme.backgroundSelected : theme.backgroundElement,
+                borderColor: theme.borderInk,
+              },
               { transform: [{ scaleX: blobSquashX }, { scaleY: blobSquashY }, { scale: blobScale }] },
             ]}>
             <Animated.View
               style={[
                 styles.blobSpot,
                 styles.blobSpotA,
-                { transform: [...Object.values(spotTranslateA).map((v, i) => (i === 0 ? { translateX: v } : { translateY: v })), { scale: spotScaleA }] },
+                { backgroundColor: theme.secondary },
+                {
+                  transform: [
+                    ...Object.values(spotTranslateA).map((v, i) =>
+                      i === 0 ? { translateX: v } : { translateY: v },
+                    ),
+                    { scale: spotScaleA },
+                  ],
+                },
               ]}
             />
             <Animated.View
               style={[
                 styles.blobSpot,
                 styles.blobSpotB,
-                { transform: [...Object.values(spotTranslateB).map((v, i) => (i === 0 ? { translateX: v } : { translateY: v })), { scale: spotScaleB }] },
+                { backgroundColor: theme.secondary },
+                {
+                  transform: [
+                    ...Object.values(spotTranslateB).map((v, i) =>
+                      i === 0 ? { translateX: v } : { translateY: v },
+                    ),
+                    { scale: spotScaleB },
+                  ],
+                },
               ]}
             />
           </Animated.View>
 
           {phase === 'processing' ? (
-            <ActivityIndicator color="#fff" size="large" style={styles.spotOverlay} />
+            <ActivityIndicator color={theme.primary} size="large" style={styles.spotOverlay} />
           ) : (
-            <Text style={[styles.talkButtonLabel, styles.spotOverlay]}>{label}</Text>
+            <Text style={[styles.talkButtonLabel, styles.spotOverlay, { color: theme.primary }]}>
+              {label}
+            </Text>
           )}
         </Pressable>
       </View>
 
-      {transcript && <Text style={[styles.transcript, { color: c.text }]}>“{transcript}”</Text>}
-      {reply && <Text style={[styles.reply, { color: c.text }]}>{reply}</Text>}
+      {transcript ? (
+        <Text style={[styles.transcript, { color: theme.text }]}>“{transcript}”</Text>
+      ) : null}
+      {reply ? <Text style={[styles.reply, { color: theme.text }]}>{reply}</Text> : null}
 
       <View style={styles.typedRow}>
         <TextInput
-          style={[styles.typedInput, { backgroundColor: c.inputBg, borderColor: c.border, color: c.text }]}
+          style={[
+            styles.typedInput,
+            {
+              backgroundColor: theme.backgroundElement,
+              borderColor: theme.borderInk,
+              color: theme.text,
+            },
+          ]}
           placeholder="…or type what to add"
-          placeholderTextColor={c.placeholder}
+          placeholderTextColor={theme.textSecondary}
           value={typedText}
           onChangeText={setTypedText}
           onSubmitEditing={sendTyped}
@@ -353,28 +376,29 @@ function VoiceAgent() {
           disabled={phase === 'processing' || !typedText.trim()}
           style={({ pressed }) => [
             styles.sendButton,
+            { backgroundColor: theme.secondary },
             (phase === 'processing' || !typedText.trim()) && styles.sendButtonDisabled,
             pressed && styles.talkButtonPressed,
           ]}>
-          <Text style={styles.sendButtonLabel}>Send</Text>
+          <Text style={[styles.sendButtonLabel, { color: theme.primary }]}>Send</Text>
         </Pressable>
       </View>
 
       <Pressable onPress={() => setDebugOpen((v) => !v)} style={styles.debugToggle}>
-        <Text style={[styles.debugToggleLabel, { color: c.text }]}>
+        <Text style={[styles.debugToggleLabel, { color: theme.text }]}>
           {debugOpen ? '▼' : '▶'} Debug: what happened server-side
         </Text>
       </Pressable>
-      {debugOpen && (
-        <View style={[styles.debugBox, { backgroundColor: c.debugBg }]}>
-          <Text style={[styles.debugText, { color: c.debugText }]}>
+      {debugOpen ? (
+        <View style={[styles.debugBox, { backgroundColor: theme.backgroundElement }]}>
+          <Text style={[styles.debugText, { color: theme.text }]}>
             {lastResult ? JSON.stringify(lastResult, null, 2) : 'No request sent yet.'}
           </Text>
-          <Text style={[styles.debugHint, { color: c.hint }]}>
+          <Text style={[styles.debugHint, { color: theme.textSecondary }]}>
             More detail (Scribe/Grok/insert errors) is in `supabase functions logs voice-order`.
           </Text>
         </View>
-      )}
+      ) : null}
     </ScrollView>
   );
 }
@@ -382,35 +406,124 @@ function VoiceAgent() {
 const RING_SIZE = 180;
 
 const styles = StyleSheet.create({
-  container: { flexGrow: 1, alignItems: 'center', padding: 24, gap: 16, paddingBottom: 48 },
-  title: { fontSize: 20, fontWeight: '700' },
-  hint: { textAlign: 'center', minHeight: 18 },
-  buttonWrap: { width: RING_SIZE, height: RING_SIZE, alignItems: 'center', justifyContent: 'center', marginTop: 24 },
-  ring: { position: 'absolute', width: RING_SIZE, height: RING_SIZE, borderRadius: RING_SIZE / 2, borderWidth: 2, borderColor: '#c0392b' },
-  talkButton: { width: RING_SIZE, height: RING_SIZE, alignItems: 'center', justifyContent: 'center' },
-  blobBase: { ...StyleSheet.absoluteFillObject, borderRadius: RING_SIZE / 2, backgroundColor: '#fff8e7', overflow: 'hidden' },
-  blobBaseActive: { backgroundColor: '#ffe0d6' },
-  blobSpot: { position: 'absolute', width: RING_SIZE * 0.6, height: RING_SIZE * 0.6, borderRadius: RING_SIZE * 0.3, backgroundColor: '#1a1a1a' },
+  container: {
+    flexGrow: 1,
+    alignItems: 'center',
+    padding: Spacing.four,
+    gap: Spacing.three,
+    paddingBottom: Spacing.five,
+  },
+  title: {
+    fontFamily: Fonts.sansBold,
+    fontSize: Type.pageTitle,
+  },
+  hint: {
+    fontFamily: Fonts.sans,
+    textAlign: 'center',
+    minHeight: 18,
+  },
+  buttonWrap: {
+    width: RING_SIZE,
+    height: RING_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: Spacing.four,
+  },
+  ring: {
+    position: 'absolute',
+    width: RING_SIZE,
+    height: RING_SIZE,
+    borderRadius: RING_SIZE / 2,
+    borderWidth: 2,
+  },
+  talkButton: {
+    width: RING_SIZE,
+    height: RING_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  blobBase: {
+    ...StyleSheet.absoluteFill,
+    borderRadius: RING_SIZE / 2,
+    overflow: 'hidden',
+    borderWidth: 2,
+  },
+  blobSpot: {
+    position: 'absolute',
+    width: RING_SIZE * 0.6,
+    height: RING_SIZE * 0.6,
+    borderRadius: RING_SIZE * 0.3,
+  },
   blobSpotA: { top: RING_SIZE * 0.1, left: RING_SIZE * 0.08 },
-  blobSpotB: { bottom: RING_SIZE * 0.05, right: RING_SIZE * 0.1, width: RING_SIZE * 0.45, height: RING_SIZE * 0.45, borderRadius: RING_SIZE * 0.225 },
+  blobSpotB: {
+    bottom: RING_SIZE * 0.05,
+    right: RING_SIZE * 0.1,
+    width: RING_SIZE * 0.45,
+    height: RING_SIZE * 0.45,
+    borderRadius: RING_SIZE * 0.225,
+  },
   spotOverlay: { position: 'absolute' },
   talkButtonPressed: { opacity: 0.85 },
-  talkButtonLabel: { color: '#fff', fontWeight: '700', textAlign: 'center', paddingHorizontal: 12 },
-  transcript: { marginTop: 24, fontStyle: 'italic', textAlign: 'center' },
-  reply: { marginTop: 8, textAlign: 'center', fontWeight: '500' },
-  typedRow: { flexDirection: 'row', width: '100%', gap: 8, marginTop: 24 },
-  typedInput: { flex: 1, borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10 },
-  sendButton: { backgroundColor: '#c0392b', borderRadius: 12, paddingHorizontal: 18, justifyContent: 'center' },
+  talkButtonLabel: {
+    fontFamily: Fonts.sansBold,
+    textAlign: 'center',
+    paddingHorizontal: Spacing.three,
+  },
+  transcript: {
+    marginTop: Spacing.four,
+    fontFamily: Fonts.sans,
+    fontStyle: 'italic',
+    textAlign: 'center',
+  },
+  reply: {
+    marginTop: Spacing.two,
+    fontFamily: Fonts.sansBold,
+    textAlign: 'center',
+  },
+  typedRow: {
+    flexDirection: 'row',
+    width: '100%',
+    gap: Spacing.two,
+    marginTop: Spacing.four,
+  },
+  typedInput: {
+    flex: 1,
+    borderWidth: 2,
+    borderRadius: Radius.input,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two + 2,
+    fontFamily: Fonts.sans,
+    fontSize: 16,
+  },
+  sendButton: {
+    borderRadius: Radius.button,
+    paddingHorizontal: Spacing.four,
+    justifyContent: 'center',
+  },
   sendButtonDisabled: { opacity: 0.4 },
-  sendButtonLabel: { color: '#fff', fontWeight: '700' },
-  debugToggle: { marginTop: 32, alignSelf: 'stretch' },
-  debugToggleLabel: { fontWeight: '600', opacity: 0.7 },
-  debugBox: { marginTop: 8, padding: 12, borderRadius: 12, width: '100%' },
-  debugText: { fontFamily: 'monospace', fontSize: 12 },
-  debugHint: { fontSize: 11, opacity: 0.6, marginTop: 8 },
-  gate: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: Spacing.four, gap: Spacing.two },
-  gateTitle: { fontFamily: Fonts.sansBold, fontSize: 24 },
-  gateBody: { fontFamily: Fonts.sans, fontSize: 15, textAlign: 'center', lineHeight: 22, marginBottom: Spacing.two },
-  cta: { borderRadius: Radius.button, paddingHorizontal: Spacing.five, paddingVertical: Spacing.three },
-  ctaLabel: { fontFamily: Fonts.sansBold, fontSize: 16 },
+  sendButtonLabel: { fontFamily: Fonts.sansBold },
+  debugToggle: { marginTop: Spacing.five, alignSelf: 'stretch' },
+  debugToggleLabel: { fontFamily: Fonts.sansBold, opacity: 0.7 },
+  debugBox: {
+    marginTop: Spacing.two,
+    padding: Spacing.three,
+    borderRadius: Radius.card,
+    width: '100%',
+  },
+  debugText: { fontFamily: Fonts.mono, fontSize: 12 },
+  debugHint: { fontFamily: Fonts.sans, fontSize: 11, opacity: 0.6, marginTop: Spacing.two },
+  gate: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.four,
+    gap: Spacing.three,
+  },
+  gateTitle: { fontFamily: Fonts.sansBold, fontSize: Type.pageTitle },
+  gateBody: {
+    fontFamily: Fonts.sans,
+    fontSize: 15,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
 });

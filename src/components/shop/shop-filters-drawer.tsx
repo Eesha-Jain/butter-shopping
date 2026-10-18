@@ -16,7 +16,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { FoodTrait, SessionFoodRule, ShopSort } from '@/backend';
 import { groupTraitsForFilterUi } from '@/backend';
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { ButterButton } from '@/components/ui/butter-button';
+import { ButterChip } from '@/components/ui/butter-chip';
+import { SheetChrome, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 const SLIDE_MS = 280;
@@ -144,12 +146,14 @@ export function ShopFiltersDrawer({
               backgroundColor: theme.background,
               paddingTop: insets.top + Spacing.three,
               paddingBottom: insets.bottom + Spacing.three,
-              borderLeftColor: theme.border,
+              borderLeftColor: theme.borderInk,
               transform: [{ translateX }],
             },
           ]}>
           <View style={styles.header}>
-            <ThemedText type="subtitle">Filters</ThemedText>
+            <ThemedText type="smallBold" style={styles.title}>
+              Filters
+            </ThemedText>
             <Pressable
               onPress={() => requestClose()}
               hitSlop={12}
@@ -166,26 +170,14 @@ export function ShopFiltersDrawer({
           <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
             <ThemedText type="smallBold">Sort</ThemedText>
             <View style={styles.chipRow}>
-              {SORTS.map((option) => {
-                const selected = sort === option.id;
-                return (
-                  <Pressable
-                    key={option.id}
-                    onPress={() => setSort(option.id)}
-                    style={[
-                      styles.chip,
-                      {
-                        backgroundColor: selected ? theme.primary : theme.backgroundElement,
-                      },
-                    ]}>
-                    <ThemedText
-                      type="small"
-                      style={selected ? { color: theme.primaryText } : undefined}>
-                      {option.label}
-                    </ThemedText>
-                  </Pressable>
-                );
-              })}
+              {SORTS.map((option) => (
+                <ButterChip
+                  key={option.id}
+                  label={option.label}
+                  selected={sort === option.id}
+                  onPress={() => setSort(option.id)}
+                />
+              ))}
             </View>
 
             <View style={styles.switchRow}>
@@ -201,7 +193,7 @@ export function ShopFiltersDrawer({
             <ThemedText type="small" themeColor="textSecondary">
               Allergens and ingredients to hide
             </ThemedText>
-            {grouped.avoid.slice(0, 8).map((trait) => (
+            {grouped.avoid.map((trait) => (
               <View key={trait.id} style={styles.switchRow}>
                 <ThemedText type="small">{trait.name}</ThemedText>
                 <Switch
@@ -218,7 +210,7 @@ export function ShopFiltersDrawer({
             <ThemedText type="small" themeColor="textSecondary">
               Dietary needs. Prefer boosts matches; require hides the rest.
             </ThemedText>
-            {grouped.requirePrefer.slice(0, 8).map((trait) => {
+            {grouped.requirePrefer.map((trait) => {
               const mode = ruleMap.get(trait.id);
               return (
                 <View key={trait.id} style={styles.traitBlock}>
@@ -230,26 +222,14 @@ export function ShopFiltersDrawer({
                         { id: 'prefer' as const, label: 'Prefer' },
                         { id: 'require' as const, label: 'Require' },
                       ] as const
-                    ).map((option) => {
-                      const selected = (mode ?? null) === option.id;
-                      return (
-                        <Pressable
-                          key={String(option.id)}
-                          onPress={() => setRequirePrefer(trait.id, option.id)}
-                          style={[
-                            styles.chip,
-                            {
-                              backgroundColor: selected ? theme.primary : theme.backgroundElement,
-                            },
-                          ]}>
-                          <ThemedText
-                            type="small"
-                            style={selected ? { color: theme.primaryText } : undefined}>
-                            {option.label}
-                          </ThemedText>
-                        </Pressable>
-                      );
-                    })}
+                    ).map((option) => (
+                      <ButterChip
+                        key={String(option.id)}
+                        label={option.label}
+                        selected={(mode ?? null) === option.id}
+                        onPress={() => setRequirePrefer(trait.id, option.id)}
+                      />
+                    ))}
                   </View>
                 </View>
               );
@@ -262,22 +242,27 @@ export function ShopFiltersDrawer({
                 setRules([]);
                 setOnSaleOnly(false);
                 setSort('default');
-              }}>
-              <ThemedText type="linkPrimary">Clear all</ThemedText>
+              }}
+              hitSlop={8}>
+              <ThemedText type="smallBold" style={{ textDecorationLine: 'underline' }}>
+                Clear
+              </ThemedText>
             </Pressable>
             <Pressable
               onPress={() => {
                 setRules(onResetToPreferences());
-              }}>
-              <ThemedText type="linkPrimary">Reset prefs</ThemedText>
-            </Pressable>
-            <Pressable
-              onPress={() => requestClose(() => onApply({ rules, sort, onSaleOnly }))}
-              style={[styles.applyBtn, { backgroundColor: theme.primary }]}>
-              <ThemedText type="smallBold" style={{ color: theme.primaryText }}>
-                Apply
+              }}
+              hitSlop={8}>
+              <ThemedText type="smallBold" style={{ textDecorationLine: 'underline' }}>
+                Reset prefs
               </ThemedText>
             </Pressable>
+            <ButterButton
+              label="Apply"
+              variant="ink"
+              onPress={() => requestClose(() => onApply({ rules, sort, onSaleOnly }))}
+              style={styles.applyBtn}
+            />
           </View>
         </Animated.View>
       </View>
@@ -293,11 +278,11 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    backgroundColor: SheetChrome.scrim,
   },
   panel: {
     height: '100%',
-    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderLeftWidth: 2,
     paddingHorizontal: Spacing.three,
     gap: Spacing.two,
   },
@@ -305,6 +290,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+  },
+  title: {
+    fontSize: Type.section,
   },
   scroll: {
     gap: Spacing.two,
@@ -314,11 +302,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.two,
-  },
-  chip: {
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-    borderRadius: Spacing.three,
   },
   switchRow: {
     flexDirection: 'row',
@@ -342,8 +325,9 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.two,
   },
   applyBtn: {
-    paddingHorizontal: Spacing.three,
+    flexShrink: 0,
+    paddingHorizontal: Spacing.four,
+    minHeight: 44,
     paddingVertical: Spacing.two,
-    borderRadius: Spacing.three,
   },
 });

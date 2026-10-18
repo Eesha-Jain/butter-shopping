@@ -1,12 +1,13 @@
+import { router } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   View,
 } from 'react-native';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useSession } from '@/auth/session';
@@ -14,14 +15,14 @@ import {
   getWeeklyShoppingBoard,
   listMyLocations,
   resolveShopZip,
-  showSuccessToast,
   type WeeklyBoardColumn,
   type WeeklyShoppingBoard,
 } from '@/backend';
 import { WeeklyShoppingBoardView } from '@/components/shop/weekly-shopping-board';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { BottomTabInset, Spacing } from '@/constants/theme';
+import { ButterButton } from '@/components/ui/butter-button';
+import { BottomTabInset, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 export default function DaysScreen() {
@@ -72,10 +73,12 @@ export default function DaysScreen() {
   }, [load]);
 
   const onColumnPress = (column: WeeklyBoardColumn) => {
-    const bits = [column.dateLabel, column.headline, column.timeWindowLabel, column.detail].filter(
-      Boolean,
-    );
-    showSuccessToast(column.title, bits.join(' · '));
+    if (column.needsSignIn) {
+      requestSignIn();
+      return;
+    }
+    // Open Shop so the user can act on the plan.
+    router.push('/');
   };
 
   return (
@@ -95,18 +98,19 @@ export default function DaysScreen() {
             tintColor={theme.text}
           />
         }>
-        <View style={styles.header}>
+        <Animated.View entering={FadeInDown.duration(280)} style={styles.header}>
+          <ThemedText type="smallBold" style={styles.title}>
+            This week
+          </ThemedText>
           <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>
             {locationLabel}
           </ThemedText>
-        </View>
+        </Animated.View>
 
         {error && !board ? (
           <View style={styles.centered}>
             <ThemedText>{error}</ThemedText>
-            <Pressable onPress={() => void load()}>
-              <ThemedText type="linkPrimary">Try again</ThemedText>
-            </Pressable>
+            <ButterButton label="Try again" variant="yellow" onPress={() => void load()} />
           </View>
         ) : loading && !board ? (
           <View style={styles.centered}>
@@ -134,10 +138,16 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: Spacing.four,
+    gap: Spacing.one,
+  },
+  title: {
+    fontSize: Type.pageTitle,
+    lineHeight: 34,
   },
   centered: {
     paddingVertical: Spacing.six,
     alignItems: 'center',
-    gap: Spacing.two,
+    gap: Spacing.three,
+    paddingHorizontal: Spacing.four,
   },
 });

@@ -7,6 +7,16 @@ import '@/global.css';
 
 import { Platform } from 'react-native';
 
+/**
+ * Quiet Butter language (main app):
+ * - Canvas = cream background
+ * - Surfaces = backgroundElement (cards, chips idle)
+ * - Ink = text / secondary / borderInk (borders, primary CTAs)
+ * - Gold = primary accent (selected chip text, badges, handle)
+ *
+ * CTA / stepper lock: ink fill + gold label (match onboarding Continue).
+ * On-list steppers may use backgroundSelected + ink border instead of solid ink bar.
+ */
 export const Colors = {
   light: {
     text: '#000000',
@@ -64,6 +74,15 @@ export const Fonts = {
   }) as string,
 };
 
+/** Shared type sizes — prefer these over ad-hoc fontSize overrides. */
+export const Type = {
+  pageTitle: 28,
+  section: 22,
+  body: 16,
+  label: 14,
+  small: 13,
+} as const;
+
 export const Spacing = {
   half: 2,
   one: 4,
@@ -78,7 +97,17 @@ export const Radius = {
   input: 16,
   button: 16,
   card: 20,
+  sheet: 24,
   chip: 999,
+} as const;
+
+/** Shared bottom-sheet / modal chrome. */
+export const SheetChrome = {
+  topRadius: Radius.sheet,
+  handleWidth: 36,
+  handleHeight: 4,
+  /** Warm dim — softer than pure black Material scrim. */
+  scrim: 'rgba(40, 35, 20, 0.28)',
 } as const;
 
 export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;

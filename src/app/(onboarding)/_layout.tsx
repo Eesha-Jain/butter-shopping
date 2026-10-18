@@ -13,8 +13,15 @@ export default function OnboardingLayout() {
           animation: 'slide_from_right',
           // When a past step is reached via replace, animate like a back gesture.
           animationTypeForReplace: 'pop',
-        }}
-      />
+        }}>
+        {/* First paint / welcome: soft fade, not a horizontal slide "from somewhere". */}
+        <Stack.Screen name="index" options={{ animation: 'fade' }} />
+        <Stack.Screen name="welcome" options={{ animation: 'fade' }} />
+        <Stack.Screen name="account" />
+        <Stack.Screen name="eat" />
+        <Stack.Screen name="save" />
+        <Stack.Screen name="shop" />
+      </Stack>
     </OnboardingDraftProvider>
   );
 }

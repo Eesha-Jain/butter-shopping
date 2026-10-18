@@ -18,6 +18,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { FadeInDown, runOnJS } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useActiveList } from '@/auth/active-list';
 import { useGuestCart } from '@/auth/guest-cart-context';
 import { useSession } from '@/auth/session';
 import {
@@ -32,8 +33,10 @@ import {
   getStorePriceCentsByProductIds,
   getEffectiveGroceryCashbackBps,
   getGuestFavoriteIds,
-  getMyDefaultList,
+  getGuestFoodRules,
+  getGuestOnboardingDraft,
   getMyProfile,
+  saveGuestOnboardingDraft,
   getProductPromotionMap,
   getProductTraitsForIds,
   getProductsByIds,
@@ -44,7 +47,6 @@ import {
   listFoodTraits,
   listMyFavoriteProductIds,
   listMyFoodRules,
-  listMyListTargets,
   listMyLocations,
   listMyStapleProductIds,
   listProductsGroupedByCategory,
@@ -60,7 +62,6 @@ import {
   showErrorToast,
   showSuccessToast,
   updateListItem,
-  type ActiveListTarget,
   type CategoryProductSection,
   type FoodTrait,
   type NearbyStore,
@@ -71,7 +72,7 @@ import {
   type ShopSort,
   type UserLocation,
 } from '@/backend';
-import { iconForCategory } from '@/components/shop/category-icons';
+import { CategoryIcon } from '@/components/shop/category-icons';
 import { ProductCard } from '@/components/shop/product-card';
 import { ProductDetailSheet } from '@/components/shop/product-detail-sheet';
 import { ShopFiltersDrawer } from '@/components/shop/shop-filters-drawer';
@@ -81,7 +82,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { ButterChip } from '@/components/ui/butter-chip';
 import { ButterSearchField } from '@/components/ui/butter-search-field';
-import { BottomTabInset, Radius, Spacing } from '@/constants/theme';
+import { BottomTabInset, Radius, SheetChrome, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 const VISIBLE_CATEGORIES = 8;
@@ -114,6 +115,12 @@ export default function ShopScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { isGuest, requestSignIn, signOut } = useSession();
+  const {
+    targets: listTargets,
+    activeTarget,
+    setActiveTarget,
+    refreshTargets,
+  } = useActiveList();
   const guestCart = useGuestCart();
   const productSheetRef = useRef<BottomSheetModal>(null);
   const seededPrefsRef = useRef(false);
@@ -123,8 +130,6 @@ export default function ShopScreen() {
   const [avatarVersion, setAvatarVersion] = useState(0);
   const [profileOpen, setProfileOpen] = useState(false);
   const [location, setLocation] = useState<UserLocation | null>(null);
-  const [listTargets, setListTargets] = useState<ActiveListTarget[]>([]);
-  const [activeTarget, setActiveTarget] = useState<ActiveListTarget | null>(null);
   const [qtyMap, setQtyMap] = useState<Map<string, { listItemId: string; quantity: number }>>(
     new Map(),
   );
@@ -194,38 +199,28 @@ export default function ShopScreen() {
           setLocation(null);
           setDisplayName(null);
           setAvatarPath(null);
-          setListTargets([]);
-          setActiveTarget(null);
-          setPreferenceRules([]);
+          const guestPrefs = getGuestFoodRules();
+          setPreferenceRules(guestPrefs);
           if (!seededPrefsRef.current || refresh) {
-            setSessionRules([]);
+            setSessionRules(guestPrefs);
             seededPrefsRef.current = true;
           }
         } else {
-          const [locations, targets, foodRules, defaultTarget, profile] = await Promise.all([
+          const [locations, foodRules, profile] = await Promise.all([
             listMyLocations(),
-            listMyListTargets(),
             listMyFoodRules(),
-            getMyDefaultList(),
             getMyProfile(),
           ]);
+          await refreshTargets();
           setLocation(locations.find((row) => row.is_default) ?? locations[0] ?? null);
           setDisplayName(profile.display_name);
           setAvatarPath(profile.avatar_path);
-          setListTargets(targets);
           const prefs = rulesFromUserFoodRules(foodRules);
           setPreferenceRules(prefs);
           if (!seededPrefsRef.current || refresh) {
             setSessionRules(prefs);
             seededPrefsRef.current = true;
           }
-          setActiveTarget((current) => {
-            if (current && targets.some((row) => row.list.id === current.list.id)) {
-              return current;
-            }
-            return defaultTarget;
-          });
-          await refreshQtyMap(defaultTarget.list.id);
         }
         setShellReady(true);
         try {
@@ -240,7 +235,7 @@ export default function ShopScreen() {
         setIsRefreshing(false);
       }
     },
-    [isGuest, refreshQtyMap],
+    [isGuest, refreshTargets],
   );
 
   useEffect(() => {
@@ -249,6 +244,14 @@ export default function ShopScreen() {
     }, 0);
     return () => clearTimeout(timer);
   }, [loadShell]);
+
+  useEffect(() => {
+    if (isGuest || !activeTarget) return;
+    const timer = setTimeout(() => {
+      void refreshQtyMap(activeTarget.list.id);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [activeTarget, isGuest, refreshQtyMap]);
 
   useEffect(() => {
     if (!shellReady) return;
@@ -908,42 +911,19 @@ export default function ShopScreen() {
                   horizontal
                   showsHorizontalScrollIndicator={false}
                   contentContainerStyle={styles.chipRow}>
-                  <Pressable
+                  <ButterChip
+                    label="All stores"
+                    selected={selectedStore == null}
                     onPress={() => setSelectedStore(null)}
-                    style={[
-                      styles.chip,
-                      {
-                        backgroundColor:
-                          selectedStore == null ? theme.primary : theme.backgroundElement,
-                      },
-                    ]}>
-                    <ThemedText
-                      type="small"
-                      style={selectedStore == null ? { color: theme.primaryText } : undefined}>
-                      All stores
-                    </ThemedText>
-                  </Pressable>
-                  {nearbyStores.map((store) => {
-                    const selected = selectedStore?.id === store.id;
-                    return (
-                      <Pressable
-                        key={store.id}
-                        onPress={() => setSelectedStore(store)}
-                        style={[
-                          styles.chip,
-                          {
-                            backgroundColor: selected ? theme.primary : theme.backgroundElement,
-                          },
-                        ]}>
-                        <ThemedText
-                          type="small"
-                          numberOfLines={1}
-                          style={selected ? { color: theme.primaryText } : undefined}>
-                          {store.name}
-                        </ThemedText>
-                      </Pressable>
-                    );
-                  })}
+                  />
+                  {nearbyStores.map((store) => (
+                    <ButterChip
+                      key={store.id}
+                      label={store.name}
+                      selected={selectedStore?.id === store.id}
+                      onPress={() => setSelectedStore(store)}
+                    />
+                  ))}
                 </ScrollView>
               ) : null}
 
@@ -1052,7 +1032,6 @@ export default function ShopScreen() {
                   />
                   {visibleCategories.map((category) => {
                     const selected = selectedCategoryId === category.id;
-                    const symbol = iconForCategory(category.name);
                     return (
                       <ButterChip
                         key={category.id}
@@ -1063,10 +1042,10 @@ export default function ShopScreen() {
                           setSearch('');
                         }}
                         icon={
-                          <SymbolView
-                            name={{ ios: symbol, android: 'label', web: 'label' }}
+                          <CategoryIcon
+                            name={category.name}
                             size={16}
-                            tintColor={selected ? theme.primary : theme.text}
+                            color={selected ? theme.primary : theme.text}
                           />
                         }
                       />
@@ -1104,11 +1083,12 @@ export default function ShopScreen() {
                         product={item.product}
                         index={index}
                         sponsored={item.sponsored}
-                        priceLabel={
+                        saleBadge={
                           promotions.has(item.product.id)
                             ? formatPromotionBadge(promotions.get(item.product.id)!)
                             : null
                         }
+                        priceCents={shelfPrices.get(item.product.id)}
                         quantityOnList={effectiveQtyMap.get(item.product.id)?.quantity}
                         favorited={favoriteIds.has(item.product.id)}
                         onPress={() => openProduct(item.product)}
@@ -1142,6 +1122,7 @@ export default function ShopScreen() {
                             ? formatPromotionBadge(promotions.get(item.id)!)
                             : null
                         }
+                        priceCents={shelfPrices.get(item.id)}
                         quantityOnList={effectiveQtyMap.get(item.id)?.quantity}
                         favorited={favoriteIds.has(item.id)}
                         onPress={() => openProduct(item)}
@@ -1288,6 +1269,13 @@ export default function ShopScreen() {
               setSort(nextSort);
               setOnSaleOnly(nextSale);
               setFiltersOpen(false);
+              if (isGuest) {
+                saveGuestOnboardingDraft({
+                  ...getGuestOnboardingDraft(),
+                  foodRules: rules,
+                });
+                setPreferenceRules(rules);
+              }
             }}
           />
         ) : null}
@@ -1324,6 +1312,12 @@ export default function ShopScreen() {
               ? formatPromotionBadge(promotions.get(selectedProduct.id)!)
               : null
           }
+          promotion={
+            selectedProduct && promotions.has(selectedProduct.id)
+              ? promotions.get(selectedProduct.id)!
+              : null
+          }
+          preferenceRules={sessionRules}
           quantityOnList={
             selectedProduct ? effectiveQtyMap.get(selectedProduct.id)?.quantity : undefined
           }
@@ -1342,11 +1336,20 @@ export default function ShopScreen() {
           transparent
           onRequestClose={() => setMoreCategoriesOpen(false)}>
           <Pressable style={styles.moreBackdrop} onPress={() => setMoreCategoriesOpen(false)} />
-          <View style={[styles.moreSheet, { backgroundColor: theme.background }]}>
-            <ThemedText type="subtitle">More categories</ThemedText>
+          <View
+            style={[
+              styles.moreSheet,
+              {
+                backgroundColor: theme.background,
+                borderColor: theme.borderInk,
+              },
+            ]}>
+            <View style={[styles.moreHandle, { backgroundColor: theme.primary }]} />
+            <ThemedText type="smallBold" style={styles.moreTitle}>
+              More categories
+            </ThemedText>
             <ScrollView>
               {extraCategories.map((category) => {
-                const symbol = iconForCategory(category.name);
                 return (
                   <Pressable
                     key={category.id}
@@ -1355,12 +1358,8 @@ export default function ShopScreen() {
                       setSearch('');
                       setMoreCategoriesOpen(false);
                     }}
-                    style={styles.moreRow}>
-                    <SymbolView
-                      name={{ ios: symbol, android: 'label', web: 'label' }}
-                      size={20}
-                      tintColor={theme.text}
-                    />
+                    style={[styles.moreRow, { borderBottomColor: theme.border }]}>
+                    <CategoryIcon name={category.name} size={20} color={theme.text} />
                     <ThemedText>{category.name}</ThemedText>
                   </Pressable>
                 );
@@ -1509,19 +1508,32 @@ const styles = StyleSheet.create({
   },
   moreBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    backgroundColor: SheetChrome.scrim,
   },
   moreSheet: {
     maxHeight: '50%',
-    borderTopLeftRadius: Spacing.four,
-    borderTopRightRadius: Spacing.four,
+    borderTopLeftRadius: SheetChrome.topRadius,
+    borderTopRightRadius: SheetChrome.topRadius,
+    borderTopWidth: 2,
     padding: Spacing.four,
     gap: Spacing.two,
+  },
+  moreHandle: {
+    alignSelf: 'center',
+    width: SheetChrome.handleWidth,
+    height: SheetChrome.handleHeight,
+    borderRadius: 2,
+    marginBottom: Spacing.two,
+  },
+  moreTitle: {
+    fontSize: Type.section,
+    marginBottom: Spacing.one,
   },
   moreRow: {
     paddingVertical: Spacing.three,
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
 });

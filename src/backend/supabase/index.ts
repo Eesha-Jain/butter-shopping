@@ -7,6 +7,7 @@ export type {
   FoodRuleMode, FulfillmentMethod, GroupKind, TraitKind, TraitRelation, TripStatus
 } from '../types';
 export {
+  getOptionalUserId,
   getSession,
   onAuthStateChange,
   requestPasswordReset,
@@ -50,13 +51,16 @@ export {
 export type { SessionFoodRule, ShopSort } from './foodFilters';
 export {
   createGroup,
+  getGroup,
   joinGroup,
   leaveGroup,
   listGroupBalances,
   listGroupMembers,
+  listGroupMembersWithProfiles,
   listMyGroups,
-  updateGroup
+  updateGroup,
 } from './groups';
+export type { GroupMemberWithProfile } from './groups';
 export {
   addListItem,
   addRecipeToList,

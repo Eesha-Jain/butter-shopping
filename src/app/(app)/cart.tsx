@@ -1,5 +1,6 @@
 import { router } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useGuestCart } from '@/auth/guest-cart-context';
@@ -32,10 +33,12 @@ export default function CartScreen() {
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]} edges={['top']}>
       <View style={styles.frame}>
-        <Text style={[styles.title, { color: theme.text }]}>Cart</Text>
-        <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-          Review items, then place an order when you are ready.
-        </Text>
+        <Animated.View entering={FadeInDown.duration(280)} style={styles.headerBlock}>
+          <Text style={[styles.title, { color: theme.text }]}>Cart</Text>
+          <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
+            Review items, then place an order when you are ready.
+          </Text>
+        </Animated.View>
 
         {showGuestCart ? (
           items.length === 0 ? (
@@ -67,18 +70,25 @@ export default function CartScreen() {
                     </Text>
                   </View>
                   <View style={styles.rowActions}>
-                    <View style={[styles.stepper, { backgroundColor: theme.secondary }]}>
+                    <View
+                      style={[
+                        styles.stepper,
+                        {
+                          backgroundColor: theme.backgroundSelected,
+                          borderColor: theme.borderInk,
+                        },
+                      ]}>
                       <Text
                         onPress={() => setQuantity(item.id, item.quantity - 1)}
-                        style={[styles.stepLabel, { color: theme.primary }]}>
+                        style={[styles.stepLabel, { color: theme.text }]}>
                         −
                       </Text>
-                      <Text style={[styles.stepLabel, { color: theme.primary }]}>
+                      <Text style={[styles.stepLabel, { color: theme.text }]}>
                         {item.quantity}
                       </Text>
                       <Text
                         onPress={() => setQuantity(item.id, item.quantity + 1)}
-                        style={[styles.stepLabel, { color: theme.primary }]}>
+                        style={[styles.stepLabel, { color: theme.text }]}>
                         +
                       </Text>
                     </View>
@@ -131,6 +141,9 @@ const styles = StyleSheet.create({
     paddingBottom: BottomTabInset + Spacing.three,
     gap: Spacing.three,
   },
+  headerBlock: {
+    gap: Spacing.one,
+  },
   title: {
     fontFamily: Fonts.sansBold,
     fontSize: 28,
@@ -140,7 +153,6 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.sans,
     fontSize: 15,
     lineHeight: 22,
-    marginTop: -Spacing.two,
   },
   emptyBlock: {
     flex: 1,
@@ -190,6 +202,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderRadius: 18,
+    borderWidth: 2,
     paddingHorizontal: Spacing.two,
     gap: Spacing.three,
     minHeight: 36,

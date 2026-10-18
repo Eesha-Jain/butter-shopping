@@ -11,6 +11,7 @@ import { useEffect, useMemo } from 'react';
 import { ImageBackground, StyleSheet, useColorScheme } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { ActiveListProvider } from '@/auth/active-list';
 import { GuestCartProvider } from '@/auth/guest-cart-context';
 import { SessionProvider, useSession } from '@/auth/session';
 import { Colors } from '@/constants/theme';
@@ -56,20 +57,22 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={styles.background}>
       <SessionProvider>
-        <GuestCartProvider>
-          <BottomSheetModalProvider>
-            <ThemeProvider value={navigationTheme}>
-              <ImageBackground
-                source={require('@/assets/images/background.png')}
-                style={[styles.background, { backgroundColor: Colors[scheme].background }]}
-                imageStyle={styles.backgroundImage}
-                resizeMode="cover">
-                <SplashScreenController fontsReady={fontsLoaded || !!fontError} />
-                {fontsLoaded || fontError ? <RootNavigator /> : null}
-              </ImageBackground>
-            </ThemeProvider>
-          </BottomSheetModalProvider>
-        </GuestCartProvider>
+        <ActiveListProvider>
+          <GuestCartProvider>
+            <BottomSheetModalProvider>
+              <ThemeProvider value={navigationTheme}>
+                <ImageBackground
+                  source={require('@/assets/images/background.png')}
+                  style={[styles.background, { backgroundColor: Colors[scheme].background }]}
+                  imageStyle={styles.backgroundImage}
+                  resizeMode="cover">
+                  <SplashScreenController fontsReady={fontsLoaded || !!fontError} />
+                  {fontsLoaded || fontError ? <RootNavigator /> : null}
+                </ImageBackground>
+              </ThemeProvider>
+            </BottomSheetModalProvider>
+          </GuestCartProvider>
+        </ActiveListProvider>
       </SessionProvider>
     </GestureHandlerRootView>
   );
@@ -99,7 +102,7 @@ function RootNavigator() {
     return null;
   }
 
-  // First open: onboarding (prefs → account) even before sign-in.
+  // First open / incomplete prefs: welcome → auth → eat/save/shop.
   const showOnboarding = needsOnboardingFlow === true;
   const showApp = canUseApp && needsOnboardingFlow === false;
   // Returning users who finished onboarding but are signed out.
@@ -112,7 +115,7 @@ function RootNavigator() {
         contentStyle: { backgroundColor: 'transparent' },
       }}>
       <Stack.Protected guard={showOnboarding}>
-        <Stack.Screen name="(onboarding)" />
+        <Stack.Screen name="(onboarding)" options={{ animation: 'fade' }} />
       </Stack.Protected>
       <Stack.Protected guard={showApp}>
         <Stack.Screen name="(app)" />

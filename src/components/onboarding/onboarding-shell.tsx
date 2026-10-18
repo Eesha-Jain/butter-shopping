@@ -1,10 +1,12 @@
 import * as Haptics from 'expo-haptics';
-import { router } from 'expo-router';
+import { router, type Href } from 'expo-router';
 import { useEffect } from 'react';
 import { Keyboard, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
+  FadeIn,
   FadeInDown,
   FadeOutLeft,
+  ZoomIn,
   interpolate,
   useAnimatedStyle,
   useSharedValue,
@@ -20,19 +22,33 @@ const INK = '#000000';
 const BUBBLE = '#ffffff';
 const COMPACT_MS = 280;
 
+const STEP_HREF: Record<1 | 2 | 3 | 4 | 5, Href> = {
+  1: '/(onboarding)/welcome',
+  2: '/(onboarding)/account',
+  3: '/(onboarding)/eat',
+  4: '/(onboarding)/save',
+  5: '/(onboarding)/shop',
+};
+
 type Props = {
   step: 1 | 2 | 3 | 4 | 5;
-  title: string;
+  title?: string;
   subtitle?: string;
   children?: React.ReactNode;
-  onSkip: () => void;
+  onSkip?: () => void;
   onContinue: () => void;
   continueLabel?: string;
   skipLabel?: string;
   /** Hide the speech bubble and show title as a hero (welcome screen). */
   hero?: boolean;
+  /** Keep the cow but omit the speech bubble (e.g. account / auth step). */
+  hideBubble?: boolean;
   /** Hide the primary Continue button (e.g. account screen uses AuthForm CTAs). */
   hideContinue?: boolean;
+  /** Hide the step dots (welcome + auth). */
+  hideDots?: boolean;
+  /** Hide the top-right skip / continue-as-guest control. */
+  hideSkip?: boolean;
 };
 
 export function OnboardingShell({
@@ -45,7 +61,10 @@ export function OnboardingShell({
   continueLabel = 'Continue',
   skipLabel = 'Skip all',
   hero = false,
+  hideBubble = false,
   hideContinue = false,
+  hideDots = false,
+  hideSkip = false,
 }: Props) {
   const insets = useSafeAreaInsets();
   const compactProgress = useSharedValue(0);
@@ -85,6 +104,7 @@ export function OnboardingShell({
   };
 
   const handleSkip = () => {
+    if (!onSkip) return;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     onSkip();
   };
@@ -92,12 +112,12 @@ export function OnboardingShell({
   const goToStep = (n: 1 | 2 | 3 | 4 | 5) => {
     if (n >= step) return;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    // Pop the stack so the screen slides back (opposite of push / slide_from_right).
-    const count = step - n;
-    for (let i = 0; i < count; i++) {
-      if (router.canGoBack()) router.back();
-    }
+    // Pop to that route when it's in history; otherwise replace (e.g. after Skip).
+    // Do not loop router.back() — canGoBack() is stale until the queue runs.
+    router.dismissTo(STEP_HREF[n]);
   };
+
+  const showTopBar = !hideDots || !hideSkip;
 
   return (
     <View
@@ -109,60 +129,74 @@ export function OnboardingShell({
           paddingBottom: insets.bottom + Spacing.three,
         },
       ]}>
-      <View style={styles.topBar}>
-        <View style={styles.dots}>
-          {([1, 2, 3, 4, 5] as const).map((n) => {
-            const isCurrent = n === step;
-            const isPast = n < step;
-            return (
-              <Pressable
-                key={n}
-                onPress={() => goToStep(n)}
-                disabled={!isPast}
-                hitSlop={10}
-                accessibilityRole="button"
-                accessibilityLabel={`Onboarding step ${n}`}
-                accessibilityState={{ selected: isCurrent, disabled: !isPast }}>
-                <View
-                  style={[
-                    styles.dot,
-                    isCurrent ? styles.dotActive : isPast ? styles.dotPast : styles.dotIdle,
-                  ]}
-                />
-              </Pressable>
-            );
-          })}
+      {showTopBar ? (
+        <View style={styles.topBar}>
+          {hideDots ? (
+            <View />
+          ) : (
+            <View style={styles.dots}>
+              {([1, 2, 3, 4, 5] as const).map((n) => {
+                const isCurrent = n === step;
+                const isPast = n < step;
+                return (
+                  <Pressable
+                    key={n}
+                    onPress={() => goToStep(n)}
+                    disabled={!isPast}
+                    hitSlop={10}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Onboarding step ${n}`}
+                    accessibilityState={{ selected: isCurrent, disabled: !isPast }}>
+                    <View
+                      style={[
+                        styles.dot,
+                        isCurrent ? styles.dotActive : isPast ? styles.dotPast : styles.dotIdle,
+                      ]}
+                    />
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
+          {hideSkip ? null : (
+            <Pressable onPress={handleSkip} hitSlop={12} accessibilityRole="button">
+              <Text style={styles.skipTop}>{skipLabel}</Text>
+            </Pressable>
+          )}
         </View>
-        <Pressable onPress={handleSkip} hitSlop={12} accessibilityRole="button">
-          <Text style={styles.skipTop}>{skipLabel}</Text>
-        </Pressable>
-      </View>
+      ) : null}
 
       {hero ? (
         <View style={styles.heroCenter}>
-          <OnboardingCow compactProgress={compactProgress} />
-          <Animated.View
-            key={`hero-${step}`}
-            entering={FadeInDown.duration(320)}
-            style={[styles.heroBlock, heroTextStyle]}>
-            <Text style={styles.heroTitle}>{title}</Text>
-            {subtitle ? <Text style={styles.heroSubtitle}>{subtitle}</Text> : null}
+          <Animated.View entering={ZoomIn.duration(560).springify().damping(15).stiffness(120)}>
+            <OnboardingCow compactProgress={compactProgress} />
           </Animated.View>
+          {title ? (
+            <Animated.View
+              key={`hero-${step}`}
+              entering={FadeInDown.delay(180).duration(420)}
+              style={[styles.heroBlock, heroTextStyle]}>
+              <Text style={styles.heroTitle}>{title}</Text>
+              {subtitle ? <Text style={styles.heroSubtitle}>{subtitle}</Text> : null}
+            </Animated.View>
+          ) : null}
         </View>
       ) : (
         <>
           <OnboardingCow compactProgress={compactProgress} />
-          <Animated.View
-            key={`bubble-${step}`}
-            entering={FadeInDown.duration(320)}
-            exiting={FadeOutLeft.duration(180)}
-            style={[styles.bubbleBlock, bubbleStyle]}>
-            <View style={styles.tail} />
-            <View style={styles.bubble}>
-              <Text style={styles.bubbleTitle}>{title}</Text>
-              {subtitle ? <Text style={styles.bubbleSubtitle}>{subtitle}</Text> : null}
-            </View>
-          </Animated.View>
+          {!hideBubble && title ? (
+            <Animated.View
+              key={`bubble-${step}`}
+              entering={FadeInDown.duration(320)}
+              exiting={FadeOutLeft.duration(180)}
+              style={[styles.bubbleBlock, bubbleStyle]}>
+              <View style={styles.tail} />
+              <View style={styles.bubble}>
+                <Text style={styles.bubbleTitle}>{title}</Text>
+                {subtitle ? <Text style={styles.bubbleSubtitle}>{subtitle}</Text> : null}
+              </View>
+            </Animated.View>
+          ) : null}
           {children ? (
             <Animated.View
               key={`body-${step}`}
@@ -178,7 +212,9 @@ export function OnboardingShell({
       )}
 
       {hideContinue ? null : (
-        <View style={styles.footer}>
+        <Animated.View
+          entering={hero ? FadeIn.delay(380).duration(420) : undefined}
+          style={styles.footer}>
           <Pressable
             onPress={handleContinue}
             style={styles.continueBtn}
@@ -186,7 +222,7 @@ export function OnboardingShell({
             accessibilityLabel={continueLabel}>
             <Text style={styles.continueLabel}>{continueLabel}</Text>
           </Pressable>
-        </View>
+        </Animated.View>
       )}
     </View>
   );

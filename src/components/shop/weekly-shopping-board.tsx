@@ -1,15 +1,13 @@
+import { Image } from 'expo-image';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 
-import type { WeeklyBoardColumn, WeeklyShoppingBoard } from '@/backend';
+import type { WeeklyBoardChip, WeeklyBoardColumn, WeeklyShoppingBoard } from '@/backend';
+import { publicImageUrl } from '@/backend';
 import { ThemedText } from '@/components/themed-text';
-import { Fonts, Spacing } from '@/constants/theme';
+import { ButterButton } from '@/components/ui/butter-button';
+import { ButterChip } from '@/components/ui/butter-chip';
+import { Radius, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-
-const COLUMN_TONES = {
-  today: { bg: '#C8E6C9', text: '#1B5E20' },
-  recommended: { bg: '#FFE566', text: '#000000' },
-  bestDeal: { bg: '#A67C52', text: '#FFFFFF' },
-} as const;
 
 type Props = {
   board: WeeklyShoppingBoard | null;
@@ -18,39 +16,114 @@ type Props = {
   onColumnPress?: (column: WeeklyBoardColumn) => void;
 };
 
-function ColumnCard({
+const CHIP_LABEL: Record<WeeklyBoardColumn['id'], string> = {
+  today: 'Today',
+  recommended: 'Recommended',
+  bestDeal: 'Best deal',
+};
+
+function ProductThumb({ chip }: { chip: WeeklyBoardChip }) {
+  const theme = useTheme();
+  const imageUrl = publicImageUrl('public-assets', chip.imagePath);
+  return (
+    <View style={styles.thumbWrap}>
+      <View
+        style={[
+          styles.thumb,
+          { backgroundColor: theme.backgroundElement, borderColor: theme.borderInk },
+        ]}>
+        {imageUrl ? (
+          <Image source={{ uri: imageUrl }} style={styles.thumbImage} contentFit="contain" />
+        ) : (
+          <ThemedText type="smallBold" themeColor="textSecondary">
+            {chip.name.slice(0, 1).toUpperCase()}
+          </ThemedText>
+        )}
+      </View>
+      <ThemedText type="small" numberOfLines={2} style={styles.thumbName}>
+        {chip.name}
+      </ThemedText>
+    </View>
+  );
+}
+
+function DayCard({
   column,
+  featured,
   onPress,
   onSignIn,
 }: {
   column: WeeklyBoardColumn;
+  featured?: boolean;
   onPress?: () => void;
   onSignIn?: () => void;
 }) {
-  const tone = COLUMN_TONES[column.id];
-  const cards = [
-    {
-      key: 'main',
-      title: column.dateLabel,
-      body: column.headline,
-      sub: column.timeWindowLabel ?? column.detail,
-    },
-    {
-      key: 'chip',
-      title: column.chips[0]?.name ?? '—',
-      body: column.chips[0]?.brand ?? column.chips[1]?.name ?? column.detail,
-      sub: column.chips[1]?.name ?? null,
-    },
-  ];
+  const theme = useTheme();
+  const ctaLabel = column.needsSignIn
+    ? 'Sign in for deals'
+    : column.id === 'recommended'
+      ? 'Plan this trip'
+      : column.id === 'today'
+        ? 'Shop today'
+        : 'See deals';
 
   return (
-    <View style={styles.column}>
-      <ThemedText type="smallBold" style={styles.columnTitle} numberOfLines={2}>
-        {column.title}
-      </ThemedText>
-      {cards.map((card) => (
-        <Pressable
-          key={card.key}
+    <Pressable
+      onPress={() => {
+        if (column.needsSignIn && onSignIn) {
+          onSignIn();
+          return;
+        }
+        onPress?.();
+      }}
+      style={[
+        styles.card,
+        featured && styles.cardFeatured,
+        {
+          backgroundColor: theme.backgroundElement,
+          borderColor: theme.borderInk,
+        },
+      ]}>
+      {featured ? (
+        <View style={[styles.accentBar, { backgroundColor: theme.primary }]} />
+      ) : null}
+      <View style={styles.cardBody}>
+        <View style={styles.chipRow}>
+          <ButterChip
+            label={CHIP_LABEL[column.id]}
+            selected={featured ?? false}
+            onPress={() => {
+              if (column.needsSignIn && onSignIn) {
+                onSignIn();
+                return;
+              }
+              onPress?.();
+            }}
+          />
+        </View>
+        <ThemedText type="smallBold" style={featured ? styles.featuredDate : undefined}>
+          {column.dateLabel}
+        </ThemedText>
+        <ThemedText type={featured ? 'smallBold' : 'small'} numberOfLines={2}>
+          {column.headline}
+        </ThemedText>
+        {column.timeWindowLabel || column.detail ? (
+          <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>
+            {column.timeWindowLabel ?? column.detail}
+          </ThemedText>
+        ) : null}
+
+        {column.chips.length > 0 ? (
+          <View style={styles.thumbs}>
+            {column.chips.slice(0, featured ? 4 : 2).map((chip) => (
+              <ProductThumb key={chip.productId} chip={chip} />
+            ))}
+          </View>
+        ) : null}
+
+        <ButterButton
+          label={ctaLabel}
+          variant={featured ? 'ink' : column.needsSignIn ? 'yellow' : 'ghost'}
           onPress={() => {
             if (column.needsSignIn && onSignIn) {
               onSignIn();
@@ -58,21 +131,10 @@ function ColumnCard({
             }
             onPress?.();
           }}
-          style={[styles.card, { backgroundColor: tone.bg }]}>
-          <ThemedText type="smallBold" style={{ color: tone.text }} numberOfLines={2}>
-            {card.title}
-          </ThemedText>
-          <ThemedText type="small" style={{ color: tone.text }} numberOfLines={3}>
-            {card.body}
-          </ThemedText>
-          {card.sub ? (
-            <ThemedText type="small" style={{ color: tone.text, opacity: 0.9 }} numberOfLines={2}>
-              {card.sub}
-            </ThemedText>
-          ) : null}
-        </Pressable>
-      ))}
-    </View>
+          style={styles.cta}
+        />
+      </View>
+    </Pressable>
   );
 }
 
@@ -98,25 +160,42 @@ export function WeeklyShoppingBoardView({ board, loading, onSignIn, onColumnPres
     );
   }
 
+  const recommended = board.columns.find((c) => c.id === 'recommended');
+  const today = board.columns.find((c) => c.id === 'today');
+  const bestDeal = board.columns.find((c) => c.id === 'bestDeal');
+
   return (
     <View style={styles.wrap}>
-      <ThemedText type="subtitle" style={styles.heading}>
-        Weekly Shopping
-      </ThemedText>
       {board.foodPrefNote ? (
         <ThemedText type="small" themeColor="textSecondary" style={styles.note}>
           {board.foodPrefNote}
         </ThemedText>
       ) : null}
-      <View style={styles.row}>
-        {board.columns.map((column) => (
-          <ColumnCard
-            key={column.id}
-            column={column}
-            onSignIn={onSignIn}
-            onPress={() => onColumnPress?.(column)}
-          />
-        ))}
+
+      {recommended ? (
+        <DayCard
+          column={recommended}
+          featured
+          onSignIn={onSignIn}
+          onPress={() => onColumnPress?.(recommended)}
+        />
+      ) : null}
+
+      <View style={styles.secondaryRow}>
+        {today ? (
+          <View style={styles.secondaryCol}>
+            <DayCard column={today} onSignIn={onSignIn} onPress={() => onColumnPress?.(today)} />
+          </View>
+        ) : null}
+        {bestDeal ? (
+          <View style={styles.secondaryCol}>
+            <DayCard
+              column={bestDeal}
+              onSignIn={onSignIn}
+              onPress={() => onColumnPress?.(bestDeal)}
+            />
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -125,34 +204,74 @@ export function WeeklyShoppingBoardView({ board, loading, onSignIn, onColumnPres
 const styles = StyleSheet.create({
   wrap: {
     gap: Spacing.three,
-    paddingHorizontal: Spacing.three,
-  },
-  heading: {
-    textAlign: 'center',
-    fontFamily: Fonts.sansBold,
+    paddingHorizontal: Spacing.four,
   },
   note: {
     textAlign: 'center',
   },
-  row: {
+  card: {
+    borderWidth: 2,
+    borderRadius: Radius.card,
+    overflow: 'hidden',
+  },
+  cardFeatured: {
+    minHeight: 200,
+  },
+  accentBar: {
+    height: 6,
+    width: '100%',
+  },
+  cardBody: {
+    padding: Spacing.three,
+    gap: Spacing.two,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  featuredDate: {
+    fontSize: Type.section,
+  },
+  thumbs: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.two,
+    marginTop: Spacing.one,
+  },
+  thumbWrap: {
+    width: 64,
+    gap: Spacing.half,
+    alignItems: 'center',
+  },
+  thumb: {
+    width: 56,
+    height: 56,
+    borderRadius: Radius.button,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    padding: Spacing.half,
+  },
+  thumbImage: {
+    width: '100%',
+    height: '100%',
+  },
+  thumbName: {
+    textAlign: 'center',
+    fontSize: 11,
+    lineHeight: 14,
+  },
+  cta: {
+    marginTop: Spacing.one,
+  },
+  secondaryRow: {
     flexDirection: 'row',
     gap: Spacing.two,
-    alignItems: 'flex-start',
+    alignItems: 'stretch',
   },
-  column: {
+  secondaryCol: {
     flex: 1,
-    gap: Spacing.two,
-  },
-  columnTitle: {
-    textAlign: 'center',
-    minHeight: 36,
-  },
-  card: {
-    borderRadius: Spacing.three,
-    padding: Spacing.two,
-    gap: Spacing.one,
-    minHeight: 110,
-    justifyContent: 'flex-start',
   },
   loading: {
     paddingVertical: Spacing.five,

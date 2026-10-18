@@ -2,6 +2,7 @@ import { SymbolView } from 'expo-symbols';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
+  Keyboard,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -10,8 +11,9 @@ import {
   View,
 } from 'react-native';
 
-import { goToOnboardingAccount } from '@/auth/finish-onboarding';
+import { completeOnboardingWithDraft } from '@/auth/finish-onboarding';
 import { useOnboardingDraft } from '@/auth/onboarding-draft';
+import { useSession } from '@/auth/session';
 import { listColleges } from '@/backend';
 import {
   Chip,
@@ -36,12 +38,21 @@ const CASHBACK = [
 type CollegeOption = { id: string; name: string };
 
 export default function OnboardingSaveScreen() {
+  const { isGuest, finishOnboarding } = useSession();
   const draft = useOnboardingDraft();
   const [colleges, setColleges] = useState<CollegeOption[]>([]);
   const [query, setQuery] = useState(draft.collegeName ?? '');
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const studentSelected = draft.discountCodes.includes('student');
+
+  const finishPrefs = () => {
+    void completeOnboardingWithDraft({
+      isGuest,
+      finishOnboarding,
+      draft: draft.toPayload(),
+    });
+  };
 
   useEffect(() => {
     let active = true;
@@ -79,6 +90,7 @@ export default function OnboardingSaveScreen() {
     draft.setCollege({ id: row.id, name: row.name });
     setQuery(row.name);
     setPickerOpen(false);
+    Keyboard.dismiss();
   };
 
   const clearCollege = () => {
@@ -89,10 +101,10 @@ export default function OnboardingSaveScreen() {
 
   return (
     <OnboardingShell
-      step={3}
+      step={4}
       title="Any savings I should use?"
       subtitle="Discounts + cash back. No card numbers — just a tap."
-      onSkip={goToOnboardingAccount}
+      onSkip={finishPrefs}
       onContinue={() => router.push('/(onboarding)/shop')}>
       <ScrollView
         contentContainerStyle={styles.scroll}
