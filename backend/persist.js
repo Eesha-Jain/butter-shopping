@@ -62,7 +62,7 @@ export async function fetchProductByUpc(upc) {
  */
 export async function assignProductCategories() {
   if (!canPersist()) throw new Error("Persist is not configured.");
-  const categories = await rest("product_categories?parent_id=is.null&select=id,name");
+  const categories = await rest("product_categories?select=id,name");
   const byName = new Map((categories ?? []).map((row) => [String(row.name).toLowerCase(), row.id]));
   const products = await rest(
     "products?category_id=is.null&is_active=eq.true&select=id,name&limit=1000",
@@ -80,7 +80,7 @@ export async function assignProductCategories() {
       await rest(`products?id=eq.${product.id}`, {
         method: "PATCH",
         headers: { Prefer: "return=minimal" },
-        body: JSON.stringify({ category_id: categoryId }),
+        body: JSON.stringify({ category_id: categoryId, category_source: "keyword" }),
       });
       byCategory[categoryName] = (byCategory[categoryName] ?? 0) + 1;
       updated += 1;

@@ -220,6 +220,8 @@ export type Product = {
   brand: string | null;
   upc: string | null;
   category_id: string | null;
+  /** off | keyword | manual — how category_id was assigned */
+  category_source: 'off' | 'keyword' | 'manual' | null;
   size_base_amount: number | null;
   size_base_unit: 'g' | 'ml' | 'ct' | null;
   /** Overrides category typical_shelf_life_days when set. */
