@@ -15,6 +15,7 @@ export {
   hasCompletedOnboardingLocally,
   hasSeenWelcome,
   hasSignedInBefore,
+  getAiVoice,
   isAiTextReplyAudioEnabled,
   isGuest,
   markHasSignedIn,
@@ -22,6 +23,7 @@ export {
   markOnboardingCompletedLocally,
   markWelcomeSeen,
   setAiTextReplyAudioEnabled,
+  setAiVoice,
   setLocalGroceryCashbackBps,
 } from './preferences';
 export {
@@ -37,6 +39,7 @@ export {
   pickBestVisaOffer,
   visaOfferMatchesChain,
 } from './net-price';
+export type { AiVoice } from './preferences';
 export type { NetPriceBreakdown, VisaMerchantOffer } from './net-price';
 export type { CheapestShelf } from './supabase';
 export { fetchVisaMerchantOffers } from './visa-offers';
@@ -228,6 +231,7 @@ export {
   uploadMyAvatar,
   uploadPriceEvidence,
   voiceOrder,
+  speakAssistant,
   voiceOrderFromText,
 } from './supabase';
 

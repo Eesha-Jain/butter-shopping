@@ -14,6 +14,8 @@ const KEYS = {
   groceryCashbackBps: 'butter.groceryCashbackBps',
   /** '1' / unset = play spoken replies for typed AI input; '0' = silent text replies. */
   aiTextReplyAudio: 'butter.aiTextReplyAudio',
+  /** 'female' | 'male' | 'cow'. Cow moos; the reply text still shows the words. */
+  aiVoice: 'butter.aiVoice',
   activeListId: 'butter.activeListId',
 } as const;
 

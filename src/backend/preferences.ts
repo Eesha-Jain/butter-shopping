@@ -93,3 +93,16 @@ export function isAiTextReplyAudioEnabled(): boolean {
 export function setAiTextReplyAudioEnabled(enabled: boolean): void {
   setItem('aiTextReplyAudio', enabled ? '1' : '0');
 }
+
+export type AiVoice = 'female' | 'male' | 'cow';
+
+/** Spoken reply voice. Female is the default. Cow moos instead of reading the words. */
+export function getAiVoice(): AiVoice {
+  const raw = getItem('aiVoice');
+  if (raw === 'male' || raw === 'cow' || raw === 'female') return raw;
+  return 'female';
+}
+
+export function setAiVoice(voice: AiVoice): void {
+  setItem('aiVoice', voice);
+}

@@ -34,3 +34,6 @@ verify_jwt = true
 
 [functions.recipe-import]
 verify_jwt = true
+
+[functions.design-voices]
+verify_jwt = false
