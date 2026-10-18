@@ -48,19 +48,37 @@ export async function searchCategories(query: string): Promise<ProductCategory[]
   );
 }
 
-/** Top-level shopping categories (parent_id is null), ordered by name. */
+/**
+ * Shop aisle chips: top-level categories plus Produce children (Fruits, Vegetables).
+ * Ordered with Produce family first, then the rest alphabetically.
+ */
 export async function listCategories(input?: { limit?: number }): Promise<ProductCategory[]> {
-  return unwrap(
+  const limit = input?.limit ?? 50;
+  const top = unwrap(
     await supabase
       .from('product_categories')
       .select('*')
       .is('parent_id', null)
       .order('name')
-      .limit(input?.limit ?? 50),
+      .limit(limit),
   );
+  const produce = top.find((row) => row.name.toLowerCase() === 'produce');
+  let children: ProductCategory[] = [];
+  if (produce) {
+    children = unwrap(
+      await supabase
+        .from('product_categories')
+        .select('*')
+        .eq('parent_id', produce.id)
+        .order('name'),
+    );
+  }
+  const rest = top.filter((row) => row.name.toLowerCase() !== 'produce');
+  const ordered = produce ? [produce, ...children, ...rest] : [...top];
+  return ordered.slice(0, limit);
 }
 
-/** Active catalog products for browse. Optional category filter. */
+/** Active catalog products for browse. Optional category filter (Produce includes children). */
 export async function listActiveProducts(input?: {
   limit?: number;
   categoryId?: string | null;
@@ -72,7 +90,14 @@ export async function listActiveProducts(input?: {
     .order('name')
     .limit(input?.limit ?? 60);
   if (input?.categoryId) {
-    query = query.eq('category_id', input.categoryId);
+    const children = unwrap(
+      await supabase
+        .from('product_categories')
+        .select('id')
+        .eq('parent_id', input.categoryId),
+    );
+    const ids = [input.categoryId, ...children.map((row) => row.id)];
+    query = query.in('category_id', ids);
   }
   return unwrap(await query);
 }
