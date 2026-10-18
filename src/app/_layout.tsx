@@ -94,13 +94,16 @@ function RootNavigator() {
     return null;
   }
 
-  // Wait for onboarding gate once the user can enter the app.
-  if (canUseApp && needsOnboardingFlow == null) {
+  // Wait until the onboarding gate is resolved.
+  if (needsOnboardingFlow == null) {
     return null;
   }
 
-  const showOnboarding = canUseApp && needsOnboardingFlow === true;
+  // First open: onboarding (prefs → account) even before sign-in.
+  const showOnboarding = needsOnboardingFlow === true;
   const showApp = canUseApp && needsOnboardingFlow === false;
+  // Returning users who finished onboarding but are signed out.
+  const showAuth = !canUseApp && needsOnboardingFlow === false;
 
   return (
     <Stack
@@ -114,7 +117,7 @@ function RootNavigator() {
       <Stack.Protected guard={showApp}>
         <Stack.Screen name="(app)" />
       </Stack.Protected>
-      <Stack.Protected guard={!canUseApp}>
+      <Stack.Protected guard={showAuth}>
         <Stack.Screen name="(auth)" />
       </Stack.Protected>
     </Stack>

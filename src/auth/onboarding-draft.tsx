@@ -9,19 +9,27 @@ import {
 
 import type { SessionFoodRule } from '@/backend';
 
-export type TransportMode = 'walk' | 'bike' | 'drive' | 'transit' | 'rideshare';
+export type TransportMode = 'walk' | 'bike' | 'drive' | 'transit' | 'rideshare' | 'delivered';
 
-type OnboardingDraft = {
+export type OnboardingDraftPayload = {
   foodRules: SessionFoodRule[];
-  setFoodRules: (rules: SessionFoodRule[]) => void;
   discountCodes: string[];
-  toggleDiscount: (code: string) => void;
   cashbackBps: number | null;
-  setCashbackBps: (bps: number | null) => void;
-  transportMode: TransportMode | null;
-  setTransportMode: (mode: TransportMode | null) => void;
+  collegeId: string | null;
+  collegeName: string | null;
+  transportModes: TransportMode[];
   maxStores: number | null;
+};
+
+type OnboardingDraft = OnboardingDraftPayload & {
+  setFoodRules: (rules: SessionFoodRule[]) => void;
+  toggleDiscount: (code: string) => void;
+  setCashbackBps: (bps: number | null) => void;
+  setCollege: (input: { id: string | null; name: string | null }) => void;
+  toggleTransportMode: (mode: TransportMode) => void;
   setMaxStores: (n: number | null) => void;
+  /** Snapshot for persist / skip-all. */
+  toPayload: () => OnboardingDraftPayload;
   reset: () => void;
 };
 
@@ -39,7 +47,9 @@ export function OnboardingDraftProvider({ children }: PropsWithChildren) {
   const [foodRules, setFoodRules] = useState<SessionFoodRule[]>([]);
   const [discountCodes, setDiscountCodes] = useState<string[]>([]);
   const [cashbackBps, setCashbackBps] = useState<number | null>(null);
-  const [transportMode, setTransportMode] = useState<TransportMode | null>(null);
+  const [collegeId, setCollegeId] = useState<string | null>(null);
+  const [collegeName, setCollegeName] = useState<string | null>(null);
+  const [transportModes, setTransportModes] = useState<TransportMode[]>([]);
   const [maxStores, setMaxStores] = useState<number | null>(null);
 
   const toggleDiscount = useCallback((code: string) => {
@@ -48,11 +58,37 @@ export function OnboardingDraftProvider({ children }: PropsWithChildren) {
     );
   }, []);
 
+  const setCollege = useCallback((input: { id: string | null; name: string | null }) => {
+    setCollegeId(input.id);
+    setCollegeName(input.name);
+  }, []);
+
+  const toggleTransportMode = useCallback((mode: TransportMode) => {
+    setTransportModes((prev) =>
+      prev.includes(mode) ? prev.filter((row) => row !== mode) : [...prev, mode],
+    );
+  }, []);
+
+  const toPayload = useCallback(
+    (): OnboardingDraftPayload => ({
+      foodRules,
+      discountCodes,
+      cashbackBps,
+      collegeId,
+      collegeName,
+      transportModes,
+      maxStores,
+    }),
+    [foodRules, discountCodes, cashbackBps, collegeId, collegeName, transportModes, maxStores],
+  );
+
   const reset = useCallback(() => {
     setFoodRules([]);
     setDiscountCodes([]);
     setCashbackBps(null);
-    setTransportMode(null);
+    setCollegeId(null);
+    setCollegeName(null);
+    setTransportModes([]);
     setMaxStores(null);
   }, []);
 
@@ -64,10 +100,14 @@ export function OnboardingDraftProvider({ children }: PropsWithChildren) {
       toggleDiscount,
       cashbackBps,
       setCashbackBps,
-      transportMode,
-      setTransportMode,
+      collegeId,
+      collegeName,
+      setCollege,
+      transportModes,
+      toggleTransportMode,
       maxStores,
       setMaxStores,
+      toPayload,
       reset,
     }),
     [
@@ -75,8 +115,13 @@ export function OnboardingDraftProvider({ children }: PropsWithChildren) {
       discountCodes,
       toggleDiscount,
       cashbackBps,
-      transportMode,
+      collegeId,
+      collegeName,
+      setCollege,
+      transportModes,
+      toggleTransportMode,
       maxStores,
+      toPayload,
       reset,
     ],
   );

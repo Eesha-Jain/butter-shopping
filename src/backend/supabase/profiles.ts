@@ -30,6 +30,7 @@ export async function updateMyProfile(
       | 'preferred_days'
       | 'max_stores_per_trip'
       | 'transport_mode'
+      | 'transport_modes'
       | 'grocery_cashback_bps'
       | 'onboarding_completed_at'
     >

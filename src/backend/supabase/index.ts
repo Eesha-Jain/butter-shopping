@@ -111,6 +111,7 @@ export {
 export type { BestShopDay, ShopDayReason, ShopDayStoreHint } from './planning';
 export { getWeeklyShoppingBoard } from './weeklyShopping';
 export type { WeeklyBoardChip, WeeklyBoardColumn, WeeklyShoppingBoard } from './weeklyShopping';
+export { listColleges, resolveCollegeId } from './colleges';
 export {
   getMyProfile,
   listFoodTraits,

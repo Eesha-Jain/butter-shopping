@@ -7,7 +7,6 @@
     "icon": "./assets/images/icon.png",
     "scheme": "buttershopping",
     "userInterfaceStyle": "automatic",
-
     "ios": {
       "icon": "./assets/images/icon.png",
       "infoPlist": {
@@ -21,6 +20,7 @@
     },
     "android": {
       "package": "com.pigggsteam.buttershopping",
+      "softwareKeyboardLayoutMode": "pan",
       "adaptiveIcon": {
         "backgroundColor": "#000000",
         "foregroundImage": "./assets/images/icon.png"
@@ -78,7 +78,8 @@
         }
       ],
       "@livekit/react-native-expo-plugin",
-      "@config-plugins/react-native-webrtc"
+      "@config-plugins/react-native-webrtc",
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true,

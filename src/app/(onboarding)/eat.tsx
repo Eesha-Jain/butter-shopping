@@ -1,10 +1,9 @@
-import { router } from 'expo-router';
+import { router, type Href } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { persistOnboardingDraft } from '@/auth/finish-onboarding';
+import { goToOnboardingAccount } from '@/auth/finish-onboarding';
 import { useOnboardingDraft } from '@/auth/onboarding-draft';
-import { useSession } from '@/auth/session';
 import {
   groupTraitsForFilterUi,
   listFoodTraits,
@@ -22,7 +21,6 @@ const AVOID_LIMIT = 8;
 const PREFER_LIMIT = 6;
 
 export default function OnboardingEatScreen() {
-  const { isGuest, finishOnboarding } = useSession();
   const draft = useOnboardingDraft();
   const [traits, setTraits] = useState<FoodTrait[]>([]);
   const [loading, setLoading] = useState(true);
@@ -57,29 +55,13 @@ export default function OnboardingEatScreen() {
     draft.setFoodRules(exists ? without : [...without, { trait_id: traitId, mode }]);
   };
 
-  const skipAll = async () => {
-    try {
-      await persistOnboardingDraft({
-        isGuest,
-        foodRules: draft.foodRules,
-        discountCodes: draft.discountCodes,
-        cashbackBps: draft.cashbackBps,
-        transportMode: draft.transportMode,
-        maxStores: draft.maxStores,
-      });
-    } catch {
-      // Enter app anyway.
-    }
-    finishOnboarding();
-  };
-
   return (
     <OnboardingShell
-      step={1}
+      step={2}
       title="Anything you avoid or prefer?"
       subtitle="Tap a few — you can change this later."
-      onSkip={() => void skipAll()}
-      onContinue={() => router.push('/(onboarding)/save')}>
+      onSkip={goToOnboardingAccount}
+      onContinue={() => router.push('/(onboarding)/save' as Href)}>
       {loading ? (
         <ActivityIndicator color="#000000" />
       ) : (

@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -7,7 +8,6 @@ import {
   StyleSheet,
   View,
 } from 'react-native';
-import { Link } from 'expo-router';
 
 import {
   buildStandardList,
@@ -25,7 +25,9 @@ import {
 } from '@/backend';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { BottomTabInset, Spacing } from '@/constants/theme';
+import { ButterButton } from '@/components/ui/butter-button';
+import { ButterChip } from '@/components/ui/butter-chip';
+import { BottomTabInset, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 export default function GroceryListScreen() {
@@ -105,7 +107,7 @@ export default function GroceryListScreen() {
   if (isLoading && items == null) {
     return (
       <ThemedView style={styles.centered}>
-        <ActivityIndicator color={theme.text} />
+        <ActivityIndicator color={theme.secondary} />
         <ThemedText type="small" themeColor="textSecondary">
           Loading your list
         </ThemedText>
@@ -116,10 +118,8 @@ export default function GroceryListScreen() {
   if (error && items == null) {
     return (
       <ThemedView style={styles.centered}>
-        <ThemedText>{error}</ThemedText>
-        <Pressable onPress={() => void load()}>
-          <ThemedText type="linkPrimary">Try again</ThemedText>
-        </Pressable>
+        <ThemedText type="smallBold">{error}</ThemedText>
+        <ButterButton label="Try again" variant="yellow" onPress={() => void load()} />
       </ThemedView>
     );
   }
@@ -148,68 +148,101 @@ export default function GroceryListScreen() {
               {error}
             </ThemedText>
           ) : null}
-          <ThemedText type="subtitle">Grocery list</ThemedText>
+          <ThemedText type="smallBold" style={styles.pageTitle}>
+            Grocery list
+          </ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
-            Built from staples you eat and recipes you pick. Cart is for checkout later.
+            Staples + recipes you pick. Cart is for checkout later.
           </ThemedText>
           {bestShopDay ? (
-            <ThemedText type="small" themeColor="textSecondary">
-              Suggested shop day {bestShopDay.shopOn}: {bestShopDay.reasonLabel}
-            </ThemedText>
+            <View
+              style={[
+                styles.hintCard,
+                { backgroundColor: theme.backgroundElement, borderColor: theme.borderInk },
+              ]}>
+              <ThemedText type="smallBold">Shop day tip</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                {bestShopDay.shopOn}: {bestShopDay.reasonLabel}
+              </ThemedText>
+            </View>
           ) : null}
           <View style={styles.actions}>
-            <Pressable
-              onPress={() => void onBuild()}
+            <ButterButton
+              label={isBuilding ? 'Building…' : 'Build standard list'}
+              variant="ink"
               disabled={isBuilding}
-              style={[styles.button, { borderColor: theme.border, opacity: isBuilding ? 0.6 : 1 }]}>
-              <ThemedText type="smallBold">{isBuilding ? 'Building…' : 'Build standard list'}</ThemedText>
-            </Pressable>
-            <Link href="/staples" asChild>
-              <Pressable
-                style={StyleSheet.flatten([styles.button, { borderColor: theme.border }])}>
-                <ThemedText type="smallBold">Staples</ThemedText>
-              </Pressable>
-            </Link>
+              onPress={() => void onBuild()}
+              style={styles.actionBtn}
+            />
+            <ButterButton
+              label="Staples"
+              variant="ghost"
+              onPress={() => router.push('/staples')}
+              style={styles.actionBtn}
+            />
           </View>
           {recipes.length > 0 ? (
             <View style={styles.recipeBlock}>
               <ThemedText type="smallBold">Include recipes</ThemedText>
-              {recipes.map((recipe) => {
-                const selected = selectedRecipeIds.includes(recipe.id);
-                return (
-                  <Pressable
+              <View style={styles.recipeChips}>
+                {recipes.map((recipe) => (
+                  <ButterChip
                     key={recipe.id}
+                    label={recipe.title}
+                    selected={selectedRecipeIds.includes(recipe.id)}
                     onPress={() => toggleRecipe(recipe.id)}
-                    style={[
-                      styles.recipeChip,
-                      {
-                        backgroundColor: selected ? theme.backgroundSelected : theme.backgroundElement,
-                      },
-                    ]}>
-                    <ThemedText type="small">{recipe.title}</ThemedText>
-                  </Pressable>
-                );
-              })}
+                  />
+                ))}
+              </View>
             </View>
           ) : null}
         </View>
       }
       ListEmptyComponent={
         <ThemedView style={styles.empty}>
-          <ThemedText type="subtitle">No items yet</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            Add staples you eat often, pick recipes, then build your standard list.
+          <ThemedText type="smallBold" style={styles.pageTitle}>
+            No items yet
           </ThemedText>
+          <ThemedText type="small" themeColor="textSecondary" style={styles.emptyCopy}>
+            Add staples, pick recipes, then build your standard list.
+          </ThemedText>
+          <ButterButton label="Browse shop" variant="yellow" onPress={() => router.push('/')} />
         </ThemedView>
       }
       renderItem={({ item }) => (
-        <ThemedView type="backgroundElement" style={styles.row}>
+        <View
+          style={[
+            styles.row,
+            {
+              backgroundColor: theme.background,
+              borderColor: item.done_at ? theme.border : theme.borderInk,
+            },
+          ]}>
+          <Pressable
+            style={[
+              styles.check,
+              {
+                backgroundColor: item.done_at ? theme.secondary : theme.background,
+                borderColor: theme.borderInk,
+              },
+            ]}
+            onPress={() => {
+              void setListItemDone(item.id, !item.done_at).then(() => load(true));
+            }}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: Boolean(item.done_at) }}>
+            {item.done_at ? (
+              <ThemedText type="smallBold" style={{ color: theme.primary }}>
+                ✓
+              </ThemedText>
+            ) : null}
+          </Pressable>
           <Pressable
             style={styles.rowMain}
             onPress={() => {
               void setListItemDone(item.id, !item.done_at).then(() => load(true));
             }}>
-            <ThemedText style={item.done_at ? styles.doneText : undefined}>
+            <ThemedText type="smallBold" style={item.done_at ? styles.doneText : undefined}>
               {labelForItem(item)}
             </ThemedText>
             <ThemedText type="small" themeColor="textSecondary">
@@ -222,12 +255,13 @@ export default function GroceryListScreen() {
                 return;
               }
               void removeListItem(item.id).then(() => load(true));
-            }}>
-            <ThemedText type="small" themeColor="textSecondary">
+            }}
+            hitSlop={8}>
+            <ThemedText type="smallBold" themeColor="textSecondary">
               Remove
             </ThemedText>
           </Pressable>
-        </ThemedView>
+        </View>
       )}
     />
   );
@@ -256,8 +290,11 @@ const styles = StyleSheet.create({
   },
   empty: {
     padding: Spacing.four,
-    gap: Spacing.two,
+    gap: Spacing.three,
     alignItems: 'center',
+  },
+  emptyCopy: {
+    textAlign: 'center',
   },
   listContent: {
     paddingHorizontal: Spacing.three,
@@ -268,33 +305,52 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     paddingVertical: Spacing.three,
   },
+  pageTitle: {
+    fontSize: 28,
+    lineHeight: 32,
+  },
+  hintCard: {
+    borderWidth: 2,
+    borderRadius: Radius.card,
+    padding: Spacing.three,
+    gap: Spacing.one,
+  },
   actions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.two,
   },
-  button: {
-    borderWidth: 1,
-    borderRadius: Spacing.three,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
+  actionBtn: {
+    flexGrow: 1,
+    minWidth: 140,
+    minHeight: 48,
+    paddingVertical: Spacing.two + 2,
   },
   recipeBlock: {
     gap: Spacing.two,
     marginTop: Spacing.two,
   },
-  recipeChip: {
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-    borderRadius: Spacing.three,
+  recipeChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.two,
   },
   row: {
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.three,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
+    borderWidth: 2,
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
+  },
+  check: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   rowMain: {
     flex: 1,
@@ -302,6 +358,6 @@ const styles = StyleSheet.create({
   },
   doneText: {
     textDecorationLine: 'line-through',
-    opacity: 0.6,
+    opacity: 0.55,
   },
 });

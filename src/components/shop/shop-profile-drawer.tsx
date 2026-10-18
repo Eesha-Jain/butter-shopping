@@ -27,7 +27,9 @@ import {
   showSuccessToast,
   uploadMyAvatar,
 } from '@/backend';
+import type { AuthMode } from '@/auth/auth-mode';
 import { ThemedText } from '@/components/themed-text';
+import { ButterButton } from '@/components/ui/butter-button';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -42,7 +44,7 @@ type Props = {
   isGuest: boolean;
   onClose: () => void;
   onSignOut: () => void | Promise<void>;
-  onSignIn: () => void;
+  onRequestAuth: (mode: AuthMode) => void;
   onAvatarChanged: (path: string | null) => void;
 };
 
@@ -54,7 +56,7 @@ export function ShopProfileDrawer({
   isGuest,
   onClose,
   onSignOut,
-  onSignIn,
+  onRequestAuth,
   onAvatarChanged,
 }: Props) {
   const theme = useTheme();
@@ -118,7 +120,7 @@ export function ShopProfileDrawer({
 
   const pickAndUpload = async (source: 'library' | 'camera') => {
     if (isGuest) {
-      onSignIn();
+      onRequestAuth('signUp');
       return;
     }
 
@@ -168,7 +170,7 @@ export function ShopProfileDrawer({
 
   const handleChangePhoto = () => {
     if (isGuest) {
-      onSignIn();
+      onRequestAuth('signUp');
       return;
     }
 
@@ -295,10 +297,10 @@ export function ShopProfileDrawer({
           <View style={styles.avatarBlock}>
             <Pressable
               onPress={handleChangePhoto}
-              disabled={uploading}
+              disabled={uploading || isGuest}
               style={[styles.avatarRing, { backgroundColor: theme.backgroundElement }]}
               accessibilityRole="button"
-              accessibilityLabel="Change profile photo">
+              accessibilityLabel={isGuest ? 'Guest account' : 'Change profile photo'}>
               {avatarUrl ? (
                 <Image source={{ uri: avatarUrl }} style={styles.avatarImage} contentFit="cover" />
               ) : (
@@ -318,11 +320,11 @@ export function ShopProfileDrawer({
                 </View>
               ) : null}
             </Pressable>
-            <Pressable onPress={handleChangePhoto} disabled={uploading}>
-              <ThemedText type="linkPrimary">
-                {isGuest ? 'Sign in to add a photo' : 'Change photo'}
-              </ThemedText>
-            </Pressable>
+            {!isGuest ? (
+              <Pressable onPress={handleChangePhoto} disabled={uploading}>
+                <ThemedText type="linkPrimary">Change photo</ThemedText>
+              </Pressable>
+            ) : null}
             {!isGuest && avatarPath ? (
               <Pressable onPress={handleRemovePhoto} disabled={uploading}>
                 <ThemedText type="small" themeColor="textSecondary">
@@ -334,10 +336,12 @@ export function ShopProfileDrawer({
 
           <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
             <ThemedText type="smallBold">
-              {isGuest ? 'Guest' : displayName?.trim() || 'Butter shopper'}
+              {isGuest ? 'Guest account' : displayName?.trim() || 'Butter shopper'}
             </ThemedText>
             <ThemedText type="small" themeColor="textSecondary">
-              {isGuest ? 'Browsing without an account' : 'Signed in'}
+              {isGuest
+                ? "You're browsing without an account. Sign up or log in to save your cart and preferences."
+                : 'Signed in'}
             </ThemedText>
           </View>
 
@@ -379,13 +383,18 @@ export function ShopProfileDrawer({
           </View>
 
           {isGuest ? (
-            <Pressable
-              onPress={() => requestClose(onSignIn)}
-              style={[styles.primaryBtn, { backgroundColor: theme.primary }]}>
-              <ThemedText type="smallBold" style={{ color: theme.primaryText }}>
-                Sign in
-              </ThemedText>
-            </Pressable>
+            <View style={styles.authActions}>
+              <ButterButton
+                label="Sign up"
+                variant="ink"
+                onPress={() => requestClose(() => onRequestAuth('signUp'))}
+              />
+              <ButterButton
+                label="Log in"
+                variant="ghost"
+                onPress={() => requestClose(() => onRequestAuth('logIn'))}
+              />
+            </View>
           ) : (
             <Pressable
               onPress={() => requestClose(onSignOut)}
@@ -466,10 +475,8 @@ const styles = StyleSheet.create({
     padding: Spacing.three,
     gap: Spacing.one,
   },
-  primaryBtn: {
-    alignItems: 'center',
-    paddingVertical: Spacing.three,
-    borderRadius: Spacing.three,
+  authActions: {
+    gap: Spacing.two,
   },
   outlineBtn: {
     alignItems: 'center',

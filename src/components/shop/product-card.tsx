@@ -1,10 +1,11 @@
+import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import type { Product } from '@/backend';
 import { publicImageUrl } from '@/backend';
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 type Props = {
@@ -45,15 +46,15 @@ export function ProductCard({
         styles.card,
         compact && styles.cardCompact,
         {
-          backgroundColor: theme.backgroundElement,
-          borderColor: onList ? theme.primary : 'transparent',
-          borderWidth: onList ? 1.5 : 0,
+          backgroundColor: theme.background,
+          borderColor: onList ? theme.secondary : theme.borderInk,
+          borderWidth: onList ? 2.5 : 2,
         },
       ]}>
       <View style={[styles.imageWrap, compact && styles.imageWrapCompact]}>
         {saleBadge ? (
-          <View style={[styles.badge, { backgroundColor: theme.primary }]}>
-            <ThemedText type="small" style={{ color: theme.primaryText }}>
+          <View style={[styles.badge, { backgroundColor: theme.primary, borderColor: theme.borderInk }]}>
+            <ThemedText type="smallBold" style={{ color: theme.primaryText }}>
               {saleBadge}
             </ThemedText>
           </View>
@@ -62,7 +63,7 @@ export function ProductCard({
           <Pressable
             onPress={onToggleFavorite}
             hitSlop={8}
-            style={[styles.heartBtn, { backgroundColor: theme.background }]}>
+            style={[styles.heartBtn, { backgroundColor: theme.background, borderColor: theme.borderInk }]}>
             <ThemedText type="smallBold" style={{ color: favorited ? theme.error : theme.textSecondary }}>
               {favorited ? '♥' : '♡'}
             </ThemedText>
@@ -71,7 +72,7 @@ export function ProductCard({
         {imageUrl ? (
           <Image source={{ uri: imageUrl }} style={styles.image} contentFit="cover" />
         ) : (
-          <View style={[styles.imagePlaceholder, { backgroundColor: theme.backgroundSelected }]} />
+          <View style={[styles.imagePlaceholder, { backgroundColor: theme.backgroundElement }]} />
         )}
       </View>
       <View style={styles.body}>
@@ -91,27 +92,42 @@ export function ProductCard({
       </View>
       <View style={styles.actions}>
         {onList ? (
-          <View style={[styles.stepper, { backgroundColor: theme.primary }]}>
-            <Pressable onPress={onDecrement} hitSlop={8} style={styles.stepBtn}>
-              <ThemedText type="smallBold" style={{ color: theme.primaryText }}>
+          <View style={[styles.stepper, { backgroundColor: theme.secondary }]}>
+            <Pressable
+              onPress={() => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                onDecrement();
+              }}
+              hitSlop={8}
+              style={styles.stepBtn}>
+              <ThemedText type="smallBold" style={{ color: theme.primary }}>
                 −
               </ThemedText>
             </Pressable>
-            <ThemedText type="smallBold" style={{ color: theme.primaryText }}>
+            <ThemedText type="smallBold" style={{ color: theme.primary }}>
               {quantityOnList}
             </ThemedText>
-            <Pressable onPress={onIncrement} hitSlop={8} style={styles.stepBtn}>
-              <ThemedText type="smallBold" style={{ color: theme.primaryText }}>
+            <Pressable
+              onPress={() => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                onIncrement();
+              }}
+              hitSlop={8}
+              style={styles.stepBtn}>
+              <ThemedText type="smallBold" style={{ color: theme.primary }}>
                 +
               </ThemedText>
             </Pressable>
           </View>
         ) : (
           <Pressable
-            onPress={onAdd}
-            style={[styles.addBtn, { backgroundColor: theme.primary }]}
+            onPress={() => {
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              onAdd();
+            }}
+            style={[styles.addBtn, { backgroundColor: theme.secondary }]}
             hitSlop={8}>
-            <ThemedText type="smallBold" style={{ color: theme.primaryText }}>
+            <ThemedText type="smallBold" style={{ color: theme.primary }}>
               +
             </ThemedText>
           </Pressable>
@@ -124,7 +140,7 @@ export function ProductCard({
 const styles = StyleSheet.create({
   card: {
     flex: 1,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
     padding: Spacing.two,
     gap: Spacing.two,
     minHeight: 180,
@@ -157,6 +173,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.two,
     paddingVertical: Spacing.half,
     borderRadius: Spacing.one,
+    borderWidth: 1.5,
   },
   heartBtn: {
     position: 'absolute',
@@ -168,6 +185,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1.5,
   },
   body: {
     gap: 2,

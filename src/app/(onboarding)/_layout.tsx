@@ -11,6 +11,8 @@ export default function OnboardingLayout() {
           headerShown: false,
           contentStyle: { backgroundColor: ONBOARDING_YELLOW },
           animation: 'slide_from_right',
+          // When a past step is reached via replace, animate like a back gesture.
+          animationTypeForReplace: 'pop',
         }}
       />
     </OnboardingDraftProvider>

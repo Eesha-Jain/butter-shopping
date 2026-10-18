@@ -10,32 +10,38 @@ import { Platform } from 'react-native';
 export const Colors = {
   light: {
     text: '#000000',
-    background: '#ffffff',
-    backgroundElement: '#F0F0F3',
-    backgroundSelected: '#E0E1E6',
-    textSecondary: '#60646C',
+    /** Warm off-white canvas — calmer than onboarding yellow, warmer than pure white. */
+    background: '#FFFBF0',
+    /** Cream card / chip surface. */
+    backgroundElement: '#FFF8E7',
+    backgroundSelected: '#FFE9A8',
+    textSecondary: '#5C5A52',
     primary: '#ffd700',
     primaryDark: '#998100',
     primaryText: '#000000',
     secondary: '#000000',
     accentSoft: '#f0e68c',
-    border: '#D8D8DE',
+    /** Soft divider border. */
+    border: '#E6DFC8',
+    /** Strong ink border for interactive surfaces (chips, cards, inputs). */
+    borderInk: '#000000',
     borderError: '#E5484D',
     error: '#E5484D',
     tint: '#ffd700',
   },
   dark: {
     text: '#ffffff',
-    background: '#000000',
-    backgroundElement: '#212225',
-    backgroundSelected: '#2E3135',
+    background: '#12110E',
+    backgroundElement: '#1E1C18',
+    backgroundSelected: '#2E2A22',
     textSecondary: '#B0B4BA',
     primary: '#ffd700',
-    primaryDark: '#998100',
+    primaryDark: '#ffd700',
     primaryText: '#000000',
     secondary: '#F5F5F5',
     accentSoft: '#f0e68c',
     border: '#3A3A3E',
+    borderInk: '#ffd700',
     borderError: '#E5484D',
     error: '#FF6369',
     tint: '#ffd700',
@@ -71,7 +77,8 @@ export const Spacing = {
 export const Radius = {
   input: 16,
   button: 16,
-  card: 24,
+  card: 20,
+  chip: 999,
 } as const;
 
 export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;

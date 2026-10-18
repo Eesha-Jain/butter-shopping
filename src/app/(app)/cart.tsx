@@ -1,9 +1,11 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { router } from 'expo-router';
+import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useGuestCart } from '@/auth/guest-cart-context';
 import { useRequireAccount } from '@/auth/require-account';
 import { useSession } from '@/auth/session';
+import { ButterButton } from '@/components/ui/butter-button';
 import { BottomTabInset, Fonts, MaxContentWidth, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -28,22 +30,34 @@ export default function CartScreen() {
   const showGuestCart = isGuest || !session;
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]} edges={['top']}>
       <View style={styles.frame}>
         <Text style={[styles.title, { color: theme.text }]}>Cart</Text>
+        <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
+          Review items, then place an order when you are ready.
+        </Text>
 
         {showGuestCart ? (
           items.length === 0 ? (
-            <Text style={[styles.empty, { color: theme.textSecondary }]}>
-              Your cart is empty. Browse the shop and add items — you can check out after creating
-              an account.
-            </Text>
+            <View style={styles.emptyBlock}>
+              <Text style={[styles.emptyTitle, { color: theme.text }]}>Your cart is empty</Text>
+              <Text style={[styles.empty, { color: theme.textSecondary }]}>
+                Browse the shop and add a few chops — checkout is one account away.
+              </Text>
+              <ButterButton label="Browse shop" variant="yellow" onPress={() => router.push('/')} />
+            </View>
           ) : (
             <View style={styles.list}>
               {items.map((item) => (
                 <View
                   key={item.id}
-                  style={[styles.row, { borderColor: theme.border, backgroundColor: theme.background }]}>
+                  style={[
+                    styles.row,
+                    {
+                      borderColor: theme.borderInk,
+                      backgroundColor: theme.background,
+                    },
+                  ]}>
                   <View style={styles.rowBody}>
                     <Text style={[styles.itemName, { color: theme.text }]}>
                       {item.customName ?? `Product ${item.productId?.slice(0, 8) ?? ''}`}
@@ -53,49 +67,50 @@ export default function CartScreen() {
                     </Text>
                   </View>
                   <View style={styles.rowActions}>
-                    <Pressable
-                      onPress={() => setQuantity(item.id, item.quantity - 1)}
-                      hitSlop={8}
-                      style={styles.qtyBtn}>
-                      <Text style={{ color: theme.text, fontFamily: Fonts.sansBold }}>−</Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => setQuantity(item.id, item.quantity + 1)}
-                      hitSlop={8}
-                      style={styles.qtyBtn}>
-                      <Text style={{ color: theme.text, fontFamily: Fonts.sansBold }}>+</Text>
-                    </Pressable>
-                    <Pressable onPress={() => removeItem(item.id)} hitSlop={8}>
-                      <Text style={{ color: theme.error, fontFamily: Fonts.sans, fontSize: 13 }}>
-                        Remove
+                    <View style={[styles.stepper, { backgroundColor: theme.secondary }]}>
+                      <Text
+                        onPress={() => setQuantity(item.id, item.quantity - 1)}
+                        style={[styles.stepLabel, { color: theme.primary }]}>
+                        −
                       </Text>
-                    </Pressable>
+                      <Text style={[styles.stepLabel, { color: theme.primary }]}>
+                        {item.quantity}
+                      </Text>
+                      <Text
+                        onPress={() => setQuantity(item.id, item.quantity + 1)}
+                        style={[styles.stepLabel, { color: theme.primary }]}>
+                        +
+                      </Text>
+                    </View>
+                    <Text
+                      onPress={() => removeItem(item.id)}
+                      style={{ color: theme.error, fontFamily: Fonts.sansBold, fontSize: 13 }}>
+                      Remove
+                    </Text>
                   </View>
                 </View>
               ))}
             </View>
           )
         ) : (
-          <Text style={[styles.empty, { color: theme.textSecondary }]}>
-            Your shared grocery list will show here once shopping is wired up.
-          </Text>
+          <View style={styles.emptyBlock}>
+            <Text style={[styles.emptyTitle, { color: theme.text }]}>List coming soon</Text>
+            <Text style={[styles.empty, { color: theme.textSecondary }]}>
+              Your shared grocery list will show here once shopping is wired up.
+            </Text>
+            <ButterButton label="Browse shop" variant="ghost" onPress={() => router.push('/')} />
+          </View>
         )}
 
-        <Pressable
-          onPress={onCheckout}
-          style={({ pressed }) => [
-            styles.checkout,
-            {
-              backgroundColor: theme.primary,
-              opacity: pressed ? 0.85 : 1,
-            },
-          ]}>
-          <Text style={[styles.checkoutLabel, { color: theme.primaryText }]}>Place order</Text>
-        </Pressable>
-        {!session ? (
-          <Text style={[styles.hint, { color: theme.textSecondary }]}>
-            Guests can build a cart; an account is required to order.
-          </Text>
+        {showGuestCart && items.length > 0 ? (
+          <>
+            <ButterButton label="Place order" variant="ink" onPress={onCheckout} />
+            {!session ? (
+              <Text style={[styles.hint, { color: theme.textSecondary }]}>
+                Guests can build a cart; an account is required to order.
+              </Text>
+            ) : null}
+          </>
         ) : null}
       </View>
     </SafeAreaView>
@@ -119,18 +134,37 @@ const styles = StyleSheet.create({
   title: {
     fontFamily: Fonts.sansBold,
     fontSize: 28,
+    lineHeight: 32,
+  },
+  subtitle: {
+    fontFamily: Fonts.sans,
+    fontSize: 15,
+    lineHeight: 22,
+    marginTop: -Spacing.two,
+  },
+  emptyBlock: {
+    flex: 1,
+    justifyContent: 'center',
+    gap: Spacing.three,
+    alignItems: 'stretch',
+  },
+  emptyTitle: {
+    fontFamily: Fonts.sansBold,
+    fontSize: 22,
+    textAlign: 'center',
   },
   empty: {
     fontFamily: Fonts.sans,
     fontSize: 15,
     lineHeight: 22,
+    textAlign: 'center',
   },
   list: {
     gap: Spacing.two,
     flex: 1,
   },
   row: {
-    borderWidth: 1,
+    borderWidth: 2,
     borderRadius: Radius.card,
     padding: Spacing.three,
     gap: Spacing.two,
@@ -149,20 +183,21 @@ const styles = StyleSheet.create({
   rowActions: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     gap: Spacing.three,
   },
-  qtyBtn: {
-    minWidth: 28,
+  stepper: {
+    flexDirection: 'row',
     alignItems: 'center',
+    borderRadius: 18,
+    paddingHorizontal: Spacing.two,
+    gap: Spacing.three,
+    minHeight: 36,
   },
-  checkout: {
-    borderRadius: Radius.button,
-    paddingVertical: Spacing.three,
-    alignItems: 'center',
-  },
-  checkoutLabel: {
+  stepLabel: {
     fontFamily: Fonts.sansBold,
     fontSize: 16,
+    paddingHorizontal: Spacing.one,
   },
   hint: {
     fontFamily: Fonts.sans,

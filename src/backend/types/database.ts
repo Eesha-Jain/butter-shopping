@@ -183,6 +183,10 @@ export type Database = {
         };
         Returns: string;
       };
+      ensure_college: {
+        Args: { p_name: string };
+        Returns: string;
+      };
     };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
@@ -348,10 +352,13 @@ export type Profile = {
   weekly_budget_cents: number | null;
   preferred_days: number[] | null;
   max_stores_per_trip: number | null;
-  transport_mode: 'walk' | 'bike' | 'drive' | 'transit' | 'rideshare' | null;
+  /** Primary / first transport mode (legacy single-select). */
+  transport_mode: 'walk' | 'bike' | 'drive' | 'transit' | 'rideshare' | 'delivered' | null;
+  /** How the shopper gets groceries (multi-select). */
+  transport_modes: ('walk' | 'bike' | 'drive' | 'transit' | 'rideshare' | 'delivered')[] | null;
   /** Grocery cashback in basis points (e.g. 300 = 3%). Never a card number. */
   grocery_cashback_bps: number | null;
-  /** When Eat/Save/Shop onboarding was finished or skipped. */
+  /** When onboarding was finished or skipped. */
   onboarding_completed_at: string | null;
   created_at: string;
   updated_at: string;

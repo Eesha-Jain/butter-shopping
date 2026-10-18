@@ -1,4 +1,5 @@
 import { type BottomSheetModal } from '@gorhom/bottom-sheet';
+import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -11,11 +12,10 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
-  TextInput,
   View,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { runOnJS } from 'react-native-reanimated';
+import Animated, { FadeInDown, runOnJS } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useGuestCart } from '@/auth/guest-cart-context';
@@ -48,6 +48,7 @@ import {
   listProductsGroupedByCategory,
   listTrending,
   messageFromUnknown,
+  publicImageUrl,
   removeListItem,
   resolveShopZip,
   rulesFromUserFoodRules,
@@ -74,7 +75,9 @@ import { ShopProfileDrawer } from '@/components/shop/shop-profile-drawer';
 import { TrendingBlobCard } from '@/components/shop/trending-blob-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { BottomTabInset, Fonts, Spacing } from '@/constants/theme';
+import { ButterChip } from '@/components/ui/butter-chip';
+import { ButterSearchField } from '@/components/ui/butter-search-field';
+import { BottomTabInset, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 const VISIBLE_CATEGORIES = 8;
@@ -601,6 +604,10 @@ export default function ShopScreen() {
     setProfileOpen(true);
   }, []);
 
+  const avatarBaseUrl = publicImageUrl('avatars', avatarPath);
+  const avatarUrl = avatarBaseUrl ? `${avatarBaseUrl}?t=${avatarVersion}` : null;
+  const headerName = isGuest ? 'Guest' : displayName?.trim() || 'Butter shopper';
+
   // Swipe left opens the profile panel (also accepts a rightward pull from the left edge).
   const leftEdgeSwipe = useMemo(
     () =>
@@ -777,61 +784,68 @@ export default function ShopScreen() {
             />
           }
           ListHeaderComponent={
-            <View style={styles.header}>
-              <View style={styles.locationRow}>
+            <Animated.View entering={FadeInDown.duration(280)} style={styles.header}>
+              <View style={styles.brandRow}>
                 <Pressable
                   onPress={openProfile}
                   hitSlop={8}
-                  style={[styles.iconBtn, { backgroundColor: theme.backgroundElement }]}
+                  style={[
+                    styles.avatarBtn,
+                    {
+                      backgroundColor: theme.backgroundElement,
+                      borderColor: theme.borderInk,
+                    },
+                  ]}
                   accessibilityRole="button"
                   accessibilityLabel="Open profile">
-                  <SymbolView
-                    name={{ ios: 'person.crop.circle', android: 'account_circle', web: 'account_circle' }}
-                    size={22}
-                    tintColor={theme.text}
-                  />
+                  {avatarUrl ? (
+                    <Image source={{ uri: avatarUrl }} style={styles.avatarImage} contentFit="cover" />
+                  ) : (
+                    <SymbolView
+                      name={{
+                        ios: 'person.crop.circle.fill',
+                        android: 'account_circle',
+                        web: 'account_circle',
+                      }}
+                      size={28}
+                      tintColor={theme.textSecondary}
+                    />
+                  )}
                 </Pressable>
-                <ThemedText type="smallBold">Near</ThemedText>
-                <ThemedText
-                  type="small"
-                  themeColor="textSecondary"
-                  numberOfLines={2}
-                  style={styles.flex}>
-                  {isGuest ? 'Sign in to save a default location' : formatLocation(location)}
-                </ThemedText>
+                <View style={styles.flex}>
+                  <ThemedText type="smallBold" style={styles.brandTitle} numberOfLines={1}>
+                    {headerName}
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>
+                    {isGuest
+                      ? 'Near you · sign in to save a location'
+                      : `Near ${formatLocation(location)}`}
+                  </ThemedText>
+                </View>
               </View>
 
               <View style={styles.searchRow}>
-                <View
-                  style={[
-                    styles.searchField,
-                    {
-                      backgroundColor: theme.backgroundElement,
-                      borderColor: theme.border,
-                    },
-                  ]}>
-                  <SymbolView
-                    name={{ ios: 'magnifyingglass', android: 'search', web: 'search' }}
-                    size={18}
-                    tintColor={theme.textSecondary}
-                  />
-                  <TextInput
-                    value={search}
-                    onChangeText={setSearch}
-                    placeholder="Search products"
-                    placeholderTextColor={theme.textSecondary}
-                    style={[styles.searchInput, { color: theme.text }]}
-                    autoCorrect={false}
-                    autoCapitalize="none"
-                    clearButtonMode="while-editing"
-                    returnKeyType="search"
-                    onSubmitEditing={() => void handleSearchSubmit()}
-                    accessibilityLabel="Search products"
-                  />
-                </View>
+                <ButterSearchField
+                  value={search}
+                  onChangeText={setSearch}
+                  placeholder="Search products"
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                  clearButtonMode="while-editing"
+                  returnKeyType="search"
+                  onSubmitEditing={() => void handleSearchSubmit()}
+                  accessibilityLabel="Search products"
+                />
                 <Pressable
-                  onPress={openFilters}
-                  style={[styles.iconBtn, { backgroundColor: theme.primary }]}
+                  onPress={() => {
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    openFilters();
+                  }}
+                  style={[
+                    styles.iconBtn,
+                    styles.filterBtn,
+                    { backgroundColor: theme.secondary },
+                  ]}
                   accessibilityRole="button"
                   accessibilityLabel="Open filters">
                   <SymbolView
@@ -841,7 +855,7 @@ export default function ShopScreen() {
                       web: 'filter_list',
                     }}
                     size={22}
-                    tintColor={theme.primaryText}
+                    tintColor={theme.primary}
                   />
                 </Pressable>
               </View>
@@ -854,25 +868,15 @@ export default function ShopScreen() {
                   {listTargets.map((target) => {
                     const selected = activeTarget?.list.id === target.list.id;
                     return (
-                      <Pressable
+                      <ButterChip
                         key={target.list.id}
+                        label={target.group.name}
+                        selected={selected}
                         onPress={() => {
                           setActiveTarget(target);
                           void refreshQtyMap(target.list.id);
                         }}
-                        style={[
-                          styles.chip,
-                          {
-                            backgroundColor: selected ? theme.primary : theme.backgroundElement,
-                          },
-                        ]}>
-                        <ThemedText
-                          type="small"
-                          style={selected ? { color: theme.primaryText } : undefined}
-                          numberOfLines={1}>
-                          {target.group.name}
-                        </ThemedText>
-                      </Pressable>
+                      />
                     );
                   })}
                 </ScrollView>
@@ -885,117 +889,87 @@ export default function ShopScreen() {
               )}
 
               <View style={styles.section}>
-                <ThemedText type="subtitle">Category</ThemedText>
+                <ThemedText type="smallBold" style={styles.sectionHeading}>
+                  Category
+                </ThemedText>
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}
                   contentContainerStyle={styles.chipRow}>
-                  <Pressable
+                  <ButterChip
+                    label="All"
+                    selected={selectedCategoryId == null && !favoritesOnly}
                     onPress={() => {
                       setSelectedCategoryId(null);
                       setSearch('');
                     }}
-                    style={[
-                      styles.chip,
-                      styles.chipWithIcon,
-                      {
-                        backgroundColor:
+                    icon={
+                      <SymbolView
+                        name={{ ios: 'square.grid.2x2.fill', android: 'grid_view', web: 'grid_view' }}
+                        size={16}
+                        tintColor={
                           selectedCategoryId == null && !favoritesOnly
                             ? theme.primary
-                            : theme.backgroundElement,
-                      },
-                    ]}>
-                    <SymbolView
-                      name={{ ios: 'square.grid.2x2.fill', android: 'grid_view', web: 'grid_view' }}
-                      size={16}
-                      tintColor={
-                        selectedCategoryId == null && !favoritesOnly
-                          ? theme.primaryText
-                          : theme.text
-                      }
-                    />
-                    <ThemedText
-                      type="small"
-                      style={
-                        selectedCategoryId == null && !favoritesOnly
-                          ? { color: theme.primaryText }
-                          : undefined
-                      }>
-                      All
-                    </ThemedText>
-                  </Pressable>
-                  <Pressable
+                            : theme.text
+                        }
+                      />
+                    }
+                  />
+                  <ButterChip
+                    label="Favorites"
+                    selected={favoritesOnly}
                     onPress={() => setFavoritesOnly((value) => !value)}
-                    style={[
-                      styles.chip,
-                      styles.chipWithIcon,
-                      {
-                        backgroundColor: favoritesOnly ? theme.primary : theme.backgroundElement,
-                      },
-                    ]}>
-                    <SymbolView
-                      name={{ ios: 'heart.fill', android: 'favorite', web: 'favorite' }}
-                      size={16}
-                      tintColor={favoritesOnly ? theme.primaryText : theme.text}
-                    />
-                    <ThemedText
-                      type="small"
-                      style={favoritesOnly ? { color: theme.primaryText } : undefined}>
-                      Favorites
-                    </ThemedText>
-                  </Pressable>
+                    icon={
+                      <SymbolView
+                        name={{ ios: 'heart.fill', android: 'favorite', web: 'favorite' }}
+                        size={16}
+                        tintColor={favoritesOnly ? theme.primary : theme.text}
+                      />
+                    }
+                  />
                   {visibleCategories.map((category) => {
                     const selected = selectedCategoryId === category.id;
                     const symbol = iconForCategory(category.name);
                     return (
-                      <Pressable
+                      <ButterChip
                         key={category.id}
+                        label={category.name}
+                        selected={selected}
                         onPress={() => {
                           setSelectedCategoryId(category.id);
                           setSearch('');
                         }}
-                        style={[
-                          styles.chip,
-                          styles.chipWithIcon,
-                          {
-                            backgroundColor: selected ? theme.primary : theme.backgroundElement,
-                          },
-                        ]}>
-                        <SymbolView
-                          name={{ ios: symbol, android: 'label', web: 'label' }}
-                          size={16}
-                          tintColor={selected ? theme.primaryText : theme.text}
-                        />
-                        <ThemedText
-                          type="small"
-                          style={selected ? { color: theme.primaryText } : undefined}>
-                          {category.name}
-                        </ThemedText>
-                      </Pressable>
+                        icon={
+                          <SymbolView
+                            name={{ ios: symbol, android: 'label', web: 'label' }}
+                            size={16}
+                            tintColor={selected ? theme.primary : theme.text}
+                          />
+                        }
+                      />
                     );
                   })}
                   {extraCategories.length > 0 ? (
-                    <Pressable
+                    <ButterChip
+                      label="More"
                       onPress={() => setMoreCategoriesOpen(true)}
-                      style={[
-                        styles.chip,
-                        styles.chipWithIcon,
-                        { backgroundColor: theme.backgroundElement },
-                      ]}>
-                      <SymbolView
-                        name={{ ios: 'ellipsis.circle', android: 'more_horiz', web: 'more_horiz' }}
-                        size={16}
-                        tintColor={theme.text}
-                      />
-                      <ThemedText type="small">More</ThemedText>
-                    </Pressable>
+                      icon={
+                        <SymbolView
+                          name={{ ios: 'ellipsis.circle', android: 'more_horiz', web: 'more_horiz' }}
+                          size={16}
+                          tintColor={theme.text}
+                        />
+                      }
+                    />
                   ) : null}
                 </ScrollView>
               </View>
 
               {displayTrending.length > 0 && !favoritesOnly && !isSearching ? (
                 <View style={styles.section}>
-                  <ThemedText type="subtitle">Trending</ThemedText>
+                  <ThemedText type="smallBold" style={styles.sectionHeading}>
+                    Trending
+                  </ThemedText>
                   <FlatList
                     horizontal
                     data={displayTrending}
@@ -1027,7 +1001,9 @@ export default function ShopScreen() {
 
               {staplesArePersonal && displayStaples.length > 0 && !favoritesOnly && !isSearching ? (
                 <View style={styles.section}>
-                  <ThemedText type="subtitle">Your staples</ThemedText>
+                  <ThemedText type="smallBold" style={styles.sectionHeading}>
+                    Your staples
+                  </ThemedText>
                   <FlatList
                     horizontal
                     data={displayStaples}
@@ -1058,7 +1034,7 @@ export default function ShopScreen() {
 
               {!sectionedHome ? (
                 <View style={styles.productsHeader}>
-                  <ThemedText type="subtitle">
+                  <ThemedText type="smallBold" style={styles.sectionHeading}>
                     {isSearching
                       ? `Results for “${searchQuery}”`
                       : favoritesOnly
@@ -1070,7 +1046,7 @@ export default function ShopScreen() {
                   </ThemedText>
                   {checkingStores ? (
                     <View style={styles.checkingRow}>
-                      <ActivityIndicator size="small" color={theme.primary} />
+                      <ActivityIndicator size="small" color={theme.secondary} />
                       <ThemedText type="small" themeColor="textSecondary">
                         Checking nearby stores…
                       </ThemedText>
@@ -1078,18 +1054,19 @@ export default function ShopScreen() {
                   ) : null}
                 </View>
               ) : null}
-            </View>
+            </Animated.View>
           }
           ListEmptyComponent={
             <ThemedView style={styles.empty}>
-              <ThemedText type="small" themeColor="textSecondary">
+              <ThemedText type="smallBold">Nothing here yet</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
                 {checkingStores
                   ? 'Looking up products at nearby stores…'
                   : favoritesOnly && !isSearching
-                    ? 'No favorites yet. Tap the heart on a product to save it here.'
+                    ? 'Tap the heart on a product to save favorites here.'
                     : isSearching
-                      ? 'No products match. Try another search, Clear all in Filters, or another category.'
-                      : 'Catalog is empty. Run the campus staple bootstrap on the price proxy, then pull to refresh.'}
+                      ? 'Try another search, clear filters, or pick a category.'
+                      : 'Pull to refresh — or search for something you love.'}
               </ThemedText>
             </ThemedView>
           }
@@ -1106,13 +1083,13 @@ export default function ShopScreen() {
                 return (
                   <View style={styles.categorySection}>
                     <View style={styles.sectionTitleRow}>
-                      <ThemedText type="subtitle" style={styles.flex}>
+                      <ThemedText type="smallBold" style={[styles.flex, styles.sectionHeading]}>
                         {section.category.name}
                       </ThemedText>
                       <Pressable
                         onPress={() => void toggleCategoryExpand(section.category.id)}
                         hitSlop={8}>
-                        <ThemedText type="small" themeColor="textSecondary">
+                        <ThemedText type="smallBold" themeColor="textSecondary">
                           Show less
                         </ThemedText>
                       </Pressable>
@@ -1132,7 +1109,7 @@ export default function ShopScreen() {
               return (
                 <View style={styles.categorySection}>
                   <View style={styles.sectionTitleRow}>
-                    <ThemedText type="subtitle" style={styles.flex}>
+                    <ThemedText type="smallBold" style={[styles.flex, styles.sectionHeading]}>
                       {section.category.name}
                     </ThemedText>
                     <Pressable
@@ -1140,9 +1117,9 @@ export default function ShopScreen() {
                       hitSlop={8}
                       disabled={expanding}>
                       {expanding ? (
-                        <ActivityIndicator size="small" color={theme.primary} />
+                        <ActivityIndicator size="small" color={theme.secondary} />
                       ) : (
-                        <ThemedText type="small" themeColor="textSecondary">
+                        <ThemedText type="smallBold" themeColor="textSecondary">
                           See more
                         </ThemedText>
                       )}
@@ -1197,9 +1174,9 @@ export default function ShopScreen() {
             avatarVersion={avatarVersion}
             isGuest={isGuest}
             onClose={() => setProfileOpen(false)}
-            onSignIn={() => {
+            onRequestAuth={(mode) => {
               setProfileOpen(false);
-              requestSignIn();
+              requestSignIn(mode);
             }}
             onSignOut={async () => {
               setProfileOpen(false);
@@ -1297,10 +1274,18 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.two,
     paddingBottom: Spacing.two,
   },
-  locationRow: {
+  brandRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.two,
+    gap: Spacing.three,
+  },
+  brandTitle: {
+    fontSize: 28,
+    lineHeight: 32,
+  },
+  sectionHeading: {
+    fontSize: 22,
+    lineHeight: 28,
   },
   flex: {
     flex: 1,
@@ -1310,43 +1295,34 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     alignItems: 'center',
   },
-  searchField: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.two,
-    borderWidth: 1,
-    borderRadius: Spacing.three,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-  },
-  searchInput: {
-    flex: 1,
-    padding: 0,
-    fontFamily: Fonts.sans,
-    fontSize: 16,
-  },
   iconBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: Spacing.three,
+    width: 48,
+    height: 48,
+    borderRadius: Radius.button,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  avatarBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+  },
+  filterBtn: {
+    width: 48,
+    height: 48,
   },
   chipRow: {
     flexDirection: 'row',
     gap: Spacing.two,
     alignItems: 'center',
-  },
-  chip: {
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-    borderRadius: Spacing.three,
-  },
-  chipWithIcon: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.one,
   },
   section: {
     gap: Spacing.two,
@@ -1383,6 +1359,7 @@ const styles = StyleSheet.create({
   empty: {
     padding: Spacing.four,
     alignItems: 'center',
+    gap: Spacing.two,
   },
   edgeHitLeft: {
     position: 'absolute',

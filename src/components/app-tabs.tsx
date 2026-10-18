@@ -10,13 +10,13 @@ export default function AppTabs() {
   return (
     <NativeTabs
       backgroundColor={colors.background}
-      indicatorColor={colors.primaryDark}
-      tintColor={colors.primaryDark}
-      iconColor={{ default: colors.textSecondary, selected: colors.primaryDark }}
+      indicatorColor={colors.primary}
+      tintColor={colors.text}
+      iconColor={{ default: colors.textSecondary, selected: colors.text }}
       labelStyle={{
-        fontFamily: Fonts.sans,
+        fontFamily: Fonts.sansBold,
         color: colors.textSecondary,
-        selected: { color: colors.primaryDark },
+        selected: { color: colors.text },
       }}>
       <NativeTabs.Trigger name="index">
         <NativeTabs.Trigger.Label>Shop</NativeTabs.Trigger.Label>
