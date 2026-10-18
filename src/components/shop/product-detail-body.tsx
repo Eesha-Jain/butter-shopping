@@ -1,7 +1,10 @@
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
+import { SymbolView } from 'expo-symbols';
+import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 
 import { useSession } from '@/auth/session';
 import {
@@ -18,7 +21,6 @@ import {
   reportStoreProductAvailability,
   resolveShopZip,
   runAction,
-  setGroceryCashbackBps,
   showErrorToast,
   showSuccessToast,
   uploadPriceEvidence,
@@ -29,7 +31,6 @@ import {
 } from '@/backend';
 import type { FoodTrait, Promotion } from '@/backend/types';
 import { ThemedText } from '@/components/themed-text';
-import { ButterChip } from '@/components/ui/butter-chip';
 import { Fonts, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -63,6 +64,21 @@ function isReportableOffer(offer: ProductStoreOffer): boolean {
   return Boolean(offer.storeId) && offer.storeId !== 'open-prices';
 }
 
+const STORE_SEARCH_URLS: [RegExp, string][] = [
+  [/fred\s*meyer/i, 'https://www.fredmeyer.com/search?query='],
+  [/qfc/i, 'https://www.qfc.com/search?query='],
+  [/kroger/i, 'https://www.kroger.com/search?query='],
+  [/safeway/i, 'https://www.safeway.com/shop/search-results.html?q='],
+  [/trader\s*joe/i, 'https://www.traderjoes.com/home/search?q='],
+  [/whole\s*foods/i, 'https://www.wholefoodsmarket.com/search?text='],
+];
+
+function storeSearchUrl(storeLabel: string, productName: string): string {
+  const match = STORE_SEARCH_URLS.find(([pattern]) => pattern.test(storeLabel));
+  if (match) return `${match[1]}${encodeURIComponent(productName)}`;
+  return `https://www.google.com/search?q=${encodeURIComponent(`${storeLabel} ${productName}`)}`;
+}
+
 function formatPromoEnds(promo: Promotion): string | null {
   try {
     const ends = new Date(promo.ends_at);
@@ -77,14 +93,8 @@ function formatGroupLabel(code: string): string {
   return `${code.charAt(0).toUpperCase()}${code.slice(1)} deal`;
 }
 
-const CASHBACK_CHIPS = [
-  { bps: 100, label: '1%' },
-  { bps: 200, label: '2%' },
-  { bps: 300, label: '3%+' },
-] as const;
-
 /**
- * Store price comparison, promo/trait chips, cash back prompt, and price/stock reporting.
+ * Store price comparison (net of profile cash back), promo/trait chips, and price/stock reporting.
  * Mount with `key={product.id}` so per-product state resets.
  */
 export function ProductDetailBody({ product, saleBadge, promotion, preferenceRules = [] }: Props) {
@@ -94,7 +104,6 @@ export function ProductDetailBody({ product, saleBadge, promotion, preferenceRul
   const [offersLoading, setOffersLoading] = useState(true);
   const [visaOffers, setVisaOffers] = useState<VisaMerchantOffer[]>([]);
   const [cashbackBps, setCashbackBps] = useState<number | null>(null);
-  const [showCashbackPrompt, setShowCashbackPrompt] = useState(false);
   const [checkingStores, setCheckingStores] = useState(true);
   const [reportingStoreId, setReportingStoreId] = useState<string | null>(null);
   const [reportPriceText, setReportPriceText] = useState('');
@@ -104,7 +113,6 @@ export function ProductDetailBody({ product, saleBadge, promotion, preferenceRul
   const [reportError, setReportError] = useState<string | null>(null);
   const [matchLabels, setMatchLabels] = useState<string[]>([]);
   const [otherStoresOpen, setOtherStoresOpen] = useState(false);
-  const [wrongOpenStoreId, setWrongOpenStoreId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -119,7 +127,6 @@ export function ProductDetailBody({ product, saleBadge, promotion, preferenceRul
         setOffers(rows);
         setVisaOffers(visa.offers);
         setCashbackBps(bps);
-        setShowCashbackPrompt(bps == null && rows.length > 1);
       })
       .catch(() => {
         if (!cancelled) {
@@ -210,16 +217,6 @@ export function ProductDetailBody({ product, saleBadge, promotion, preferenceRul
     }
     return bits.join(' · ');
   }, [promotion, saleBadge]);
-
-  const pickCashback = async (bps: number | null) => {
-    setCashbackBps(bps);
-    setShowCashbackPrompt(false);
-    try {
-      await setGroceryCashbackBps(bps, isGuest);
-    } catch {
-      // Local state still updates the comparison.
-    }
-  };
 
   const startReport = (offer: ProductStoreOffer) => {
     if (isGuest) {
@@ -366,6 +363,27 @@ export function ProductDetailBody({ product, saleBadge, promotion, preferenceRul
     }
   };
 
+  const openStoreSearch = async (offer: ProductStoreOffer) => {
+    try {
+      await WebBrowser.openBrowserAsync(
+        storeSearchUrl(offer.chainName ?? offer.storeName, product.name),
+      );
+    } catch (e) {
+      showErrorToast(e);
+    }
+  };
+
+  const openIssueMenu = (offer: ProductStoreOffer) => {
+    Alert.alert('Something wrong?', offer.chainName ?? offer.storeName, [
+      { text: 'Report wrong price', onPress: () => startReport(offer) },
+      {
+        text: offer.isAvailable ? 'Mark out of stock' : 'Mark back in stock',
+        onPress: () => void toggleStock(offer, !offer.isAvailable),
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
   const renderOfferRow = (
     offer: ProductStoreOffer,
     net: ReturnType<typeof computeNetPrice>,
@@ -374,9 +392,8 @@ export function ProductDetailBody({ product, saleBadge, promotion, preferenceRul
     const reporting = reportingStoreId === offer.storeId;
     const canReport = isReportableOffer(offer);
     const showNet = net.netCents < net.shelfCents;
-    return (
+    const row = (
       <View
-        key={offer.storeProductId}
         style={[
           styles.offerRow,
           {
@@ -482,45 +499,6 @@ export function ProductDetailBody({ product, saleBadge, promotion, preferenceRul
                 </Pressable>
               </View>
             </View>
-          ) : canReport ? (
-            <View style={styles.contribActions}>
-              <Pressable
-                onPress={() =>
-                  setWrongOpenStoreId((id) => (id === offer.storeId ? null : offer.storeId))
-                }
-                hitSlop={6}>
-                <ThemedText type="small" themeColor="textSecondary">
-                  {wrongOpenStoreId === offer.storeId ? 'Hide' : 'Something wrong?'}
-                </ThemedText>
-              </Pressable>
-              {wrongOpenStoreId === offer.storeId ? (
-                <>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    ·
-                  </ThemedText>
-                  <Pressable onPress={() => startReport(offer)} hitSlop={6}>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      Report wrong price
-                    </ThemedText>
-                  </Pressable>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    ·
-                  </ThemedText>
-                  <Pressable
-                    onPress={() => void toggleStock(offer, !offer.isAvailable)}
-                    disabled={stockBusyId === offer.storeProductId}
-                    hitSlop={6}>
-                    {stockBusyId === offer.storeProductId ? (
-                      <ActivityIndicator color={theme.textSecondary} size="small" />
-                    ) : (
-                      <ThemedText type="small" themeColor="textSecondary">
-                        {offer.isAvailable ? 'Out of stock' : 'Back in stock'}
-                      </ThemedText>
-                    )}
-                  </Pressable>
-                </>
-              ) : null}
-            </View>
           ) : null}
         </View>
         {!reporting ? (
@@ -541,6 +519,52 @@ export function ProductDetailBody({ product, saleBadge, promotion, preferenceRul
           </View>
         ) : null}
       </View>
+    );
+
+    if (reporting) return <View key={offer.storeProductId}>{row}</View>;
+
+    return (
+      <ReanimatedSwipeable
+        key={offer.storeProductId}
+        friction={2}
+        rightThreshold={40}
+        overshootRight={false}
+        renderRightActions={() => (
+          <View style={styles.swipeActions}>
+            <Pressable
+              accessibilityLabel={`Open ${offer.chainName ?? offer.storeName} website`}
+              onPress={() => void openStoreSearch(offer)}
+              style={[styles.swipeBtn, { borderColor: theme.borderInk }]}>
+              <SymbolView
+                name={{ ios: 'safari', android: 'open_in_new', web: 'open_in_new' }}
+                size={20}
+                tintColor={theme.text}
+              />
+            </Pressable>
+            {canReport ? (
+              <Pressable
+                accessibilityLabel="Report a problem with this listing"
+                onPress={() => openIssueMenu(offer)}
+                style={[styles.swipeBtn, { borderColor: theme.borderInk }]}>
+                {stockBusyId === offer.storeProductId ? (
+                  <ActivityIndicator color={theme.text} size="small" />
+                ) : (
+                  <SymbolView
+                    name={{
+                      ios: 'exclamationmark.triangle',
+                      android: 'warning',
+                      web: 'warning',
+                    }}
+                    size={20}
+                    tintColor={theme.text}
+                  />
+                )}
+              </Pressable>
+            ) : null}
+          </View>
+        )}>
+        {row}
+      </ReanimatedSwipeable>
     );
   };
 
@@ -597,27 +621,6 @@ export function ProductDetailBody({ product, saleBadge, promotion, preferenceRul
           ))}
         </View>
       )}
-
-      {showCashbackPrompt ? (
-        <View style={styles.prompt}>
-          <ThemedText type="smallBold">Factor in grocery cash back?</ThemedText>
-          <View style={styles.chipRow}>
-            {CASHBACK_CHIPS.map((chip) => (
-              <ButterChip
-                key={chip.bps}
-                label={chip.label}
-                selected={false}
-                onPress={() => void pickCashback(chip.bps)}
-              />
-            ))}
-            <ButterChip
-              label="Not now"
-              selected={false}
-              onPress={() => setShowCashbackPrompt(false)}
-            />
-          </View>
-        </View>
-      ) : null}
 
       {checkingStores ? (
         <ThemedText type="small" themeColor="textSecondary">
@@ -678,9 +681,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
   },
-  prompt: {
-    gap: Spacing.two,
-  },
   compareBlock: {
     gap: Spacing.two,
   },
@@ -739,12 +739,18 @@ const styles = StyleSheet.create({
     height: 56,
     borderRadius: Spacing.one,
   },
-  contribActions: {
+  swipeActions: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
+    alignItems: 'stretch',
     gap: Spacing.one,
-    marginTop: 2,
+    paddingLeft: Spacing.one,
+  },
+  swipeBtn: {
+    width: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderRadius: Radius.button,
   },
   reportActions: {
     flexDirection: 'row',

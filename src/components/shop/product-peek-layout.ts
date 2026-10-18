@@ -7,7 +7,7 @@ export type ProductPeekAnchor = {
   height: number;
 };
 
-const PEEK_MAX_WIDTH = 340;
+export const PEEK_MAX_WIDTH = 380;
 
 /** Conservative height until content onLayout refines it. */
 export const PEEK_DEFAULT_HEIGHT = 400;

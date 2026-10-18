@@ -41,7 +41,7 @@ type Props = {
   priceCents?: number | null;
   /** Hide grid copy while the in-place peek overlay is showing this product. */
   isPeekSource?: boolean;
-  onPress: () => void;
+  onPress: (anchor: ProductPeekAnchor) => void;
   onLongPress?: (anchor: ProductPeekAnchor) => void;
   onAdd: () => void;
   onIncrement: () => void;
@@ -88,15 +88,14 @@ export function ProductCard({
   const press = useSharedValue(1);
   const resolvedMeta = metaLabel ?? (sponsored ? 'Sponsored' : null);
 
-  const handleLongPress = () => {
-    if (!onLongPress) return;
+  const withAnchor = (cb: (anchor: ProductPeekAnchor) => void) => {
     if (!rootRef.current) {
       // Zero-size anchor → peek falls back to a centered fade.
-      onLongPress({ x: 0, y: 0, width: 0, height: 0 });
+      cb({ x: 0, y: 0, width: 0, height: 0 });
       return;
     }
     rootRef.current.measureInWindow((x, y, width, height) => {
-      onLongPress({ x, y, width, height });
+      cb({ x, y, width, height });
     });
   };
 
@@ -114,8 +113,8 @@ export function ProductCard({
   return (
     <AnimatedPressable
       ref={rootRef}
-      onPress={onPress}
-      onLongPress={onLongPress ? handleLongPress : undefined}
+      onPress={() => withAnchor(onPress)}
+      onLongPress={onLongPress ? () => withAnchor(onLongPress) : undefined}
       delayLongPress={400}
       onPressIn={() => setPressScale(press, 0.97, 90)}
       onPressOut={() => setPressScale(press, 1, 140)}

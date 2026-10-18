@@ -1,4 +1,3 @@
-import { type BottomSheetModal } from '@gorhom/bottom-sheet';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { SymbolView } from 'expo-symbols';
@@ -89,7 +88,6 @@ import {
 import { AppHeader } from '@/components/app/app-header';
 import { CategoryIcon } from '@/components/shop/category-icons';
 import { ProductCard } from '@/components/shop/product-card';
-import { ProductDetailSheet } from '@/components/shop/product-detail-sheet';
 import { ProductPeek } from '@/components/shop/product-peek';
 import type { ProductPeekAnchor } from '@/components/shop/product-peek-layout';
 import { ShopFiltersDrawer } from '@/components/shop/shop-filters-drawer';
@@ -153,7 +151,6 @@ export default function ShopScreen() {
     refreshTargets,
   } = useActiveList();
   const guestCart = useGuestCart();
-  const productSheetRef = useRef<BottomSheetModal>(null);
   const listRef = useRef<FlatList<ShopListItem>>(null);
   const pendingBrowseRef = useRef<(() => void) | null>(null);
   const showScrollTopRef = useRef(false);
@@ -195,7 +192,6 @@ export default function ShopScreen() {
   const [shellReady, setShellReady] = useState(false);
 
   const [search, setSearch] = useState('');
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [peekProduct, setPeekProduct] = useState<Product | null>(null);
   const [peekAnchor, setPeekAnchor] = useState<ProductPeekAnchor | null>(null);
   const [peekCompact, setPeekCompact] = useState(false);
@@ -414,17 +410,20 @@ export default function ShopScreen() {
           mergedTrending.push({ product, sponsored: false });
         }
         setTrending(mergedTrending);
-        const trendingPriceMap = await getCheapestPriceCentsByProductIds(
-          mergedTrending.map((row) => row.product.id),
+        // Carousel prices (staples + trending) merge into every grid price map below.
+        const stripPriceMap = await getCheapestPriceCentsByProductIds(
+          [...stapleProductIds, ...mergedTrending.map((row) => row.product.id)],
           openPricesGeo,
         );
         if (cancelled) return;
-        setTrendingPrices(trendingPriceMap);
+        setTrendingPrices(stripPriceMap);
         setShelfPrices((prev) => {
           const next = new Map(prev);
-          for (const [id, cents] of trendingPriceMap) next.set(id, cents);
+          for (const [id, cents] of stripPriceMap) next.set(id, cents);
           return next;
         });
+        const withStripPrices = (gridPrices: Map<string, number>, bps: number | null) =>
+          applyCashbackToPriceMap(new Map([...stripPriceMap, ...gridPrices]), bps);
 
         const browseHome = !favoritesOnly && selectedCategoryId == null && selectedStore == null;
         const stapleIds = new Set(stapleProductIds);
@@ -461,7 +460,7 @@ export default function ShopScreen() {
           if (cancelled) return;
           const netPriceMap = applyCashbackToPriceMap(priceMap, nextCashbackBps);
           setCashbackBps(nextCashbackBps);
-          setShelfPrices(netPriceMap);
+          setShelfPrices(withStripPrices(priceMap, nextCashbackBps));
           setProducts(
             applyFoodFilters(rawProducts, sessionRules, indexTraitsByProduct(traitsForProducts), {
               sort,
@@ -490,7 +489,7 @@ export default function ShopScreen() {
           if (cancelled) return;
           const netPriceMap = applyCashbackToPriceMap(priceMap, nextCashbackBps);
           setCashbackBps(nextCashbackBps);
-          setShelfPrices(netPriceMap);
+          setShelfPrices(withStripPrices(priceMap, nextCashbackBps));
 
           const traitsByProduct = indexTraitsByProduct(traitsForProducts);
           const filterOpts = {
@@ -543,7 +542,7 @@ export default function ShopScreen() {
           if (cancelled) return;
           const netPriceMap = applyCashbackToPriceMap(priceMap, nextCashbackBps);
           setCashbackBps(nextCashbackBps);
-          setShelfPrices(netPriceMap);
+          setShelfPrices(withStripPrices(priceMap, nextCashbackBps));
 
           setProducts(
             applyFoodFilters(rawProducts, sessionRules, indexTraitsByProduct(traitsForProducts), {
@@ -584,11 +583,6 @@ export default function ShopScreen() {
     shellReady,
     sort,
   ]);
-
-  const openProduct = (product: Product) => {
-    setSelectedProduct(product);
-    productSheetRef.current?.present();
-  };
 
   const hapticSuccess = async () => {
     try {
@@ -638,7 +632,7 @@ export default function ShopScreen() {
         getEffectiveGroceryCashbackBps(isGuest),
       ]);
       const netPriceMap = applyCashbackToPriceMap(priceMap, cashbackBps);
-      setShelfPrices(netPriceMap);
+      setShelfPrices((prev) => new Map([...prev, ...netPriceMap]));
       const filtered = applyFoodFilters(
         rawProducts,
         sessionRules,
@@ -900,8 +894,13 @@ export default function ShopScreen() {
     setShowScrollTop(visible);
   };
 
-  const openPeek = (product: Product, anchor: ProductPeekAnchor, compact: boolean) => {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  const openPeek = (
+    product: Product,
+    anchor: ProductPeekAnchor,
+    compact: boolean,
+    haptic: boolean,
+  ) => {
+    if (haptic) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setPeekCompact(compact);
     setPeekAnchor(anchor);
     setPeekProduct(product);
@@ -911,10 +910,6 @@ export default function ShopScreen() {
     setPeekProduct(null);
     setPeekAnchor(null);
     setPeekCompact(false);
-  };
-
-  const openFullFromPeek = () => {
-    if (peekProduct) openProduct(peekProduct);
   };
 
   const renderProductCard = (
@@ -946,8 +941,8 @@ export default function ShopScreen() {
         quantityOnList={effectiveQtyMap.get(product.id)?.quantity}
         priceCents={priceCents}
         isPeekSource={peekProduct?.id === product.id}
-        onPress={() => openProduct(product)}
-        onLongPress={(anchor) => openPeek(product, anchor, compact)}
+        onPress={(anchor) => openPeek(product, anchor, compact, false)}
+        onLongPress={(anchor) => openPeek(product, anchor, compact, true)}
         onAdd={() => void handleAdd(product)}
         onIncrement={() => void handleIncrement(product)}
         onDecrement={() => void handleDecrement(product)}
@@ -1042,7 +1037,10 @@ export default function ShopScreen() {
           contentInsetAdjustmentBehavior="never"
           contentContainerStyle={[
             styles.listContent,
-            { paddingBottom: BottomTabInset + Spacing.four },
+            {
+              paddingTop: insets.top + Spacing.two,
+              paddingBottom: BottomTabInset + insets.bottom + Spacing.four,
+            },
           ]}
           keyboardShouldPersistTaps="handled"
           onScroll={onShopScroll}
@@ -1054,6 +1052,7 @@ export default function ShopScreen() {
               tintColor={theme.text}
             />
           }
+          ListHeaderComponentStyle={styles.listHeaderLayer}
           ListHeaderComponent={
             <Animated.View entering={FadeInDown.duration(280)} style={styles.header}>
               <View style={styles.brandRow}>
@@ -1304,6 +1303,7 @@ export default function ShopScreen() {
                   <View style={styles.sectionTitleRow}>
                     <NativeIconButton
                       accessibilityLabel="Back to shop home"
+                      tooltipAlign="left"
                       iosSymbol="chevron.left"
                       androidSymbol="arrow_back"
                       onPress={backToShopHome}
@@ -1415,7 +1415,7 @@ export default function ShopScreen() {
           exiting={FadeOut.duration(140)}
           style={[
             styles.scrollTopFabWrap,
-            { bottom: BottomTabInset + Spacing.three, right: Spacing.three },
+            { bottom: BottomTabInset + insets.bottom + Spacing.three, right: Spacing.three },
           ]}>
           <Pressable
             onPress={() => {
@@ -1480,45 +1480,17 @@ export default function ShopScreen() {
               ? formatPromotionBadge(promotions.get(peekProduct.id)!)
               : null
           }
-          priceCents={
-            peekProduct
-              ? (shelfPrices.get(peekProduct.id) ?? trendingPrices.get(peekProduct.id) ?? null)
-              : null
-          }
+          promotion={peekProduct ? (promotions.get(peekProduct.id) ?? null) : null}
+          preferenceRules={sessionRules}
           quantityOnList={
             peekProduct ? effectiveQtyMap.get(peekProduct.id)?.quantity : undefined
           }
+          favorited={peekProduct ? favoriteIds.has(peekProduct.id) : false}
+          onToggleFavorite={() => peekProduct && void handleToggleFavorite(peekProduct.id)}
           onClose={closePeek}
-          onOpenFull={openFullFromPeek}
           onAdd={() => peekProduct && void handleAdd(peekProduct)}
           onIncrement={() => peekProduct && void handleIncrement(peekProduct)}
           onDecrement={() => peekProduct && void handleDecrement(peekProduct)}
-        />
-
-        <ProductDetailSheet
-          ref={productSheetRef}
-          product={selectedProduct}
-          saleBadge={
-            selectedProduct && promotions.has(selectedProduct.id)
-              ? formatPromotionBadge(promotions.get(selectedProduct.id)!)
-              : null
-          }
-          promotion={
-            selectedProduct && promotions.has(selectedProduct.id)
-              ? promotions.get(selectedProduct.id)!
-              : null
-          }
-          preferenceRules={sessionRules}
-          quantityOnList={
-            selectedProduct ? effectiveQtyMap.get(selectedProduct.id)?.quantity : undefined
-          }
-          favorited={selectedProduct ? favoriteIds.has(selectedProduct.id) : false}
-          onAdd={() => selectedProduct && void handleAdd(selectedProduct)}
-          onIncrement={() => selectedProduct && void handleIncrement(selectedProduct)}
-          onDecrement={() => selectedProduct && void handleDecrement(selectedProduct)}
-          onToggleFavorite={() =>
-            selectedProduct && void handleToggleFavorite(selectedProduct.id)
-          }
         />
 
         <Modal
@@ -1689,9 +1661,13 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.four,
   },
   sectionTitleRow: {
+    zIndex: 10,
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
+  },
+  listHeaderLayer: {
+    zIndex: 10,
   },
   backBtn: {
     marginLeft: -Spacing.one,
