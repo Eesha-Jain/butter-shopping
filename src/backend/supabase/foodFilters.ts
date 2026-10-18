@@ -33,7 +33,10 @@ export function applyFoodFilters(
   const sort = options?.sort ?? 'default';
 
   let filtered = products.filter((product) => {
-    if (onSaleOnly && !promoIds.has(product.id)) return false;
+    if (onSaleOnly && !promoIds.has(product.id)) {
+      // promoIds may also include products with a shelf regular>sale delta.
+      return false;
+    }
     const traits = traitsByProduct.get(product.id) ?? [];
     for (const traitId of avoid) {
       const hit = traits.some(

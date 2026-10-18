@@ -27,6 +27,7 @@ const DISCOUNTS = [
   { code: 'veteran', label: 'Veteran' },
   { code: 'veteran_family', label: 'Veteran family member' },
   { code: 'senior', label: 'Senior' },
+  { code: 'snap', label: 'SNAP / EBT' },
 ] as const;
 
 const CASHBACK = [

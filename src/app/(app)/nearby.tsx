@@ -9,10 +9,12 @@ import {
   type NearbyStore,
   type SearchCoords,
 } from '@/backend';
+import { SnapBadge } from '@/components/shop/snap-badge';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { ButterButton } from '@/components/ui/butter-button';
 import { Fonts, Radius, Spacing } from '@/constants/theme';
+import { useSnapOptedIn } from '@/hooks/use-snap-opted-in';
 import { useTheme } from '@/hooks/use-theme';
 
 const SEARCH_DELTA = 0.2;
@@ -26,6 +28,7 @@ const FALLBACK_REGION: Region = {
 
 export default function NearbyScreen() {
   const theme = useTheme();
+  const snapOptedIn = useSnapOptedIn();
   const mapRef = useRef<MapView>(null);
   const [origin, setOrigin] = useState<SearchCoords | null>(null);
   const [shops, setShops] = useState<NearbyStore[] | null>(null);
@@ -142,9 +145,12 @@ export default function NearbyScreen() {
             {showNames ? (
               <View style={styles.pin}>
                 <View style={[styles.pinDot, { backgroundColor: theme.primary, borderColor: theme.background }]} />
-                <Text style={[styles.pinLabel, { color: theme.text, backgroundColor: theme.background }]} numberOfLines={2}>
-                  {shop.name}
-                </Text>
+                <View style={styles.pinLabelRow}>
+                  <Text style={[styles.pinLabel, { color: theme.text, backgroundColor: theme.background }]} numberOfLines={2}>
+                    {shop.name}
+                  </Text>
+                  {snapOptedIn && shop.accepts_snap ? <SnapBadge size="sm" /> : null}
+                </View>
               </View>
             ) : null}
           </Marker>
@@ -185,7 +191,9 @@ export default function NearbyScreen() {
           isPresented={selected != null}
           onDismiss={() => setSelected(null)}>
           <Column>
-            <UIText>{selected?.name ?? ''}</UIText>
+            <UIText>
+              {`${selected?.name ?? ''}${snapOptedIn && selected?.accepts_snap ? ' · SNAP' : ''}`}
+            </UIText>
             {selected?.city ? <UIText>{selected.city}</UIText> : null}
             {selected ? <UIText>{formatDistanceKm(selected.distance_km)}</UIText> : null}
           </Column>
@@ -245,8 +253,12 @@ const styles = StyleSheet.create({
     borderRadius: 7,
     borderWidth: 2,
   },
-  pinLabel: {
+  pinLabelRow: {
     marginTop: 4,
+    alignItems: 'center',
+    gap: 4,
+  },
+  pinLabel: {
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,

@@ -21,6 +21,7 @@ import {
   toggleAvoidGroup,
 } from '@/backend';
 import type { NearbyStore } from '@/backend/types';
+import { SnapBadge } from '@/components/shop/snap-badge';
 import { ThemedText } from '@/components/themed-text';
 import { ButterButton } from '@/components/ui/butter-button';
 import { ButterChip } from '@/components/ui/butter-chip';
@@ -38,6 +39,8 @@ type Props = {
   draftOnSaleOnly: boolean;
   nearbyStores?: NearbyStore[];
   selectedStoreId?: string | null;
+  /** When true, show SNAP next to stores that accept EBT. */
+  showSnapBadges?: boolean;
   onSelectStore?: (store: NearbyStore | null) => void;
   onClose: () => void;
   onApply: (next: {
@@ -62,6 +65,7 @@ export function ShopFiltersDrawer({
   draftOnSaleOnly,
   nearbyStores = [],
   selectedStoreId = null,
+  showSnapBadges = false,
   onSelectStore,
   onClose,
   onApply,
@@ -213,6 +217,9 @@ export function ShopFiltersDrawer({
                       label={store.name}
                       selected={selectedStoreId === store.id}
                       onPress={() => onSelectStore(store)}
+                      icon={
+                        showSnapBadges && store.accepts_snap ? <SnapBadge size="sm" /> : undefined
+                      }
                     />
                   ))}
                 </View>
