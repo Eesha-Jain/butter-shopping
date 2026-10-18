@@ -1,6 +1,6 @@
 import * as Haptics from 'expo-haptics';
 import { SymbolView } from 'expo-symbols';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -13,7 +13,7 @@ import {
   StyleSheet,
   View,
 } from 'react-native';
-import Animated, { FadeInDown, SlideInLeft, SlideInRight } from 'react-native-reanimated';
+import Animated, { Easing, FadeInDown, FadeInLeft, FadeInRight, FadeOut } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useActiveList } from '@/auth/active-list';
@@ -582,6 +582,18 @@ export default function PlanScreen() {
     return () => clearTimeout(timer);
   }, [loadPlan]);
 
+  // Items added from the shop tab must show up when returning to the plan.
+  const hasFocusedOnce = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasFocusedOnce.current) {
+        hasFocusedOnce.current = true;
+        return;
+      }
+      void loadPlan(true);
+    }, [loadPlan]),
+  );
+
   const updateItem = (itemId: string, change: (item: ResolvedListItem) => ResolvedListItem | null) => {
     setLists((rows) =>
       rows.map((row) => ({
@@ -924,9 +936,13 @@ export default function PlanScreen() {
           <Animated.View entering={FadeInDown.delay(40).duration(280)} style={styles.section}>
             <WeekStrip days={weekDays} selectedYmd={activeYmd} onSelect={selectDay} />
 
+            <Animated.View layout={drawerLayout}>
             <Animated.View
               key={activeYmd}
-              entering={(slideDir === 'back' ? SlideInLeft : SlideInRight).duration(260)}
+              entering={(slideDir === 'back' ? FadeInLeft : FadeInRight)
+                .duration(320)
+                .easing(Easing.out(Easing.cubic))}
+              exiting={FadeOut.duration(140)}
               style={[styles.section, { overflow: 'hidden' }]}>
             <ThemedText type="smallBold" style={styles.dayTitle}>
               {activeYmd === todayYmd ? 'Today' : formatShortDate(activeYmd)}
@@ -988,6 +1004,7 @@ export default function PlanScreen() {
                 ))}
               </Animated.View>
             ) : null}
+            </Animated.View>
             </Animated.View>
           </Animated.View>
         ) : segment === 'list' ? (
