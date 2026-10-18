@@ -29,7 +29,7 @@ export default function AppTabs() {
             <TabButton>Nearby</TabButton>
           </TabTrigger>
           <TabTrigger name="list" href={'/list' as Href} asChild>
-            <TabButton>Plan</TabButton>
+            <TabButton>List</TabButton>
           </TabTrigger>
           <TabTrigger name="agent" href={'/agent' as Href} asChild>
             <TabButton>AI</TabButton>

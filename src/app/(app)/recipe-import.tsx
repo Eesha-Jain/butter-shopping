@@ -1,3 +1,4 @@
+import * as Clipboard from 'expo-clipboard';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
@@ -35,6 +36,7 @@ export default function RecipeImportScreen() {
   const [mode, setMode] = useState<Mode>('text');
   const [text, setText] = useState('');
   const [url, setUrl] = useState('');
+  const [clipboardUrl, setClipboardUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<RecipeListPreview | null>(null);
   const [forcedIds, setForcedIds] = useState<string[]>([]);
@@ -91,6 +93,21 @@ export default function RecipeImportScreen() {
       // toasted
     } finally {
       setBusy(false);
+    }
+  };
+
+  const onPreviewClipboard = async () => {
+    if (busy) return;
+    try {
+      const clipboardText = (await Clipboard.getStringAsync()).trim();
+      if (!clipboardText) {
+        setClipboardUrl(null);
+        showErrorToast(new Error('No text found in the clipboard.'));
+        return;
+      }
+      setClipboardUrl(clipboardText);
+    } catch (err) {
+      showErrorToast(err, 'Could not read the clipboard.');
     }
   };
 
@@ -217,6 +234,7 @@ export default function RecipeImportScreen() {
             key={key}
             onPress={() => {
               setMode(key);
+              setClipboardUrl(null);
               resetPreview();
             }}
             style={[
@@ -277,7 +295,10 @@ export default function RecipeImportScreen() {
             <>
               <TextInput
                 value={url}
-                onChangeText={setUrl}
+                onChangeText={(value) => {
+                  setUrl(value);
+                  setClipboardUrl(null);
+                }}
                 placeholder="https://…"
                 placeholderTextColor={theme.textSecondary}
                 autoCapitalize="none"
@@ -293,6 +314,38 @@ export default function RecipeImportScreen() {
                 ]}
                 editable={!busy}
               />
+              <Pressable
+                onPress={() => void onPreviewClipboard()}
+                disabled={busy}
+                accessibilityRole="button"
+                style={[styles.secondaryBtn, { borderColor: theme.border }]}>
+                <ThemedText type="smallBold">Preview clipboard</ThemedText>
+              </Pressable>
+              {clipboardUrl ? (
+                <View
+                  style={[
+                    styles.clipboardPreview,
+                    { borderColor: theme.border, backgroundColor: theme.backgroundElement },
+                  ]}>
+                  <ThemedText type="smallBold">Clipboard contents</ThemedText>
+                  <ThemedText
+                    type="small"
+                    themeColor="textSecondary"
+                    numberOfLines={3}
+                    ellipsizeMode="tail">
+                    {clipboardUrl}
+                  </ThemedText>
+                  <Pressable
+                    onPress={() => {
+                      setUrl(clipboardUrl);
+                      setClipboardUrl(null);
+                    }}
+                    accessibilityRole="button"
+                    style={[styles.secondaryBtn, { borderColor: theme.border }]}>
+                    <ThemedText type="smallBold">Use this URL</ThemedText>
+                  </Pressable>
+                </View>
+              ) : null}
               <Pressable
                 onPress={() => void onImportUrl()}
                 disabled={busy}
@@ -466,6 +519,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
     alignItems: 'center',
+  },
+  clipboardPreview: {
+    borderWidth: 1,
+    borderRadius: Spacing.two,
+    padding: Spacing.three,
+    gap: Spacing.two,
   },
   photoActions: {
     gap: Spacing.two,

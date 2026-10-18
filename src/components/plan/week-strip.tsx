@@ -2,6 +2,7 @@ import * as Haptics from 'expo-haptics';
 import { SymbolView, type AndroidSymbol, type SFSymbol } from 'expo-symbols';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
+import { MemberAvatar } from '@/components/groups/member-avatar';
 import { ThemedText } from '@/components/themed-text';
 import { Fonts, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
@@ -22,6 +23,8 @@ export type WeekDayCell = {
   isBestDeal: boolean;
   isGroceryDay: boolean;
   itemCount: number;
+  /** Whose turn it is to shop this run (shared groups only). */
+  shopper?: { userId: string; name: string; avatarUrl: string | null } | null;
 };
 
 type Props = {
@@ -53,7 +56,7 @@ export function WeekStrip({ days, selectedYmd, onSelect }: Props) {
                 onSelect(day.ymd);
               }}
               accessibilityRole="button"
-              accessibilityLabel={`${day.weekday} ${day.dayNum}${day.isRecommended ? ', lowest prices' : ''}`}
+              accessibilityLabel={`${day.weekday} ${day.dayNum}${day.isRecommended ? ', lowest prices' : ''}${day.isGroceryDay && day.shopper ? `, ${day.shopper.name} shops` : ''}`}
               accessibilityState={{ selected }}
               style={[
                 styles.cell,
@@ -67,6 +70,16 @@ export function WeekStrip({ days, selectedYmd, onSelect }: Props) {
                   opacity: selected || accent ? 1 : 0.55,
                 },
               ]}>
+              {day.isGroceryDay && day.shopper ? (
+                <MemberAvatar
+                  userId={day.shopper.userId}
+                  name={day.shopper.name}
+                  avatarUrl={day.shopper.avatarUrl}
+                  size={22}
+                  ringColor={theme.borderInk}
+                  style={styles.shopper}
+                />
+              ) : null}
               {day.isGroceryDay && day.itemCount > 0 ? (
                 <View
                   style={[
@@ -163,6 +176,12 @@ const styles = StyleSheet.create({
   badgeText: {
     fontSize: 11,
     lineHeight: 13,
+  },
+  shopper: {
+    position: 'absolute',
+    top: -6,
+    left: -6,
+    zIndex: 1,
   },
   dot: {
     width: 6,

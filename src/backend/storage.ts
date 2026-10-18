@@ -17,6 +17,8 @@ const KEYS = {
   /** 'female' | 'male' | 'cow'. Cow moos; the reply text still shows the words. */
   aiVoice: 'butter.aiVoice',
   activeListId: 'butter.activeListId',
+  /** Last successful Shop home payload, shown instantly on next launch. */
+  shopHomeCache: 'butter.shopHomeCache',
 } as const;
 
 export type StorageKey = keyof typeof KEYS;

@@ -1,9 +1,11 @@
 import * as Haptics from 'expo-haptics';
 import { SymbolView } from 'expo-symbols';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
+  Linking,
   Modal,
   Pressable,
   RefreshControl,
@@ -11,7 +13,7 @@ import {
   StyleSheet,
   View,
 } from 'react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import Animated, { FadeInDown, SlideInLeft, SlideInRight } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useActiveList } from '@/auth/active-list';
@@ -21,27 +23,42 @@ import {
   getCheapestShelfSaleByProductIds,
   getMyProfile,
   getProductsByIds,
+  getStoreNames,
   listExpiringPurchases,
+  listGroupMembersWithProfiles,
   listGroupOrders,
   listHabits,
   listOrderItems,
   listOrderShares,
   listResolvedItems,
+  placeRunOrder,
+  recommendShoppingPlan,
   removeListItem,
   resolveShopZip,
   setListItemDone,
+  showErrorToast,
+  showSuccessToast,
   suggestBestShopDate,
   suggestDiscountDate,
   todayLocalDateKey,
+  type ActiveListTarget,
   type BestShopDay,
   type ExpiringPurchase,
-  type GroupKind,
+  type Group,
   type GroupOrderRow,
   type ItemHabit,
   type OrderItem,
   type OrderShare,
   type ResolvedListItem,
+  type ShoppingPlanLine,
 } from '@/backend';
+import { MemberAvatar } from '@/components/groups/member-avatar';
+import {
+  assignShoppers,
+  buildRotation,
+  type RotationMember,
+  type ShopperRotation,
+} from '@/components/groups/shopper-rotation';
 import {
   assignGroceryDay,
   buildGroceryDays,
@@ -49,28 +66,39 @@ import {
   type GroceryDayPlan,
 } from '@/components/plan/grocery-days';
 import { ListItemRow, cadenceLabel } from '@/components/plan/list-item-row';
+import {
+  buildRunOrders,
+  placedRunOrder,
+  runKey,
+  type RunOrder,
+  type RunOrderLine,
+} from '@/components/plan/plan-orders';
+import { drawerLayout, RunOrderCard } from '@/components/plan/run-order-card';
 import { SectionDivider } from '@/components/plan/section-divider';
+import { StoreLogo } from '@/components/plan/store-logo';
 import { WeekStrip, type WeekDayCell } from '@/components/plan/week-strip';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { ButterButton } from '@/components/ui/butter-button';
-import { ButterChip } from '@/components/ui/butter-chip';
 import { NativeIconButton } from '@/components/ui/native-icon-button';
-import {
-  formatSavingsCents,
-  MIN_SAVINGS_CENTS,
-  SavingsChip,
-} from '@/components/ui/savings-chip';
+import { formatSavingsCents, MIN_SAVINGS_CENTS, SavingsChip } from '@/components/ui/savings-chip';
 import { BottomTabInset, Fonts, Radius, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 type Segment = 'calendar' | 'list' | 'past';
 
-function kindLabel(kind: GroupKind): string {
-  if (kind === 'personal') return 'Personal';
-  if (kind === 'household') return 'Household';
-  return 'Party';
-}
+type ListData = {
+  target: ActiveListTarget;
+  items: ResolvedListItem[];
+};
+
+type GroupData = {
+  group: Group;
+  habits: ItemHabit[];
+  placed: GroupOrderRow[];
+  expiring: ExpiringPurchase[];
+  rotation: ShopperRotation | null;
+};
 
 function formatShortDate(ymd: string): string {
   return new Intl.DateTimeFormat(undefined, {
@@ -78,28 +106,6 @@ function formatShortDate(ymd: string): string {
     month: 'short',
     day: 'numeric',
   }).format(parseYmd(ymd));
-}
-
-function buildWeekCells(input: {
-  todayYmd: string;
-  plan: GroceryDayPlan;
-  itemCountByDay: Map<string, number>;
-}): WeekDayCell[] {
-  return input.plan.windowYmds.map((ymd) => {
-    const day = parseYmd(ymd);
-    const reasons = input.plan.reasons.get(ymd) ?? [];
-    return {
-      ymd,
-      weekday: new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(day),
-      dayNum: String(day.getDate()),
-      isToday: ymd === input.todayYmd,
-      isRecommended: reasons.includes('bestPrice'),
-      hasHabitsDue: reasons.includes('staples'),
-      isBestDeal: reasons.includes('bestDeal'),
-      isGroceryDay: reasons.length > 0,
-      itemCount: input.itemCountByDay.get(ymd) ?? 0,
-    };
-  });
 }
 
 function formatMoney(cents: number): string {
@@ -118,73 +124,130 @@ function itemHabitKey(item: Pick<ResolvedListItem, 'product_id' | 'category_id'>
   return null;
 }
 
+function itemTitle(item: ResolvedListItem): string {
+  return item.display_name?.trim() || item.custom_name?.trim() || 'Item';
+}
+
+function buildWeekCells(input: {
+  todayYmd: string;
+  plan: GroceryDayPlan;
+  ordersByDay: Map<string, RunOrder[]>;
+}): WeekDayCell[] {
+  return input.plan.windowYmds.map((ymd) => {
+    const day = parseYmd(ymd);
+    const reasons = input.plan.reasons.get(ymd) ?? [];
+    const orders = input.ordersByDay.get(ymd) ?? [];
+    // One avatar per cell: only when every shared order that day has the same shopper.
+    const shoppers = new Map<string, RotationMember>();
+    for (const order of orders) {
+      if (order.shopper) shoppers.set(order.shopper.userId, order.shopper);
+    }
+    return {
+      ymd,
+      weekday: new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(day),
+      dayNum: String(day.getDate()),
+      isToday: ymd === input.todayYmd,
+      isRecommended: reasons.includes('bestPrice'),
+      hasHabitsDue: reasons.includes('staples'),
+      isBestDeal: reasons.includes('bestDeal'),
+      isGroceryDay: reasons.length > 0,
+      itemCount: orders.length,
+      shopper: shoppers.size === 1 ? [...shoppers.values()][0] : null,
+    };
+  });
+}
+
 export default function PlanScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { isGuest, requestSignIn } = useSession();
+  const { session, isGuest, requestSignIn } = useSession();
+  const myUserId = session?.user.id ?? null;
   const guestCart = useGuestCart();
-  const {
-    targets,
-    activeTarget,
-    setActiveTarget,
-    isLoading: listsLoading,
-  } = useActiveList();
+  const { targets, isLoading: listsLoading } = useActiveList();
 
   const [segment, setSegment] = useState<Segment>('calendar');
-  const isPlanView = segment !== 'past';
-  const [preferredDays, setPreferredDays] = useState<number[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const [listItems, setListItems] = useState<ResolvedListItem[]>([]);
-  const [habits, setHabits] = useState<ItemHabit[]>([]);
-  const [expiring, setExpiring] = useState<ExpiringPurchase[]>([]);
-  const [productImages, setProductImages] = useState<Map<string, string | null>>(() => new Map());
-  const [productNames, setProductNames] = useState<Map<string, string>>(() => new Map());
+  const [lists, setLists] = useState<ListData[]>([]);
+  const [completedItemIds, setCompletedItemIds] = useState<Set<string>>(() => new Set());
+  const [groupsData, setGroupsData] = useState<Map<string, GroupData>>(() => new Map());
+  const [preferredDays, setPreferredDays] = useState<number[] | null>(null);
   const [bestShopDay, setBestShopDay] = useState<BestShopDay | null>(null);
   const [bestDealYmd, setBestDealYmd] = useState<string | null>(null);
   const [selectedYmd, setSelectedYmd] = useState<string | null>(null);
+  const [productImages, setProductImages] = useState<Map<string, string | null>>(() => new Map());
+  const [productNames, setProductNames] = useState<Map<string, string>>(() => new Map());
   /** Unit cents saved (regular − shelf) by product id. */
   const [unitSavingsByProduct, setUnitSavingsByProduct] = useState<Map<string, number>>(
     () => new Map(),
   );
 
-  const [pastOrders, setPastOrders] = useState<GroupOrderRow[]>([]);
-  const [pastDetail, setPastDetail] = useState<GroupOrderRow | null>(null);
+  /** recommend_shopping_plan results by runKey(listId, ymd). */
+  const [linesByRun, setLinesByRun] = useState<Map<string, ShoppingPlanLine[]>>(() => new Map());
+  const [storeNames, setStoreNames] = useState<Map<string, string>>(() => new Map());
+  const requestedRuns = useRef(new Set<string>());
+  const loadGeneration = useRef(0);
+
+  const [collapsedOrderKeys, setCollapsedOrderKeys] = useState<Set<string>>(() => new Set());
+  const [placingKey, setPlacingKey] = useState<string | null>(null);
+
+  const [pastDetail, setPastDetail] = useState<RunOrder | null>(null);
   const [pastItems, setPastItems] = useState<OrderItem[]>([]);
   const [pastShares, setPastShares] = useState<OrderShare[]>([]);
-  const [pastLoading, setPastLoading] = useState(false);
 
-  const listId = activeTarget?.list.id ?? null;
-  const groupId = activeTarget?.group.id ?? null;
   const todayYmd = todayLocalDateKey();
+  const showSource = targets.length > 1;
 
-  const habitByItemKey = useMemo(() => {
-    const map = new Map<string, ItemHabit>();
-    for (const habit of habits) {
-      const key = habitKey(habit);
-      if (key && !map.has(key)) map.set(key, habit);
+  const habitMapByGroup = useMemo(() => {
+    const out = new Map<string, Map<string, ItemHabit>>();
+    for (const [groupId, data] of groupsData) {
+      const map = new Map<string, ItemHabit>();
+      for (const habit of data.habits) {
+        const key = habitKey(habit);
+        if (key && !map.has(key)) map.set(key, habit);
+      }
+      out.set(groupId, map);
     }
-    return map;
-  }, [habits]);
+    return out;
+  }, [groupsData]);
 
-  const itemDueYmd = useCallback(
-    (item: ResolvedListItem): string | null => {
+  const itemHabit = useCallback(
+    (item: ResolvedListItem, groupId: string): ItemHabit | undefined => {
       const key = itemHabitKey(item);
-      return (key ? habitByItemKey.get(key)?.next_due_on : null) ?? null;
+      return key ? habitMapByGroup.get(groupId)?.get(key) : undefined;
     },
-    [habitByItemKey],
+    [habitMapByGroup],
   );
 
-  /** Staples with auto-add on that are not already on the list. */
+  /** Auto-add staples that are not on any of that group's lists yet. */
   const upcomingStaples = useMemo(() => {
-    const onList = new Set(listItems.map(itemHabitKey).filter(Boolean));
-    return habits.filter((habit) => {
-      const key = habitKey(habit);
-      return habit.auto_add_enabled && habit.next_due_on && key && !onList.has(key);
-    });
-  }, [habits, listItems]);
+    const out: { habit: ItemHabit; groupName: string }[] = [];
+    for (const [groupId, data] of groupsData) {
+      const onList = new Set(
+        lists
+          .filter((row) => row.target.group.id === groupId)
+          .flatMap((row) => row.items.map(itemHabitKey))
+          .filter(Boolean),
+      );
+      for (const habit of data.habits) {
+        const key = habitKey(habit);
+        if (habit.auto_add_enabled && habit.next_due_on && key && !onList.has(key)) {
+          out.push({ habit, groupName: data.group.name });
+        }
+      }
+    }
+    return out;
+  }, [groupsData, lists]);
+
+  const upcomingPlaced = useMemo(
+    () =>
+      [...groupsData.values()].flatMap((data) =>
+        data.placed.filter((row) => row.planned_for >= todayYmd),
+      ),
+    [groupsData, todayYmd],
+  );
 
   const groceryPlan = useMemo(
     () =>
@@ -194,77 +257,196 @@ export default function PlanScreen() {
         bestShopYmd: bestShopDay?.shopOn ?? null,
         bestDealYmd,
         stapleDueYmds: [
-          ...listItems.filter((item) => !item.done_at).map(itemDueYmd),
-          ...upcomingStaples.map((habit) => habit.next_due_on),
+          ...lists.flatMap((row) =>
+            row.items
+              .filter((item) => !item.done_at)
+              .map((item) => itemHabit(item, row.target.group.id)?.next_due_on ?? null),
+          ),
+          ...upcomingStaples.map(({ habit }) => habit.next_due_on),
         ].filter((ymd): ymd is string => Boolean(ymd)),
+        orderedYmds: upcomingPlaced.map((row) => row.planned_for),
       }),
-    [todayYmd, preferredDays, bestShopDay?.shopOn, bestDealYmd, listItems, upcomingStaples, itemDueYmd],
+    [todayYmd, preferredDays, bestShopDay?.shopOn, bestDealYmd, lists, upcomingStaples, upcomingPlaced, itemHabit],
   );
 
-  const dayByItemId = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const item of listItems) {
-      map.set(item.id, assignGroceryDay(groceryPlan, itemDueYmd(item)));
+  /** Open items per list, split onto grocery runs. */
+  const runsByList = useMemo(
+    () =>
+      lists.map((row) => {
+        const runs = new Map<string, ResolvedListItem[]>();
+        for (const item of row.items) {
+          if (item.done_at) continue;
+          const due = itemHabit(item, row.target.group.id)?.next_due_on ?? null;
+          const ymd = assignGroceryDay(groceryPlan, due);
+          runs.set(ymd, [...(runs.get(ymd) ?? []), item]);
+        }
+        return { target: row.target, runs };
+      }),
+    [lists, groceryPlan, itemHabit],
+  );
+
+  const shoppersByGroup = useMemo(() => {
+    const out = new Map<string, Map<string, RotationMember>>();
+    for (const [groupId, data] of groupsData) {
+      if (data.rotation) out.set(groupId, assignShoppers(data.rotation, groceryPlan.days));
     }
+    return out;
+  }, [groupsData, groceryPlan.days]);
+
+  const ordersByDay = useMemo(() => {
+    const out = new Map<string, RunOrder[]>();
+    const push = (ymd: string, orders: RunOrder[]) => {
+      if (orders.length > 0) out.set(ymd, [...(out.get(ymd) ?? []), ...orders]);
+    };
+    const groupListCount = new Map<string, number>();
+    for (const { target } of runsByList) {
+      groupListCount.set(target.group.id, (groupListCount.get(target.group.id) ?? 0) + 1);
+    }
+    for (const { target, runs } of runsByList) {
+      const multipleLists = (groupListCount.get(target.group.id) ?? 0) > 1;
+      const source = {
+        listId: target.list.id,
+        groupId: target.group.id,
+        groupName: target.group.name,
+        sourceLabel: multipleLists ? `${target.group.name} · ${target.list.name}` : target.group.name,
+        isShared: target.group.kind !== 'personal',
+      };
+      for (const [ymd, items] of runs) {
+        push(
+          ymd,
+          buildRunOrders({
+            source,
+            ymd,
+            items,
+            lines: linesByRun.get(runKey(target.list.id, ymd)),
+            storeNames,
+            shopper: shoppersByGroup.get(target.group.id)?.get(ymd) ?? null,
+          }),
+        );
+      }
+    }
+    for (const row of upcomingPlaced) {
+      const data = groupsData.get(row.group_id);
+      push(row.planned_for, [
+        placedRunOrder({
+          row,
+          groupName: data?.group.name ?? 'Group',
+          isShared: data?.group.kind !== 'personal',
+          shopper: data?.rotation?.members.find((member) => member.userId === row.paid_by) ?? null,
+        }),
+      ]);
+    }
+    for (const orders of out.values()) {
+      orders.sort(
+        (a, b) =>
+          a.sourceLabel.localeCompare(b.sourceLabel) ||
+          Number(a.kind === 'placed') - Number(b.kind === 'placed'),
+      );
+    }
+    return out;
+  }, [runsByList, linesByRun, storeNames, shoppersByGroup, upcomingPlaced, groupsData]);
+
+  const pastOrders = useMemo(
+    () =>
+      [...groupsData.values()]
+        .flatMap((data) =>
+          data.placed.map((row) =>
+            placedRunOrder({
+              row,
+              groupName: data.group.name,
+              isShared: data.group.kind !== 'personal',
+              shopper: data.rotation?.members.find((member) => member.userId === row.paid_by) ?? null,
+            }),
+          ),
+        )
+        .sort((a, b) => b.ymd.localeCompare(a.ymd)),
+    [groupsData],
+  );
+
+  const itemById = useMemo(() => {
+    const map = new Map<string, ResolvedListItem>();
+    for (const row of lists) for (const item of row.items) map.set(item.id, item);
     return map;
-  }, [listItems, groceryPlan, itemDueYmd]);
+  }, [lists]);
+
+  // Price each run once: one recommend_shopping_plan call per list and grocery day.
+  useEffect(() => {
+    const needed: { listId: string; ymd: string; key: string }[] = [];
+    for (const { target, runs } of runsByList) {
+      for (const ymd of runs.keys()) {
+        const key = runKey(target.list.id, ymd);
+        if (!linesByRun.has(key) && !requestedRuns.current.has(key)) {
+          needed.push({ listId: target.list.id, ymd, key });
+        }
+      }
+    }
+    if (needed.length === 0) return;
+    for (const run of needed) requestedRuns.current.add(run.key);
+    const generation = loadGeneration.current;
+
+    void (async () => {
+      const entries = await Promise.all(
+        needed.map(
+          async (run) =>
+            [
+              run.key,
+              await recommendShoppingPlan({ listId: run.listId, plannedFor: run.ymd }).catch(
+                () => [] as ShoppingPlanLine[],
+              ),
+            ] as const,
+        ),
+      );
+      const storeIds = entries.flatMap(([, lines]) =>
+        lines.map((line) => line.store_id).filter((id): id is string => Boolean(id)),
+      );
+      const names = await getStoreNames(storeIds).catch(() => new Map<string, string>());
+      if (generation !== loadGeneration.current) return;
+      setStoreNames((prev) => new Map([...prev, ...names]));
+      setLinesByRun((prev) => new Map([...prev, ...entries]));
+    })();
+  }, [runsByList, linesByRun]);
 
   const activeYmd =
     selectedYmd && groceryPlan.windowYmds.includes(selectedYmd)
       ? selectedYmd
       : groceryPlan.primaryYmd;
+  const [slideDir, setSlideDir] = useState<'forward' | 'back'>('forward');
+  const selectDay = useCallback(
+    (ymd: string) => {
+      setSlideDir(ymd < activeYmd ? 'back' : 'forward');
+      setSelectedYmd(ymd);
+    },
+    [activeYmd],
+  );
   const activeReasons = useMemo(
     () => groceryPlan.reasons.get(activeYmd) ?? [],
     [groceryPlan, activeYmd],
   );
   const isGroceryDay = activeReasons.length > 0;
-
-  const openItems = useMemo(
-    () => listItems.filter((item) => !item.done_at),
-    [listItems],
-  );
-
-  const doneItems = useMemo(
-    () => listItems.filter((item) => item.done_at),
-    [listItems],
-  );
-
-  const orderedItems = useMemo(() => [...openItems, ...doneItems], [openItems, doneItems]);
-
-  const dayItems = useMemo(
-    () => orderedItems.filter((item) => dayByItemId.get(item.id) === activeYmd),
-    [orderedItems, dayByItemId, activeYmd],
-  );
-
-  const itemCountByDay = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const item of openItems) {
-      const ymd = dayByItemId.get(item.id);
-      if (ymd) counts.set(ymd, (counts.get(ymd) ?? 0) + 1);
-    }
-    return counts;
-  }, [openItems, dayByItemId]);
+  const dayOrders = useMemo(() => ordersByDay.get(activeYmd) ?? [], [ordersByDay, activeYmd]);
+  const hasAnyOpenItems = runsByList.some(({ runs }) => runs.size > 0);
 
   const weekDays = useMemo(
-    () => buildWeekCells({ todayYmd, plan: groceryPlan, itemCountByDay }),
-    [todayYmd, groceryPlan, itemCountByDay],
+    () => buildWeekCells({ todayYmd, plan: groceryPlan, ordersByDay }),
+    [todayYmd, groceryPlan, ordersByDay],
   );
 
   const dayStaples = useMemo(
     () =>
       upcomingStaples
-        .filter((habit) => assignGroceryDay(groceryPlan, habit.next_due_on) === activeYmd)
-        .sort((a, b) => a.next_due_on.localeCompare(b.next_due_on)),
+        .filter(({ habit }) => assignGroceryDay(groceryPlan, habit.next_due_on) === activeYmd)
+        .sort((a, b) => a.habit.next_due_on.localeCompare(b.habit.next_due_on)),
     [upcomingStaples, groceryPlan, activeYmd],
   );
 
   const useSoon = useMemo(
     () =>
-      expiring
+      [...groupsData.values()]
+        .flatMap((data) => data.expiring)
         .filter((row) => row.expires_on >= activeYmd)
         .sort((a, b) => a.expires_on.localeCompare(b.expires_on))
         .slice(0, 8),
-    [expiring, activeYmd],
+    [groupsData, activeYmd],
   );
 
   const lineSavingsCents = useCallback(
@@ -279,15 +461,14 @@ export default function PlanScreen() {
   );
 
   const tripSavingsCents = useMemo(() => {
-    const scope = segment === 'calendar' ? dayItems : openItems;
+    const scope =
+      segment === 'calendar' ? dayOrders : [...ordersByDay.values()].flat();
     let sum = 0;
-    for (const item of scope) {
-      if (item.done_at) continue;
-      const line = lineSavingsCents(item);
-      if (line != null) sum += line;
+    for (const order of scope) {
+      for (const line of order.lines) sum += lineSavingsCents(line.item) ?? 0;
     }
     return sum;
-  }, [segment, dayItems, openItems, lineSavingsCents]);
+  }, [segment, dayOrders, ordersByDay, lineSavingsCents]);
 
   const showTripSavings =
     tripSavingsCents >= MIN_SAVINGS_CENTS &&
@@ -295,34 +476,27 @@ export default function PlanScreen() {
       activeReasons.includes('bestPrice') ||
       activeReasons.includes('bestDeal'));
 
-  const loadProductImages = useCallback(async (items: ResolvedListItem[], habitRows: ItemHabit[]) => {
-    const ids = [
-      ...new Set(
-        [
-          ...items.map((item) => item.product_id),
-          ...habitRows.map((habit) => habit.product_id),
-        ].filter((id): id is string => Boolean(id)),
-      ),
-    ];
+  const loadProductMeta = useCallback(async (productIds: string[]) => {
+    const ids = [...new Set(productIds)];
     if (ids.length === 0) {
       setProductImages(new Map());
       setProductNames(new Map());
+      setUnitSavingsByProduct(new Map());
       return;
     }
-    try {
-      const products = await getProductsByIds(ids);
-      const images = new Map<string, string | null>();
-      const names = new Map<string, string>();
-      for (const product of products) {
-        images.set(product.id, product.image_path);
-        names.set(product.id, product.name);
+    const [products, sales] = await Promise.all([
+      getProductsByIds(ids).catch(() => []),
+      getCheapestShelfSaleByProductIds(ids).catch(() => null),
+    ]);
+    setProductImages(new Map(products.map((product) => [product.id, product.image_path])));
+    setProductNames(new Map(products.map((product) => [product.id, product.name])));
+    const savings = new Map<string, number>();
+    for (const [id, sale] of sales ?? []) {
+      if (sale.regularPriceCents != null && sale.regularPriceCents > sale.priceCents) {
+        savings.set(id, sale.regularPriceCents - sale.priceCents);
       }
-      setProductImages(images);
-      setProductNames(names);
-    } catch {
-      setProductImages(new Map());
-      setProductNames(new Map());
     }
+    setUnitSavingsByProduct(savings);
   }, []);
 
   const loadPlan = useCallback(
@@ -333,10 +507,11 @@ export default function PlanScreen() {
         setError(null);
         return;
       }
-      if (!listId || !groupId) {
+      if (targets.length === 0) {
         if (!listsLoading) {
           setIsLoading(false);
-          setListItems([]);
+          setLists([]);
+          setGroupsData(new Map());
         }
         return;
       }
@@ -345,43 +520,53 @@ export default function PlanScreen() {
       setError(null);
       try {
         const zip = await resolveShopZip().catch(() => '98195');
-        const [rows, habitRows, shopDay, discount, expiringRows, profile] = await Promise.all([
-          listResolvedItems(listId),
-          listHabits(groupId),
-          suggestBestShopDate({ postalCode: zip, listId }).catch(() => null),
+        const uniqueGroups = [
+          ...new Map(targets.map((target) => [target.group.id, target.group])).values(),
+        ];
+        const [listRows, groupRows, shopDay, discount, profile] = await Promise.all([
+          Promise.all(
+            targets.map(async (target) => ({
+              target,
+              items: await listResolvedItems(target.list.id),
+            })),
+          ),
+          Promise.all(
+            uniqueGroups.map(async (group): Promise<GroupData> => {
+              const shared = group.kind !== 'personal';
+              const [habits, placed, expiring, members] = await Promise.all([
+                listHabits(group.id).catch(() => [] as ItemHabit[]),
+                listGroupOrders(group.id, { status: 'ordered' }).catch(() => [] as GroupOrderRow[]),
+                listExpiringPurchases(group.id).catch(() => [] as ExpiringPurchase[]),
+                shared ? listGroupMembersWithProfiles(group.id).catch(() => null) : null,
+              ]);
+              return {
+                group,
+                habits,
+                placed,
+                expiring,
+                rotation: members ? buildRotation(members, placed) : null,
+              };
+            }),
+          ),
+          suggestBestShopDate({ postalCode: zip, listId: targets[0].list.id }).catch(() => null),
           suggestDiscountDate().catch(() => null),
-          listExpiringPurchases(groupId).catch(() => [] as ExpiringPurchase[]),
           getMyProfile().catch(() => null),
         ]);
-        setListItems(rows);
-        setHabits(habitRows);
-        setExpiring(expiringRows);
+
+        loadGeneration.current += 1;
+        requestedRuns.current = new Set();
+        setLinesByRun(new Map());
+        setLists(listRows);
+        setGroupsData(new Map(groupRows.map((row) => [row.group.id, row])));
         setBestShopDay(shopDay);
         setBestDealYmd(discount);
         setPreferredDays(profile?.preferred_days ?? null);
-        void loadProductImages(rows, habitRows);
-        const productIds = [
-          ...new Set(rows.map((row) => row.product_id).filter((id): id is string => Boolean(id))),
-        ];
-        if (productIds.length > 0) {
-          try {
-            const sales = await getCheapestShelfSaleByProductIds(productIds);
-            const next = new Map<string, number>();
-            for (const [id, sale] of sales) {
-              if (
-                sale.regularPriceCents != null &&
-                sale.regularPriceCents > sale.priceCents
-              ) {
-                next.set(id, sale.regularPriceCents - sale.priceCents);
-              }
-            }
-            setUnitSavingsByProduct(next);
-          } catch {
-            setUnitSavingsByProduct(new Map());
-          }
-        } else {
-          setUnitSavingsByProduct(new Map());
-        }
+        void loadProductMeta(
+          [
+            ...listRows.flatMap((row) => row.items.map((item) => item.product_id)),
+            ...groupRows.flatMap((row) => row.habits.map((habit) => habit.product_id)),
+          ].filter((id): id is string => Boolean(id)),
+        );
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Could not load your plan.');
       } finally {
@@ -389,41 +574,82 @@ export default function PlanScreen() {
         setIsRefreshing(false);
       }
     },
-    [isGuest, listId, groupId, listsLoading, loadProductImages],
+    [isGuest, targets, listsLoading, loadProductMeta],
   );
 
-  const loadPast = useCallback(async () => {
-    if (isGuest || !groupId) {
-      setPastOrders([]);
-      return;
-    }
-    setPastLoading(true);
-    try {
-      setPastOrders(await listGroupOrders(groupId, { status: 'ordered' }));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load past orders.');
-      setPastOrders([]);
-    } finally {
-      setPastLoading(false);
-    }
-  }, [isGuest, groupId]);
-
   useEffect(() => {
-    const timer = setTimeout(() => {
-      if (segment === 'past') void loadPast();
-      else void loadPlan();
-    }, 0);
+    const timer = setTimeout(() => void loadPlan(), 0);
     return () => clearTimeout(timer);
-  }, [segment, loadPlan, loadPast]);
+  }, [loadPlan]);
 
-  const openPastDetail = async (order: GroupOrderRow) => {
+  const updateItem = (itemId: string, change: (item: ResolvedListItem) => ResolvedListItem | null) => {
+    setLists((rows) =>
+      rows.map((row) => ({
+        ...row,
+        items: row.items.flatMap((item) => {
+          if (item.id !== itemId) return [item];
+          const next = change(item);
+          return next ? [next] : [];
+        }),
+      })),
+    );
+  };
+
+  const placeOrder = (order: RunOrder) => {
+    if (!order.listId || !order.storeId || placingKey) return;
+    const { listId, storeId } = order;
+    const memberCount = groupsData.get(order.groupId)?.rotation?.members.length ?? 1;
+    const turnNote =
+      order.shopper && order.shopper.userId !== myUserId
+        ? `It's ${order.shopper.name}'s turn, but you can take it. `
+        : '';
+    const splitNote =
+      order.isShared && memberCount > 1
+        ? `You'll pay and it splits evenly across ${memberCount} people.`
+        : 'You pay for this order.';
+
+    Alert.alert(
+      `Order from ${order.storeName}?`,
+      `${order.itemCount} item${order.itemCount === 1 ? '' : 's'} · about ${formatMoney(order.totalCents)} for ${formatShortDate(order.ymd)}.\n${turnNote}${splitNote}`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Place order',
+          onPress: () => {
+            void (async () => {
+              setPlacingKey(order.key);
+              try {
+                const { checkoutUrl } = await placeRunOrder({
+                  listId,
+                  plannedFor: order.ymd,
+                  storeId,
+                  listItemIds: order.lines.map((line) => line.item.id),
+                });
+                showSuccessToast('Order placed', `${order.storeName} · ${formatShortDate(order.ymd)}`);
+                setCollapsedOrderKeys(new Set());
+                if (checkoutUrl) void Linking.openURL(checkoutUrl).catch(() => undefined);
+                await loadPlan(true);
+              } catch (err) {
+                showErrorToast(err, 'Could not place this order.');
+              } finally {
+                setPlacingKey(null);
+              }
+            })();
+          },
+        },
+      ],
+    );
+  };
+
+  const openPastDetail = async (order: RunOrder) => {
+    if (!order.placed) return;
     setPastDetail(order);
     setPastItems([]);
     setPastShares([]);
     try {
       const [items, shares] = await Promise.all([
-        listOrderItems(order.order_id),
-        listOrderShares(order.order_id).catch(() => [] as OrderShare[]),
+        listOrderItems(order.placed.order_id),
+        listOrderShares(order.placed.order_id).catch(() => [] as OrderShare[]),
       ]);
       setPastItems(items);
       setPastShares(shares);
@@ -432,45 +658,81 @@ export default function PlanScreen() {
     }
   };
 
-  const renderItemRow = (item: ResolvedListItem) => {
-    const title = item.display_name?.trim() || item.custom_name?.trim() || 'Item';
-    const key = itemHabitKey(item);
-    const habit = key ? habitByItemKey.get(key) : undefined;
-    const isDone = Boolean(item.done_at);
+  const memberName = (groupId: string, userId: string): string => {
+    if (userId === myUserId) return 'You';
+    return (
+      groupsData.get(groupId)?.rotation?.members.find((member) => member.userId === userId)?.name ??
+      'Member'
+    );
+  };
+
+  const renderLine = (order: RunOrder, line: RunOrderLine) => {
+    const { item } = line;
+    const habit = itemHabit(item, order.groupId);
     return (
       <ListItemRow
         key={item.id}
-        title={title}
+        title={itemTitle(item)}
         quantity={Number(item.quantity) || undefined}
-        priceCents={item.best_price_cents}
+        priceCents={line.lineCents ?? item.best_price_cents}
         savingsCents={lineSavingsCents(item)}
         imagePath={item.product_id ? productImages.get(item.product_id) : null}
         cadenceTag={habit ? cadenceLabel(habit.interval_days) : null}
         recipeTag={Boolean(item.source_recipe_id)}
-        done={isDone}
         onDone={() => {
-          const next = !isDone;
-          setListItems((rows) =>
-            rows.map((row) =>
-              row.id === item.id
-                ? { ...row, done_at: next ? new Date().toISOString() : null }
-                : row,
-            ),
-          );
-          void setListItemDone(item.id, next).then(() => loadPlan(true));
+          setCompletedItemIds((ids) => new Set(ids).add(item.id));
+          updateItem(item.id, (row) => ({ ...row, done_at: new Date().toISOString() }));
+          void setListItemDone(item.id, true).catch((err: unknown) => {
+            setCompletedItemIds((ids) => {
+              if (!ids.has(item.id)) return ids;
+              const next = new Set(ids);
+              next.delete(item.id);
+              return next;
+            });
+            showErrorToast(err);
+            void loadPlan(true);
+          });
         }}
         onDelete={() => {
-          setListItems((rows) => rows.filter((row) => row.id !== item.id));
-          void removeListItem(item.id).then(() => loadPlan(true));
+          updateItem(item.id, () => null);
+          void removeListItem(item.id).catch((err: unknown) => {
+            showErrorToast(err);
+            void loadPlan(true);
+          });
         }}
       />
     );
   };
 
+  const renderOrder = (order: RunOrder) => (
+    <RunOrderCard
+      key={order.key}
+      order={order}
+      expanded={!collapsedOrderKeys.has(order.key)}
+      placing={placingKey === order.key}
+      myUserId={myUserId}
+      showSource={showSource}
+      imageForLine={(line) =>
+        line.item.product_id ? (productImages.get(line.item.product_id) ?? null) : null
+      }
+      renderLine={(line) => renderLine(order, line)}
+      onToggle={() =>
+        setCollapsedOrderKeys((keys) => {
+          const next = new Set(keys);
+          if (next.has(order.key)) next.delete(order.key);
+          else next.add(order.key);
+          return next;
+        })
+      }
+      onPlace={() => placeOrder(order)}
+      onOpenPlaced={() => void openPastDetail(order)}
+    />
+  );
+
   const emptyListBlock = (
     <View style={styles.emptyBlock}>
       <ThemedText type="small" themeColor="textSecondary" style={styles.centerText}>
-        Your list is empty. Add picks from Shop, then come back to plan.
+        Nothing to order yet. Add picks from Shop and Plan turns them into store orders.
       </ThemedText>
       <ButterButton label="Browse shop" variant="yellow" onPress={() => router.push('/')} />
       <ButterButton
@@ -523,7 +785,7 @@ export default function PlanScreen() {
     );
   }
 
-  if ((isLoading || listsLoading) && isPlanView && listItems.length === 0 && !error) {
+  if ((isLoading || listsLoading) && lists.length === 0 && !error) {
     return (
       <ThemedView style={styles.centered}>
         <ActivityIndicator color={theme.secondary} />
@@ -533,6 +795,8 @@ export default function PlanScreen() {
       </ThemedView>
     );
   }
+
+  const upcomingDays = groceryPlan.days.filter((ymd) => (ordersByDay.get(ymd) ?? []).length > 0);
 
   return (
     <ThemedView style={styles.root}>
@@ -547,11 +811,8 @@ export default function PlanScreen() {
         ]}
         refreshControl={
           <RefreshControl
-            refreshing={isRefreshing || (segment === 'past' && pastLoading)}
-            onRefresh={() => {
-              if (isPlanView) void loadPlan(true);
-              else void loadPast();
-            }}
+            refreshing={isRefreshing}
+            onRefresh={() => void loadPlan(true)}
             tintColor={theme.text}
           />
         }
@@ -587,26 +848,10 @@ export default function PlanScreen() {
             </View>
           </View>
 
-          {activeTarget ? (
+          {showSource ? (
             <ThemedText type="small" themeColor="textSecondary">
-              {activeTarget.group.name} · {kindLabel(activeTarget.group.kind)}
+              Orders from all {targets.length} of your lists
             </ThemedText>
-          ) : null}
-
-          {targets.length > 1 ? (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.chipRow}>
-              {targets.map((target) => (
-                <ButterChip
-                  key={target.list.id}
-                  label={target.group.name}
-                  selected={activeTarget?.list.id === target.list.id}
-                  onPress={() => setActiveTarget(target)}
-                />
-              ))}
-            </ScrollView>
           ) : null}
 
           <View style={styles.segments}>
@@ -633,7 +878,7 @@ export default function PlanScreen() {
             />
           </View>
 
-          {isPlanView && showTripSavings ? (
+          {segment !== 'past' && showTripSavings ? (
             <View style={styles.tripSavingsRow}>
               <SavingsChip
                 compact={false}
@@ -644,7 +889,7 @@ export default function PlanScreen() {
                 <ThemedText type="small" themeColor="textSecondary" style={styles.tripSavingsHint}>
                   {activeReasons.includes('bestDeal')
                     ? 'Best deal day'
-                    : bestShopDay?.reasonLabel ?? 'Best price day'}
+                    : (bestShopDay?.reasonLabel ?? 'Best price day')}
                 </ThemedText>
               ) : null}
             </View>
@@ -657,39 +902,61 @@ export default function PlanScreen() {
           ) : null}
         </Animated.View>
 
-        {segment === 'list' ? (
-          <Animated.View entering={FadeInDown.delay(40).duration(280)} style={styles.section}>
-            {listItems.length === 0 ? emptyListBlock : orderedItems.map(renderItemRow)}
-          </Animated.View>
-        ) : segment === 'calendar' ? (
-          <Animated.View entering={FadeInDown.delay(40).duration(280)} style={styles.section}>
-            <WeekStrip
-              days={weekDays}
-              selectedYmd={activeYmd}
-              onSelect={setSelectedYmd}
+        {segment !== 'past' && completedItemIds.size > 0 ? (
+          <Animated.View
+            entering={FadeInDown.duration(180)}
+            style={[
+              styles.completionStatus,
+              { backgroundColor: theme.backgroundElement, borderColor: '#2E9E5B' },
+            ]}>
+            <SymbolView
+              name={{ ios: 'checkmark.circle.fill', android: 'check_circle', web: 'check_circle' }}
+              size={18}
+              tintColor="#2E9E5B"
             />
+            <ThemedText type="smallBold">
+              {completedItemIds.size} item{completedItemIds.size === 1 ? '' : 's'} bought!
+            </ThemedText>
+          </Animated.View>
+        ) : null}
 
-            {!isGroceryDay ? null : listItems.length === 0 ? (
-              emptyListBlock
-            ) : dayItems.length === 0 ? (
+        {segment === 'calendar' ? (
+          <Animated.View entering={FadeInDown.delay(40).duration(280)} style={styles.section}>
+            <WeekStrip days={weekDays} selectedYmd={activeYmd} onSelect={selectDay} />
+
+            <Animated.View
+              key={activeYmd}
+              entering={(slideDir === 'back' ? SlideInLeft : SlideInRight).duration(260)}
+              style={[styles.section, { overflow: 'hidden' }]}>
+            <ThemedText type="smallBold" style={styles.dayTitle}>
+              {activeYmd === todayYmd ? 'Today' : formatShortDate(activeYmd)}
+            </ThemedText>
+
+            {!isGroceryDay ? (
               <ThemedText type="small" themeColor="textSecondary" style={styles.centerText}>
-                Nothing from your list lands on this run.
+                No grocery run this day. Pick a highlighted day to see its orders.
               </ThemedText>
+            ) : dayOrders.length > 0 ? (
+              dayOrders.map(renderOrder)
+            ) : !hasAnyOpenItems && upcomingPlaced.length === 0 ? (
+              emptyListBlock
             ) : (
-              dayItems.map(renderItemRow)
+              <ThemedText type="small" themeColor="textSecondary" style={styles.centerText}>
+                No orders on this run.
+              </ThemedText>
             )}
 
             {isGroceryDay && dayStaples.length > 0 ? (
-              <>
+              <Animated.View layout={drawerLayout} style={styles.section}>
                 <SectionDivider label="Staples due" hint="Running low by this trip" />
-                {dayStaples.map((habit) => {
+                {dayStaples.map(({ habit, groupName }) => {
                   const name = habit.product_id
-                    ? productNames.get(habit.product_id) ?? 'Staple'
+                    ? (productNames.get(habit.product_id) ?? 'Staple')
                     : 'Category staple';
                   return (
                     <ListItemRow
                       key={habit.id}
-                      title={name}
+                      title={showSource ? `${name} · ${groupName}` : name}
                       imagePath={habit.product_id ? productImages.get(habit.product_id) : null}
                       cadenceTag={cadenceLabel(habit.interval_days)}
                       dueLabel={`Due ${formatShortDate(habit.next_due_on)}`}
@@ -698,11 +965,11 @@ export default function PlanScreen() {
                     />
                   );
                 })}
-              </>
+              </Animated.View>
             ) : null}
 
             {useSoon.length > 0 ? (
-              <View style={{ gap: Spacing.one }}>
+              <Animated.View layout={drawerLayout} style={{ gap: Spacing.one }}>
                 <ThemedText type="smallBold">Use soon</ThemedText>
                 {useSoon.map((row) => (
                   <View
@@ -719,39 +986,67 @@ export default function PlanScreen() {
                     </ThemedText>
                   </View>
                 ))}
-              </View>
+              </Animated.View>
             ) : null}
-
+            </Animated.View>
+          </Animated.View>
+        ) : segment === 'list' ? (
+          <Animated.View entering={FadeInDown.delay(40).duration(280)} style={styles.section}>
+            {upcomingDays.length === 0
+              ? emptyListBlock
+              : upcomingDays.map((ymd) => (
+                  <Animated.View key={ymd} layout={drawerLayout} style={styles.section}>
+                    <SectionDivider
+                      label={ymd === todayYmd ? 'Today' : formatShortDate(ymd)}
+                      hint={`${(ordersByDay.get(ymd) ?? []).length} order${(ordersByDay.get(ymd) ?? []).length === 1 ? '' : 's'}`}
+                    />
+                    {(ordersByDay.get(ymd) ?? []).map(renderOrder)}
+                  </Animated.View>
+                ))}
           </Animated.View>
         ) : (
           <View style={styles.section}>
             <ThemedText type="smallBold" style={styles.dayTitle}>
               Past orders
             </ThemedText>
-            {pastLoading ? (
-              <ActivityIndicator color={theme.secondary} />
-            ) : pastOrders.length === 0 ? (
+            {pastOrders.length === 0 ? (
               <View style={styles.emptyBlock}>
                 <ThemedText type="small" themeColor="textSecondary" style={styles.centerText}>
-                  No past orders yet.
+                  No orders placed yet.
                 </ThemedText>
               </View>
             ) : (
               pastOrders.map((order) => (
                 <Pressable
-                  key={order.order_id}
+                  key={order.key}
                   onPress={() => void openPastDetail(order)}
                   style={[
                     styles.pastRow,
                     { backgroundColor: theme.background, borderColor: theme.borderInk },
                   ]}>
+                  <StoreLogo storeName={order.storeName} size={36} />
                   <View style={{ flex: 1, gap: 2 }}>
-                    <ThemedText type="smallBold">{order.store_name}</ThemedText>
+                    <ThemedText type="smallBold">{order.storeName}</ThemedText>
                     <ThemedText type="small" themeColor="textSecondary">
-                      {formatShortDate(order.planned_for)} · {order.item_count} items
+                      {[
+                        showSource ? order.groupName : null,
+                        formatShortDate(order.ymd),
+                        `${order.itemCount} items`,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
                     </ThemedText>
                   </View>
-                  <ThemedText type="smallBold">{formatMoney(order.total_cents)}</ThemedText>
+                  <ThemedText type="smallBold">{formatMoney(order.totalCents)}</ThemedText>
+                  {order.shopper ? (
+                    <MemberAvatar
+                      userId={order.shopper.userId}
+                      name={order.shopper.name}
+                      avatarUrl={order.shopper.avatarUrl}
+                      size={26}
+                      ringColor={theme.borderInk}
+                    />
+                  ) : null}
                 </Pressable>
               ))
             )}
@@ -775,36 +1070,59 @@ export default function PlanScreen() {
                 paddingBottom: insets.bottom + Spacing.three,
               },
             ]}>
-            {pastDetail ? (
+            {pastDetail?.placed ? (
               <>
                 <ThemedText type="smallBold" style={{ fontSize: Type.section }}>
-                  {pastDetail.store_name}
+                  {pastDetail.storeName}
                 </ThemedText>
                 <ThemedText type="small" themeColor="textSecondary">
-                  {formatShortDate(pastDetail.planned_for)} · {formatMoney(pastDetail.total_cents)}
+                  {[
+                    pastDetail.groupName,
+                    formatShortDate(pastDetail.ymd),
+                    formatMoney(pastDetail.totalCents),
+                    pastDetail.placed.paid_by
+                      ? `paid by ${memberName(pastDetail.groupId, pastDetail.placed.paid_by)}`
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
                 </ThemedText>
                 <ScrollView style={{ maxHeight: 280 }} contentContainerStyle={{ gap: Spacing.one }}>
-                  {pastItems.map((item) => (
-                    <View key={item.id} style={styles.stillRow}>
-                      <ThemedText type="small" style={{ flex: 1 }}>
-                        Line · qty {item.quantity}
-                      </ThemedText>
-                      <ThemedText type="small" themeColor="textSecondary">
-                        {formatMoney(Math.round(Number(item.quantity) * item.unit_price_cents))}
-                      </ThemedText>
-                    </View>
-                  ))}
+                  {pastItems.map((line) => {
+                    const item = line.list_item_id ? itemById.get(line.list_item_id) : undefined;
+                    return (
+                      <View key={line.id} style={styles.stillRow}>
+                        <ThemedText type="small" style={{ flex: 1 }}>
+                          {item ? itemTitle(item) : 'Item'} · qty {line.quantity}
+                        </ThemedText>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          {formatMoney(Math.round(Number(line.quantity) * line.unit_price_cents))}
+                        </ThemedText>
+                      </View>
+                    );
+                  })}
                   {pastShares.length > 0 ? (
                     <View style={{ marginTop: Spacing.two, gap: Spacing.one }}>
                       <ThemedText type="smallBold">Splits</ThemedText>
                       {pastShares.map((share) => (
                         <ThemedText key={share.id} type="small" themeColor="textSecondary">
-                          {share.status}: {formatMoney(share.amount_cents)}
+                          {memberName(pastDetail.groupId, share.user_id)} · {share.status} ·{' '}
+                          {formatMoney(share.amount_cents)}
                         </ThemedText>
                       ))}
                     </View>
                   ) : null}
                 </ScrollView>
+                {pastDetail.placed.checkout_url ? (
+                  <ButterButton
+                    label="Open checkout"
+                    variant="ink"
+                    onPress={() => {
+                      const url = pastDetail.placed?.checkout_url;
+                      if (url) void Linking.openURL(url).catch(() => undefined);
+                    }}
+                  />
+                ) : null}
                 <ButterButton label="Close" variant="ghost" onPress={() => setPastDetail(null)} />
               </>
             ) : null}
@@ -823,13 +1141,7 @@ type SegmentIconTabProps = {
   onPress: () => void;
 };
 
-function SegmentIconTab({
-  label,
-  selected,
-  iosSymbol,
-  androidSymbol,
-  onPress,
-}: SegmentIconTabProps) {
+function SegmentIconTab({ label, selected, iosSymbol, androidSymbol, onPress }: SegmentIconTabProps) {
   const theme = useTheme();
   const tint = selected ? theme.primary : theme.text;
 
@@ -905,10 +1217,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.two,
   },
-  chipRow: {
-    flexDirection: 'row',
-    gap: Spacing.two,
-  },
   segments: {
     flexDirection: 'row',
     gap: Spacing.two,
@@ -921,6 +1229,16 @@ const styles = StyleSheet.create({
   },
   tripSavingsHint: {
     flexShrink: 1,
+  },
+  completionStatus: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.one,
+    borderRadius: Radius.chip,
+    borderWidth: 1.5,
   },
   segmentTab: {
     flexDirection: 'row',
@@ -945,17 +1263,6 @@ const styles = StyleSheet.create({
   },
   centerText: {
     textAlign: 'center',
-  },
-  collapseCard: {
-    borderWidth: 2,
-    borderRadius: Radius.card,
-    padding: Spacing.three,
-    gap: Spacing.two,
-  },
-  collapseHead: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
   },
   useSoonRow: {
     borderWidth: 2,
