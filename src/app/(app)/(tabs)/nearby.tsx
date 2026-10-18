@@ -1,8 +1,9 @@
-import { BottomSheet, Column, Host, Text as UIText } from '@expo/ui';
+import { BottomSheet, Button, Column, Host, Text as UIText } from '@expo/ui';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import MapView, { Circle, Marker, PROVIDER_GOOGLE, type Region } from 'react-native-maps';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useSession } from '@/auth/session';
 import {
@@ -19,7 +20,7 @@ import { SnapBadge } from '@/components/shop/snap-badge';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { ButterButton } from '@/components/ui/butter-button';
-import { Fonts, Radius, Spacing } from '@/constants/theme';
+import { BottomTabInset, Fonts, Radius, Spacing } from '@/constants/theme';
 import { useSnapOptedIn } from '@/hooks/use-snap-opted-in';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -50,7 +51,9 @@ function emptyAddress(coords: SearchCoords) {
 
 export default function NearbyScreen() {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const snapOptedIn = useSnapOptedIn();
+  const controlBottom = BottomTabInset + insets.bottom + Spacing.three;
   const { session, isGuest } = useSession();
   const signedIn = Boolean(session) && !isGuest;
   const mapRef = useRef<MapView>(null);
@@ -300,7 +303,7 @@ export default function NearbyScreen() {
         </ThemedView>
       ) : null}
 
-      <View style={styles.controls}>
+      <View style={[styles.controls, { bottom: controlBottom }]} pointerEvents="box-none">
         <Pressable
           onPress={() => void useGps()}
           disabled={isRefreshing || isLoading}
@@ -329,7 +332,7 @@ export default function NearbyScreen() {
         </Pressable>
       </View>
 
-      <Host style={styles.sheetHost}>
+      <Host style={styles.sheetHost} pointerEvents="box-none">
         <BottomSheet isPresented={sheetOpen} onDismiss={closeSheet}>
           <Column>
             {droppedPin ? (
@@ -339,6 +342,14 @@ export default function NearbyScreen() {
                 {!signedIn ? (
                   <UIText>Sign in to save this pin as your default search origin.</UIText>
                 ) : null}
+                {!signedIn ? (
+                  <Button onPress={() => router.push('/login')}>Sign in</Button>
+                ) : null}
+                <Button
+                  disabled={originBusy}
+                  onPress={() => void searchFromHere(droppedPin)}>
+                  {originBusy ? 'Searching…' : 'Search from here'}
+                </Button>
               </>
             ) : (
               <>
@@ -348,46 +359,24 @@ export default function NearbyScreen() {
                 {selected?.city ? <UIText>{selected.city}</UIText> : null}
                 {selected ? <UIText>{formatDistanceKm(selected.distance_km)}</UIText> : null}
                 {!signedIn ? <UIText>Sign in to favorite this store.</UIText> : null}
+                {selected && signedIn ? (
+                  <Button
+                    disabled={favoriteBusy}
+                    onPress={() => void toggleFavorite(selected)}>
+                    {favoriteBusy
+                      ? 'Saving…'
+                      : selectedFavored
+                        ? 'Remove favorite'
+                        : 'Favorite store'}
+                  </Button>
+                ) : selected ? (
+                  <Button onPress={() => router.push('/login')}>Sign in to favorite</Button>
+                ) : null}
               </>
             )}
           </Column>
         </BottomSheet>
       </Host>
-
-      {sheetOpen ? (
-        <View style={styles.sheetActions} pointerEvents="box-none">
-          {droppedPin ? (
-            <>
-              {!signedIn ? (
-                <ButterButton label="Sign in" variant="ghost" onPress={() => router.push('/login')} />
-              ) : null}
-              <ButterButton
-                label={originBusy ? 'Searching…' : 'Search from here'}
-                variant="yellow"
-                disabled={originBusy}
-                onPress={() => void searchFromHere(droppedPin)}
-              />
-            </>
-          ) : selected ? (
-            signedIn ? (
-              <ButterButton
-                label={
-                  favoriteBusy
-                    ? 'Saving…'
-                    : selectedFavored
-                      ? 'Remove favorite'
-                      : 'Favorite store'
-                }
-                variant={selectedFavored ? 'ghost' : 'yellow'}
-                disabled={favoriteBusy}
-                onPress={() => void toggleFavorite(selected)}
-              />
-            ) : (
-              <ButterButton label="Sign in to favorite" variant="yellow" onPress={() => router.push('/login')} />
-            )
-          ) : null}
-        </View>
-      ) : null}
     </View>
   );
 }
@@ -422,10 +411,10 @@ const styles = StyleSheet.create({
   },
   controls: {
     position: 'absolute',
-    bottom: Spacing.six,
     alignSelf: 'center',
     flexDirection: 'row',
     gap: Spacing.two,
+    zIndex: 2,
   },
   retry: {
     paddingHorizontal: Spacing.four,
@@ -435,13 +424,6 @@ const styles = StyleSheet.create({
   },
   sheetHost: {
     position: 'absolute',
-  },
-  sheetActions: {
-    position: 'absolute',
-    left: Spacing.three,
-    right: Spacing.three,
-    bottom: Spacing.six + 56,
-    gap: Spacing.two,
   },
   pin: {
     alignItems: 'center',

@@ -663,6 +663,42 @@ export async function getStorePriceCentsByProductIds(
   return pricesForListings(listings);
 }
 
+/** Shelf across several stores; each product keeps its lowest price among them. */
+export async function listShelfForStores(
+  storeIds: string[],
+  input?: { limit?: number; categoryId?: string | null },
+): Promise<StoreShelfRow[]> {
+  const ids = [...new Set(storeIds.filter(Boolean))].slice(0, MAX_MULTI_STORES);
+  if (ids.length === 0) return [];
+  const limit = input?.limit ?? 60;
+  const shelves = await Promise.all(ids.map((id) => listStoreShelf(id, input)));
+  const best = new Map<string, StoreShelfRow>();
+  for (const row of shelves.flat()) {
+    const prior = best.get(row.product.id);
+    if (!prior || row.priceCents < prior.priceCents) best.set(row.product.id, row);
+  }
+  return [...best.values()].slice(0, limit);
+}
+
+/** Lowest price among the given stores for each product any of them stocks. */
+export async function getStorePriceCentsForStores(
+  storeIds: string[],
+  productIds: string[],
+): Promise<Map<string, number>> {
+  const ids = [...new Set(storeIds.filter(Boolean))].slice(0, MAX_MULTI_STORES);
+  const maps = await Promise.all(ids.map((id) => getStorePriceCentsByProductIds(id, productIds)));
+  const best = new Map<string, number>();
+  for (const map of maps) {
+    for (const [productId, cents] of map) {
+      const prior = best.get(productId);
+      if (prior == null || cents < prior) best.set(productId, cents);
+    }
+  }
+  return best;
+}
+
+const MAX_MULTI_STORES = 12;
+
 /** Product-scoped live promotions keyed by product id (and sibling group ids). */
 export async function getProductPromotionMap(
   productIds?: string[],

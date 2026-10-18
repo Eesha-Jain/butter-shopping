@@ -10,7 +10,7 @@ import { requireOptionalNativeModule } from 'expo';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useMemo } from 'react';
-import { ImageBackground, StyleSheet, useColorScheme } from 'react-native';
+import { StyleSheet, View, useColorScheme } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { ActiveListProvider } from '@/auth/active-list';
@@ -63,14 +63,10 @@ export default function RootLayout() {
           <GuestCartProvider>
             <BottomSheetModalProvider>
               <ThemeProvider value={navigationTheme}>
-                <ImageBackground
-                  source={require('@/assets/images/background.png')}
-                  style={[styles.background, { backgroundColor: Colors[scheme].background }]}
-                  imageStyle={styles.backgroundImage}
-                  resizeMode="cover">
+                <View style={[styles.background, { backgroundColor: Colors[scheme].background }]}>
                   <SplashScreenController fontsReady={fontsLoaded || !!fontError} />
                   {fontsLoaded || fontError ? <RootNavigator /> : null}
-                </ImageBackground>
+                </View>
               </ThemeProvider>
             </BottomSheetModalProvider>
           </GuestCartProvider>
@@ -132,8 +128,5 @@ function RootNavigator() {
 const styles = StyleSheet.create({
   background: {
     flex: 1,
-  },
-  backgroundImage: {
-    opacity: 0.15,
   },
 });

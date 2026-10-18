@@ -41,12 +41,14 @@ import {
   getActiveListProductQtyMap,
   fetchNearbyShops,
   getCheapestPriceCentsByProductIds,
-  getStorePriceCentsByProductIds,
+  getStorePriceCentsForStores,
   type OpenPricesGeo,
   getEffectiveGroceryCashbackBps,
   getGuestFavoriteIds,
   getGuestFoodRules,
   getGuestOnboardingDraft,
+  getJson,
+  setJson,
   getMyProfile,
   publicImageUrl,
   saveGuestOnboardingDraft,
@@ -63,9 +65,8 @@ import {
   listMyLocations,
   listMyStapleProductIds,
   listProductsGroupedByCategory,
-  listStoreShelf,
+  listShelfForStores,
   listTrending,
-  messageFromUnknown,
   removeListItem,
   resolveSearchCoords,
   resolveShopZip,
@@ -100,6 +101,16 @@ import { ButterSearchField } from '@/components/ui/butter-search-field';
 import { NativeIconButton } from '@/components/ui/native-icon-button';
 import { BottomTabInset, Radius, SheetChrome, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import {
+  describeSelection,
+  groupStores,
+  matchStoresForQuery,
+  toggleGroupIds,
+} from '@/utils/store-names';
+import {
+  scheduleProductDetailPrefetch,
+  setProductPrefetchPaused,
+} from '@/services/product-detail-prefetch';
 
 const PENDING_ITEM_ID = '__pending__';
 
@@ -123,6 +134,20 @@ function chunkProducts(products: Product[], size = 2): Product[][] {
     rows.push(products.slice(i, i + size));
   }
   return rows;
+}
+
+type ShopHomeCache = {
+  categories: ProductCategory[];
+  sections: CategoryProductSection[];
+  products: Product[];
+  trending: { product: Product; sponsored: boolean }[];
+  prices: [string, number][];
+};
+
+function readShopHomeCache(): ShopHomeCache | null {
+  const cached = getJson<ShopHomeCache>('shopHomeCache');
+  if (!cached || !Array.isArray(cached.products) || !Array.isArray(cached.sections)) return null;
+  return cached;
 }
 
 const AISLE_PREVIEW_COUNT = 10;
@@ -158,17 +183,25 @@ export default function ShopScreen() {
   const listRef = useRef<FlatList<ShopListItem>>(null);
   const pendingBrowseRef = useRef<(() => void) | null>(null);
   const showScrollTopRef = useRef(false);
+  const searchStickyAtRef = useRef(Infinity);
+  const searchPinnedRef = useRef(false);
+  const [searchPinned, setSearchPinned] = useState(false);
+  const pinProgress = useSharedValue(0);
+  const pinnedSearchStyle = useAnimatedStyle(() => ({
+    opacity: pinProgress.value,
+  }));
   const seededPrefsRef = useRef(false);
   const openPricesGeoRef = useRef<OpenPricesGeo | null>(null);
   const contentOpacity = useSharedValue(1);
   const [showScrollTop, setShowScrollTop] = useState(false);
 
+  const [initialCache] = useState<ShopHomeCache | null>(readShopHomeCache);
   const [location, setLocation] = useState<UserLocation | null>(null);
   const [qtyMap, setQtyMap] = useState<Map<string, { listItemId: string; quantity: number }>>(
     new Map(),
   );
 
-  const [categories, setCategories] = useState<ProductCategory[]>([]);
+  const [categories, setCategories] = useState<ProductCategory[]>(() => initialCache?.categories ?? []);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [moreCategoriesOpen, setMoreCategoriesOpen] = useState(false);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
@@ -176,15 +209,30 @@ export default function ShopScreen() {
 
   const [staples, setStaples] = useState<Product[]>([]);
   const [staplesArePersonal, setStaplesArePersonal] = useState(false);
-  const [trending, setTrending] = useState<{ product: Product; sponsored: boolean }[]>([]);
-  const [trendingPrices, setTrendingPrices] = useState<Map<string, number>>(() => new Map());
-  const [products, setProducts] = useState<Product[]>([]);
-  const [categorySections, setCategorySections] = useState<CategoryProductSection[]>([]);
+  const [trending, setTrending] = useState<{ product: Product; sponsored: boolean }[]>(
+    () => initialCache?.trending ?? [],
+  );
+  const [trendingPrices, setTrendingPrices] = useState<Map<string, number>>(
+    () => new Map(initialCache?.prices ?? []),
+  );
+  const [products, setProducts] = useState<Product[]>(() => initialCache?.products ?? []);
+  const [categorySections, setCategorySections] = useState<CategoryProductSection[]>(
+    () => initialCache?.sections ?? [],
+  );
   const [promotions, setPromotions] = useState<Map<string, Promotion>>(new Map());
   const [checkingStores, setCheckingStores] = useState(false);
   const [nearbyStores, setNearbyStores] = useState<NearbyStore[]>([]);
-  const [selectedStore, setSelectedStore] = useState<NearbyStore | null>(null);
-  const [shelfPrices, setShelfPrices] = useState<Map<string, number>>(() => new Map());
+  const [selectedStoreIds, setSelectedStoreIds] = useState<string[]>([]);
+  const storeGroups = useMemo(() => groupStores(nearbyStores), [nearbyStores]);
+  const selectedStoreLabel = useMemo(
+    () => describeSelection(storeGroups, selectedStoreIds).join(', '),
+    [storeGroups, selectedStoreIds],
+  );
+  const hasStoreFilter = selectedStoreIds.length > 0;
+  const selectedStoreKey = selectedStoreIds.join(',');
+  const [shelfPrices, setShelfPrices] = useState<Map<string, number>>(
+    () => new Map(initialCache?.prices ?? []),
+  );
   const [cashbackBps, setCashbackBps] = useState<number | null>(null);
 
   const [traits, setTraits] = useState<FoodTrait[]>([]);
@@ -202,11 +250,16 @@ export default function ShopScreen() {
   const [peekClosing, setPeekClosing] = useState(false);
 
   const [isLoading, setIsLoading] = useState(true);
+  const [productsLoading, setProductsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const searchQuery = search.trim();
   const isSearching = searchQuery.length > 0;
+  const locationSuggestions = useMemo(
+    () =>
+      isSearching ? groupStores(matchStoresForQuery(searchQuery, nearbyStores)).slice(0, 6) : [],
+    [isSearching, nearbyStores, searchQuery],
+  );
 
   const traitsById = useMemo(() => new Map(traits.map((trait) => [trait.id, trait])), [traits]);
 
@@ -267,14 +320,13 @@ export default function ShopScreen() {
     async (refresh = false) => {
       if (refresh) setIsRefreshing(true);
       else setIsLoading(true);
-      setError(null);
       try {
-        const foodTraits = await listFoodTraits();
-        setTraits(foodTraits);
+        const foodTraits = await listFoodTraits().catch(() => null);
+        if (foodTraits) setTraits(foodTraits);
 
         if (isGuest) {
           setLocation(null);
-          await refreshProfile();
+          await refreshProfile().catch(() => undefined);
           const guestPrefs = getGuestFoodRules();
           setPreferenceRules(guestPrefs);
           if (!seededPrefsRef.current || refresh) {
@@ -283,27 +335,32 @@ export default function ShopScreen() {
           }
         } else {
           const [locations, foodRules] = await Promise.all([
-            listMyLocations(),
-            listMyFoodRules(),
+            listMyLocations().catch(() => [] as UserLocation[]),
+            listMyFoodRules().catch(() => null),
           ]);
-          await Promise.all([refreshTargets(), refreshProfile()]);
+          await Promise.all([
+            refreshTargets().catch(() => undefined),
+            refreshProfile().catch(() => undefined),
+          ]);
           setLocation(locations.find((row) => row.is_default) ?? locations[0] ?? null);
-          const prefs = rulesFromUserFoodRules(foodRules);
-          setPreferenceRules(prefs);
-          if (!seededPrefsRef.current || refresh) {
-            setSessionRules(prefs);
-            seededPrefsRef.current = true;
+          if (foodRules) {
+            const prefs = rulesFromUserFoodRules(foodRules);
+            setPreferenceRules(prefs);
+            if (!seededPrefsRef.current || refresh) {
+              setSessionRules(prefs);
+              seededPrefsRef.current = true;
+            }
           }
         }
-        setShellReady(true);
-        try {
-          setNearbyStores(await fetchNearbyShops());
-        } catch {
-          setNearbyStores([]);
-        }
+        // Store chips are optional; don't hold products behind the nearby lookup.
+        void fetchNearbyShops()
+          .then(setNearbyStores)
+          .catch(() => setNearbyStores([]));
       } catch (err) {
-        setError(messageFromUnknown(err, 'Could not load the shop.'));
+        showErrorToast(err, 'Could not load the shop.');
       } finally {
+        // Never block the shop on a failed shell request; products load on their own.
+        setShellReady(true);
         setIsLoading(false);
         setIsRefreshing(false);
       }
@@ -356,6 +413,7 @@ export default function ShopScreen() {
 
     let cancelled = false;
     void (async () => {
+      setProductsLoading(true);
       try {
         const collegeId = isGuest ? null : (await getMyProfile()).college_id;
         const groupId = activeTarget?.group.id;
@@ -367,20 +425,22 @@ export default function ShopScreen() {
         openPricesGeoRef.current = openPricesGeo;
 
         const [promoMap, cats, stapleProductIds, trendingRows, popularCampus] = await Promise.all([
-          getProductPromotionMap(),
-          listCategories(),
-          groupId ? listMyStapleProductIds(groupId) : Promise.resolve([] as string[]),
-          listTrending(collegeId),
-          listCampusPopularProducts({ limit: 12 }),
+          getProductPromotionMap().catch(() => new Map<string, Promotion>()),
+          listCategories().catch(() => null),
+          groupId
+            ? listMyStapleProductIds(groupId).catch(() => [] as string[])
+            : Promise.resolve([] as string[]),
+          listTrending(collegeId).catch(() => []),
+          listCampusPopularProducts({ limit: 12 }).catch(() => [] as Product[]),
         ]);
         if (cancelled) return;
 
         setPromotions(promoMap);
-        setCategories(cats);
+        if (cats && cats.length > 0) setCategories(cats);
 
         // Personal staples only — campus popular folds into Trending below.
         if (stapleProductIds.length > 0) {
-          setStaples(await getProductsByIds(stapleProductIds));
+          setStaples(await getProductsByIds(stapleProductIds).catch(() => []));
           setStaplesArePersonal(true);
         } else {
           setStaples([]);
@@ -390,7 +450,9 @@ export default function ShopScreen() {
         const trendingProductIds = trendingRows
           .filter((row) => row.kind === 'product' && row.product_id)
           .map((row) => row.product_id as string);
-        const trendingProducts = await getProductsByIds(trendingProductIds);
+        const trendingProducts = await getProductsByIds(trendingProductIds).catch(
+          () => [] as Product[],
+        );
         if (cancelled) return;
         const byId = new Map(trendingProducts.map((row) => [row.id, row]));
         const organicTrending = trendingRows
@@ -414,12 +476,12 @@ export default function ShopScreen() {
           seenTrending.add(product.id);
           mergedTrending.push({ product, sponsored: false });
         }
-        setTrending(mergedTrending);
+        if (mergedTrending.length > 0) setTrending(mergedTrending);
         // Carousel prices (staples + trending) merge into every grid price map below.
         const stripPriceMap = await getCheapestPriceCentsByProductIds(
           [...stapleProductIds, ...mergedTrending.map((row) => row.product.id)],
           openPricesGeo,
-        );
+        ).catch(() => new Map<string, number>());
         if (cancelled) return;
         setTrendingPrices(stripPriceMap);
         setShelfPrices((prev) => {
@@ -430,11 +492,12 @@ export default function ShopScreen() {
         const withStripPrices = (gridPrices: Map<string, number>, bps: number | null) =>
           applyCashbackToPriceMap(new Map([...stripPriceMap, ...gridPrices]), bps);
 
-        const browseHome = !favoritesOnly && selectedCategoryId == null && selectedStore == null;
+        const browseHome = !favoritesOnly && selectedCategoryId == null && !hasStoreFilter;
         const stapleIds = new Set(stapleProductIds);
         const promotionProductIds = new Set(promoMap.keys());
 
-        if (selectedStore) {
+        if (hasStoreFilter) {
+          const storeIds = selectedStoreKey.split(',');
           setCategorySections([]);
           let rawProducts: Product[];
           let priceMap: Map<string, number>;
@@ -444,13 +507,13 @@ export default function ShopScreen() {
             if (selectedCategoryId) {
               rawProducts = rawProducts.filter((row) => row.category_id === selectedCategoryId);
             }
-            priceMap = await getStorePriceCentsByProductIds(
-              selectedStore.id,
+            priceMap = await getStorePriceCentsForStores(
+              storeIds,
               rawProducts.map((row) => row.id),
             );
             rawProducts = rawProducts.filter((row) => priceMap.has(row.id));
           } else {
-            const shelf = await listStoreShelf(selectedStore.id, {
+            const shelf = await listShelfForStores(storeIds, {
               limit: 60,
               categoryId: selectedCategoryId,
             });
@@ -487,9 +550,11 @@ export default function ShopScreen() {
           const catalogIds = catalogProducts.map((row) => row.id);
           const allIds = [...new Set([...sectionIds, ...catalogIds])];
           const [traitsForProducts, priceMap, nextCashbackBps] = await Promise.all([
-            getProductTraitsForIds(allIds),
-            getCheapestPriceCentsByProductIds(allIds, openPricesGeo),
-            getEffectiveGroceryCashbackBps(isGuest),
+            getProductTraitsForIds(allIds).catch(() => []),
+            getCheapestPriceCentsByProductIds(allIds, openPricesGeo).catch(
+              () => new Map<string, number>(),
+            ),
+            getEffectiveGroceryCashbackBps(isGuest).catch(() => null),
           ]);
           if (cancelled) return;
           const netPriceMap = applyCashbackToPriceMap(priceMap, nextCashbackBps);
@@ -504,22 +569,38 @@ export default function ShopScreen() {
             promotionProductIds,
             priceCentsByProduct: netPriceMap,
           };
-          setCategorySections(
-            grouped
-              .map((section) => ({
-                category: section.category,
-                products: applyFoodFilters(
-                  section.products,
-                  sessionRules,
-                  traitsByProduct,
-                  filterOpts,
-                ),
-              }))
-              .filter((section) => section.products.length > 0),
+          const nextSections = grouped
+            .map((section) => ({
+              category: section.category,
+              products: applyFoodFilters(
+                section.products,
+                sessionRules,
+                traitsByProduct,
+                filterOpts,
+              ),
+            }))
+            .filter((section) => section.products.length > 0);
+          const nextProducts = applyFoodFilters(
+            catalogProducts,
+            sessionRules,
+            traitsByProduct,
+            filterOpts,
           );
-          setProducts(
-            applyFoodFilters(catalogProducts, sessionRules, traitsByProduct, filterOpts),
-          );
+          // Keep what is already on screen (cached or previous) if the network returned nothing.
+          if (nextSections.length > 0 || nextProducts.length > 0 || sessionRules.length > 0) {
+            setCategorySections(nextSections);
+            setProducts(nextProducts);
+          }
+          // Cache what the user actually sees on the default home (their saved prefs applied).
+          if (nextSections.length > 0 && sort === 'default' && !onSaleOnly) {
+            setJson('shopHomeCache', {
+              categories: cats ?? initialCache?.categories ?? [],
+              sections: nextSections,
+              products: nextProducts,
+              trending: mergedTrending,
+              prices: [...withStripPrices(priceMap, nextCashbackBps)],
+            } satisfies ShopHomeCache);
+          }
           if (!cancelled) setCheckingStores(false);
         } else {
           setCategorySections([]);
@@ -566,9 +647,12 @@ export default function ShopScreen() {
         }
       } catch (err) {
         if (!cancelled) {
-          showErrorToast(err, 'Could not update products.');
           setCheckingStores(false);
+          // Cached products stay visible; only surface the error when there is nothing to show.
+          if (!initialCache) showErrorToast(err, 'Could not update products.');
         }
+      } finally {
+        if (!cancelled) setProductsLoading(false);
       }
     })();
 
@@ -579,11 +663,12 @@ export default function ShopScreen() {
     activeTarget,
     favoriteIdsKey,
     favoritesOnly,
+    initialCache,
     isGuest,
     onSaleOnly,
     refreshQtyMap,
     selectedCategoryId,
-    selectedStore,
+    selectedStoreKey,
     sessionRules,
     shellReady,
     sort,
@@ -609,6 +694,18 @@ export default function ShopScreen() {
     }
 
     const localMatches = products.filter((row) => productMatchesSearch(row, term));
+
+    // "ballard", "98107", "fred meyer seattle": treat store/location words as a store filter.
+    const locationStores = matchStoresForQuery(term, nearbyStores);
+    if (locationStores.length > 0 && localMatches.length === 0) {
+      const ids = locationStores.map((store) => store.id);
+      setSelectedStoreIds(ids);
+      setSearch('');
+      scrollListToTop(true);
+      showSuccessToast('Showing stores', describeSelection(storeGroups, ids).join(', '));
+      return;
+    }
+
     searchResultToast(localMatches.length, term);
 
     if (favoritesOnly || term.length < 2 || localMatches.length >= 3) return;
@@ -620,16 +717,16 @@ export default function ShopScreen() {
       if (selectedCategoryId) {
         rawProducts = rawProducts.filter((row) => row.category_id === selectedCategoryId);
       }
-      let priceMap = await (selectedStore
-        ? getStorePriceCentsByProductIds(
-            selectedStore.id,
+      let priceMap = await (hasStoreFilter
+        ? getStorePriceCentsForStores(
+            selectedStoreKey.split(','),
             rawProducts.map((row) => row.id),
           )
         : getCheapestPriceCentsByProductIds(
             rawProducts.map((row) => row.id),
             openPricesGeoRef.current,
           ));
-      if (selectedStore) {
+      if (hasStoreFilter) {
         rawProducts = rawProducts.filter((row) => priceMap.has(row.id));
       }
       const [traitsForProducts, cashbackBps] = await Promise.all([
@@ -814,7 +911,7 @@ export default function ShopScreen() {
   const extraCategories = categories.slice(VISIBLE_CATEGORIES);
 
   const sectionedHome =
-    !favoritesOnly && !isSearching && selectedCategoryId == null && selectedStore == null;
+    !favoritesOnly && !isSearching && selectedCategoryId == null && !hasStoreFilter;
 
   const displayProducts = useMemo(() => {
     if (!isSearching) return products;
@@ -843,6 +940,47 @@ export default function ShopScreen() {
       products: row,
     }));
   }, [categorySections, displayProducts, sectionedHome]);
+
+  // Warm popup data in the background: trending → preferred → what's on screen.
+  useEffect(() => {
+    const normal = sectionedHome
+      ? categorySections.flatMap((section) => section.products.slice(0, AISLE_PREVIEW_COUNT))
+      : displayProducts;
+    const known = new Map<string, Product>();
+    for (const row of [...staples, ...normal, ...products]) known.set(row.id, row);
+    const preferredIds = new Set<string>([...favoriteIds, ...effectiveQtyMap.keys()]);
+    const preferred = [
+      ...staples,
+      ...[...preferredIds].map((id) => known.get(id)).filter((row): row is Product => row != null),
+    ];
+    const zip = location?.postal_code?.trim().slice(0, 5);
+    scheduleProductDetailPrefetch({
+      trending: displayTrending.map((row) => row.product),
+      preferred,
+      normal,
+      preferenceRules: sessionRules,
+      isGuest,
+      zip: zip && /^\d{5}$/.test(zip) ? zip : null,
+    });
+  }, [
+    categorySections,
+    displayProducts,
+    displayTrending,
+    effectiveQtyMap,
+    favoriteIds,
+    isGuest,
+    location,
+    products,
+    sectionedHome,
+    sessionRules,
+    staples,
+  ]);
+
+  useEffect(() => {
+    setProductPrefetchPaused(peekProduct != null);
+  }, [peekProduct]);
+
+  useEffect(() => () => setProductPrefetchPaused(false), []);
 
   const contentAnimStyle = useAnimatedStyle(() => ({
     opacity: contentOpacity.value,
@@ -907,12 +1045,51 @@ export default function ShopScreen() {
       setSelectedCategoryId(null);
       setFavoritesOnly(false);
       setSearch('');
-      setSelectedStore(null);
+      setSelectedStoreIds([]);
     });
   };
 
+  const renderSearchRow = () => (
+    <View style={styles.searchRow}>
+      <ButterSearchField
+        value={search}
+        onChangeText={setSearch}
+        placeholder="Search products"
+        autoCorrect={false}
+        autoCapitalize="none"
+        clearButtonMode="while-editing"
+        returnKeyType="search"
+        onSubmitEditing={() => void handleSearchSubmit()}
+        accessibilityLabel="Search products"
+      />
+      <Pressable
+        onPress={() => {
+          openFilters();
+        }}
+        style={[styles.iconBtn, styles.filterBtn, { backgroundColor: theme.secondary }]}
+        accessibilityRole="button"
+        accessibilityLabel="Open filters">
+        <SymbolView
+          name={{
+            ios: 'line.3.horizontal.decrease',
+            android: 'filter_list',
+            web: 'filter_list',
+          }}
+          size={22}
+          tintColor={theme.primary}
+        />
+      </Pressable>
+    </View>
+  );
+
   const onShopScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const y = event.nativeEvent.contentOffset.y;
+    const pinned = y > searchStickyAtRef.current;
+    if (searchPinnedRef.current !== pinned) {
+      searchPinnedRef.current = pinned;
+      setSearchPinned(pinned);
+    }
+    pinProgress.set(Math.min(1, Math.max(0, (y - searchStickyAtRef.current) / 16)));
     const visible = y > SCROLL_TOP_THRESHOLD;
     if (showScrollTopRef.current === visible) return;
     showScrollTopRef.current = visible;
@@ -1023,24 +1200,13 @@ export default function ShopScreen() {
     return parts.join(' · ');
   })();
 
-  if (isLoading && !shellReady) {
+  if (isLoading && !shellReady && !initialCache) {
     return (
       <ThemedView style={styles.centered}>
         <ActivityIndicator color={theme.text} />
         <ThemedText type="small" themeColor="textSecondary">
           Loading shop
         </ThemedText>
-      </ThemedView>
-    );
-  }
-
-  if (error && !shellReady) {
-    return (
-      <ThemedView style={styles.centered}>
-        <ThemedText>{error}</ThemedText>
-        <Pressable onPress={() => void loadShell()}>
-          <ThemedText type="linkPrimary">Try again</ThemedText>
-        </Pressable>
       </ThemedView>
     );
   }
@@ -1145,40 +1311,36 @@ export default function ShopScreen() {
                 </View>
               </View>
 
-              <View style={styles.searchRow}>
-                <ButterSearchField
-                  value={search}
-                  onChangeText={setSearch}
-                  placeholder="Search products"
-                  autoCorrect={false}
-                  autoCapitalize="none"
-                  clearButtonMode="while-editing"
-                  returnKeyType="search"
-                  onSubmitEditing={() => void handleSearchSubmit()}
-                  accessibilityLabel="Search products"
-                />
-                <Pressable
-                  onPress={() => {
-                    openFilters();
-                  }}
-                  style={[
-                    styles.iconBtn,
-                    styles.filterBtn,
-                    { backgroundColor: theme.secondary },
-                  ]}
-                  accessibilityRole="button"
-                  accessibilityLabel="Open filters">
-                  <SymbolView
-                    name={{
-                      ios: 'line.3.horizontal.decrease',
-                      android: 'filter_list',
-                      web: 'filter_list',
-                    }}
-                    size={22}
-                    tintColor={theme.primary}
-                  />
-                </Pressable>
+              <View
+                onLayout={(e) => {
+                  searchStickyAtRef.current = e.nativeEvent.layout.y;
+                }}>
+                {renderSearchRow()}
               </View>
+
+              {locationSuggestions.length > 0 ? (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                  contentContainerStyle={styles.chipRow}>
+                  {locationSuggestions.map((group) => (
+                    <ButterChip
+                      key={group.key}
+                      label={
+                        group.stores.length === 1 && group.stores[0]?.city
+                          ? `${group.name} · ${group.stores[0].city}`
+                          : `${group.name} (${group.stores.length})`
+                      }
+                      onPress={() => {
+                        setSelectedStoreIds(group.ids);
+                        setSearch('');
+                        scrollListToTop(true);
+                      }}
+                    />
+                  ))}
+                </ScrollView>
+              ) : null}
 
               {dealsStripLabel ? (
                 <Pressable
@@ -1273,11 +1435,11 @@ export default function ShopScreen() {
                     }
                   />
                 ) : null}
-                {selectedStore ? (
+                {hasStoreFilter ? (
                   <ButterChip
-                    label={`${selectedStore.name} ×`}
+                    label={`${selectedStoreLabel} ×`}
                     selected
-                    onPress={() => setSelectedStore(null)}
+                    onPress={() => setSelectedStoreIds([])}
                   />
                 ) : null}
                 {activeFilterChips.map((chip) => (
@@ -1295,7 +1457,7 @@ export default function ShopScreen() {
               displayStaples.length > 0 &&
               !favoritesOnly &&
               !isSearching &&
-              !selectedStore ? (
+              !hasStoreFilter ? (
                 <View style={styles.section}>
                   <ThemedText type="small" themeColor="textSecondary" style={styles.quietLabel}>
                     Your staples
@@ -1306,7 +1468,7 @@ export default function ShopScreen() {
                 displayTrending.length > 0 &&
                 !favoritesOnly &&
                 !isSearching &&
-                !selectedStore ? (
+                !hasStoreFilter ? (
                 <View
                   style={[
                     styles.trendingBanner,
@@ -1343,8 +1505,8 @@ export default function ShopScreen() {
                       style={styles.backBtn}
                     />
                     <ThemedText type="smallBold" style={[styles.flex, styles.aisleTitle]}>
-                      {selectedStore
-                        ? selectedStore.name
+                      {hasStoreFilter
+                        ? selectedStoreLabel
                         : isSearching
                           ? `Results for “${searchQuery}”`
                           : favoritesOnly
@@ -1389,13 +1551,21 @@ export default function ShopScreen() {
             </Animated.View>
           }
           ListEmptyComponent={
+            productsLoading || !shellReady ? (
+              <ThemedView style={styles.empty}>
+                <ActivityIndicator color={theme.text} />
+                <ThemedText type="small" themeColor="textSecondary">
+                  Loading products…
+                </ThemedText>
+              </ThemedView>
+            ) : (
             <ThemedView style={styles.empty}>
               <ThemedText type="smallBold">Nothing here yet</ThemedText>
               <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
                 {checkingStores
                   ? 'Looking up products at nearby stores…'
-                  : selectedStore
-                    ? `${selectedStore.name} has no matching items in stock.`
+                  : hasStoreFilter
+                    ? `${selectedStoreLabel} has no matching items in stock.`
                     : favoritesOnly && !isSearching
                       ? 'Tap the heart on a product to save favorites here.'
                       : isSearching
@@ -1403,6 +1573,7 @@ export default function ShopScreen() {
                         : 'Pull to refresh — or search for something you love.'}
               </ThemedText>
             </ThemedView>
+            )
           }
           renderItem={({ item }) => {
             if (item.kind === 'section') {
@@ -1413,10 +1584,11 @@ export default function ShopScreen() {
                   <View style={styles.sectionTitleRow}>
                     <Pressable
                       onPress={() => enterAisle(section.category.id)}
-                      style={styles.flex}
+                      style={[styles.flex, styles.trendingTitleRow]}
                       hitSlop={8}
                       accessibilityRole="button"
                       accessibilityLabel={`Open ${section.category.name} aisle`}>
+                      <CategoryIcon name={section.category.name} size={16} color={theme.text} />
                       <ThemedText type="smallBold" style={styles.aisleTitle}>
                         {section.category.name}
                       </ThemedText>
@@ -1442,13 +1614,27 @@ export default function ShopScreen() {
         />
       </Animated.View>
 
+      <Animated.View
+        pointerEvents={searchPinned ? 'auto' : 'none'}
+        style={[
+          styles.pinnedSearch,
+          pinnedSearchStyle,
+          {
+            paddingTop: insets.top + Spacing.two,
+            backgroundColor: theme.background,
+            borderBottomColor: theme.border,
+          },
+        ]}>
+        {renderSearchRow()}
+      </Animated.View>
+
       {showScrollTop ? (
         <Animated.View
           entering={FadeIn.duration(180)}
           exiting={FadeOut.duration(140)}
           style={[
             styles.scrollTopFabWrap,
-            { bottom: BottomTabInset + insets.bottom + Spacing.three, right: Spacing.three },
+            { bottom: BottomTabInset + insets.bottom + Spacing.two, right: Spacing.three },
           ]}>
           <Pressable
             onPress={() => {
@@ -1482,9 +1668,12 @@ export default function ShopScreen() {
             draftRules={sessionRules}
             draftSort={sort}
             draftOnSaleOnly={onSaleOnly}
-            nearbyStores={nearbyStores}
-            selectedStoreId={selectedStore?.id ?? null}
-            onSelectStore={(store) => setSelectedStore(store)}
+            storeGroups={storeGroups}
+            selectedStoreIds={selectedStoreIds}
+            onToggleStoreGroup={(group) =>
+              setSelectedStoreIds((prev) => toggleGroupIds(group, prev))
+            }
+            onClearStores={() => setSelectedStoreIds([])}
             onClose={() => setFiltersOpen(false)}
             onResetToPreferences={() => preferenceRules}
             onApply={({ rules, sort: nextSort, onSaleOnly: nextSale }) => {
@@ -1707,6 +1896,16 @@ const styles = StyleSheet.create({
   },
   listHeaderLayer: {
     zIndex: 10,
+  },
+  pinnedSearch: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 15,
+    paddingHorizontal: Spacing.three,
+    paddingBottom: Spacing.two,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   backBtn: {
     marginLeft: -Spacing.one,

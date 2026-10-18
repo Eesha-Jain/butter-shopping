@@ -5,6 +5,9 @@
     "source.sortMembers": "explicit"
   },
   "chat.tools.terminal.autoApprove": {
-    "npx tsc": true
+    "npx tsc": true,
+    "npx eslint": true,
+    "npx expo": true,
+    "npm run lint": true
   }
 }

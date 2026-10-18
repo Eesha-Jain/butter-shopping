@@ -206,6 +206,81 @@ export function previewEvenSplit(totalCents: number, memberCount: number): {
   };
 }
 
+/** Display names for store ids. Unknown ids are left out. */
+export async function getStoreNames(storeIds: string[]): Promise<Map<string, string>> {
+  const ids = [...new Set(storeIds)];
+  if (ids.length === 0) return new Map();
+  const rows = unwrap(await supabase.from('stores').select('id, name').in('id', ids));
+  return new Map(rows.map((row) => [row.id, row.name]));
+}
+
+/**
+ * Places one store's order for one grocery run. create_trip_from_list snapshots
+ * every open list item, so this trims the store's draft to listItemIds, cancels
+ * the other stores' drafts on that new trip, then confirms and finalizes as the
+ * caller (who becomes the payer). The ordered list items are checked off so they
+ * leave the list and are not ordered again.
+ */
+export async function placeRunOrder(input: {
+  listId: string;
+  plannedFor: string;
+  storeId: string;
+  listItemIds: string[];
+}): Promise<{ orderId: string; checkoutUrl: string | null }> {
+  if (input.listItemIds.length === 0) fail('This order has no items.');
+  const tripId = await createTripFromList({
+    listId: input.listId,
+    plannedFor: input.plannedFor,
+    fulfillmentMethod: 'self_pickup',
+  });
+  const { orders } = await getTrip(tripId);
+  const draft = orders.find((row) => row.store_id === input.storeId && row.status === 'draft');
+
+  for (const other of orders) {
+    if (other.status === 'draft' && other.order_id !== draft?.order_id) {
+      await cancelOrder(other.order_id).catch(() => undefined);
+    }
+  }
+  if (!draft) {
+    fail('That store can no longer fill this order. Pull to refresh the plan.');
+  }
+
+  unwrapVoid(
+    await supabase
+      .from('order_items')
+      .delete()
+      .eq('order_id', draft.order_id)
+      .not('list_item_id', 'in', `(${input.listItemIds.join(',')})`),
+  );
+  const kept = unwrap(
+    await supabase.from('order_items').select('list_item_id').eq('order_id', draft.order_id),
+  );
+  if (kept.length === 0) {
+    await cancelOrder(draft.order_id).catch(() => undefined);
+    fail('None of these items are available at that store anymore.');
+  }
+
+  await confirmOrder(draft.order_id);
+  let checkoutUrl: string | null = draft.checkout_url;
+  try {
+    checkoutUrl = await requestCheckoutLink(draft.order_id);
+  } catch {
+    // Checkout link is optional; finalize still places the order.
+  }
+  await finalizeOrder(draft.order_id);
+
+  const orderedIds = kept
+    .map((row) => row.list_item_id)
+    .filter((id): id is string => Boolean(id));
+  if (orderedIds.length > 0) {
+    await supabase
+      .from('list_items')
+      .update({ done_at: new Date().toISOString() })
+      .in('id', orderedIds);
+  }
+  return { orderId: draft.order_id, checkoutUrl };
+}
+
 /**
  * Ensures a draft trip for the day, then confirms + finalizes the draft order
  * for one store. Optionally requests a checkout URL before finalize.
