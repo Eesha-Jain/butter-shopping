@@ -160,6 +160,8 @@ export async function saveObservedPrice(observation) {
           priceCents: observation.priceCents,
           regularPriceCents: observation.regularPriceCents,
           promoPriceCents: observation.promoPriceCents,
+          imageUrl: observation.imageUrl,
+          available: observation.available,
           observedAt: observation.observedAt,
         });
   return ingestShelf(envelope);

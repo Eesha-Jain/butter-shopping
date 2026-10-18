@@ -27,7 +27,9 @@ import {
   ensureCatalogForTerm,
   formatPromotionBadge,
   getActiveListProductQtyMap,
+  fetchNearbyShops,
   getCheapestPriceCentsByProductIds,
+  getStorePriceCentsByProductIds,
   getEffectiveGroceryCashbackBps,
   getGuestFavoriteIds,
   getMyDefaultList,
@@ -46,6 +48,7 @@ import {
   listMyLocations,
   listMyStapleProductIds,
   listProductsGroupedByCategory,
+  listStoreShelf,
   listTrending,
   messageFromUnknown,
   removeListItem,
@@ -59,6 +62,7 @@ import {
   type ActiveListTarget,
   type CategoryProductSection,
   type FoodTrait,
+  type NearbyStore,
   type Product,
   type ProductCategory,
   type Promotion,
@@ -137,6 +141,9 @@ export default function ShopScreen() {
   const [expandingCategoryId, setExpandingCategoryId] = useState<string | null>(null);
   const [promotions, setPromotions] = useState<Map<string, Promotion>>(new Map());
   const [checkingStores, setCheckingStores] = useState(false);
+  const [nearbyStores, setNearbyStores] = useState<NearbyStore[]>([]);
+  const [selectedStore, setSelectedStore] = useState<NearbyStore | null>(null);
+  const [shelfPrices, setShelfPrices] = useState<Map<string, number>>(() => new Map());
 
   const [traits, setTraits] = useState<FoodTrait[]>([]);
   const [preferenceRules, setPreferenceRules] = useState<SessionFoodRule[]>([]);
@@ -218,6 +225,11 @@ export default function ShopScreen() {
           await refreshQtyMap(defaultTarget.list.id);
         }
         setShellReady(true);
+        try {
+          setNearbyStores(await fetchNearbyShops());
+        } catch {
+          setNearbyStores([]);
+        }
       } catch (err) {
         setError(messageFromUnknown(err, 'Could not load the shop.'));
       } finally {
@@ -319,11 +331,53 @@ export default function ShopScreen() {
         }
         setTrending(mergedTrending);
 
-        const browseHome = !favoritesOnly && selectedCategoryId == null;
+        const browseHome = !favoritesOnly && selectedCategoryId == null && selectedStore == null;
         const stapleIds = new Set(stapleProductIds);
         const promotionProductIds = new Set(promoMap.keys());
 
-        if (browseHome) {
+        if (selectedStore) {
+          setCategorySections([]);
+          setExpandedCategoryIds(new Set());
+          let rawProducts: Product[];
+          let priceMap: Map<string, number>;
+          if (favoritesOnly) {
+            const ids = favoriteIdsKey ? favoriteIdsKey.split(',') : [];
+            rawProducts = ids.length > 0 ? await getProductsByIds(ids) : [];
+            if (selectedCategoryId) {
+              rawProducts = rawProducts.filter((row) => row.category_id === selectedCategoryId);
+            }
+            priceMap = await getStorePriceCentsByProductIds(
+              selectedStore.id,
+              rawProducts.map((row) => row.id),
+            );
+            rawProducts = rawProducts.filter((row) => priceMap.has(row.id));
+          } else {
+            const shelf = await listStoreShelf(selectedStore.id, {
+              limit: 60,
+              categoryId: selectedCategoryId,
+            });
+            rawProducts = shelf.map((row) => row.product);
+            priceMap = new Map(shelf.map((row) => [row.product.id, row.priceCents]));
+          }
+          if (cancelled) return;
+          const [traitsForProducts, cashbackBps] = await Promise.all([
+            getProductTraitsForIds(rawProducts.map((row) => row.id)),
+            getEffectiveGroceryCashbackBps(isGuest),
+          ]);
+          if (cancelled) return;
+          const netPriceMap = applyCashbackToPriceMap(priceMap, cashbackBps);
+          setShelfPrices(netPriceMap);
+          setProducts(
+            applyFoodFilters(rawProducts, sessionRules, indexTraitsByProduct(traitsForProducts), {
+              sort,
+              stapleIds,
+              onSaleOnly,
+              promotionProductIds,
+              priceCentsByProduct: netPriceMap,
+            }),
+          );
+          if (!cancelled) setCheckingStores(false);
+        } else if (browseHome) {
           const [grouped, catalogProducts] = await Promise.all([
             listProductsGroupedByCategory({ limitPerCategory: 10 }),
             listActiveProducts({ limit: 60 }),
@@ -340,6 +394,7 @@ export default function ShopScreen() {
           ]);
           if (cancelled) return;
           const netPriceMap = applyCashbackToPriceMap(priceMap, cashbackBps);
+          setShelfPrices(netPriceMap);
 
           const traitsByProduct = indexTraitsByProduct(traitsForProducts);
           const filterOpts = {
@@ -393,6 +448,7 @@ export default function ShopScreen() {
           ]);
           if (cancelled) return;
           const netPriceMap = applyCashbackToPriceMap(priceMap, cashbackBps);
+          setShelfPrices(netPriceMap);
 
           setProducts(
             applyFoodFilters(rawProducts, sessionRules, indexTraitsByProduct(traitsForProducts), {
@@ -428,6 +484,7 @@ export default function ShopScreen() {
     onSaleOnly,
     refreshQtyMap,
     selectedCategoryId,
+    selectedStore,
     sessionRules,
     shellReady,
     sort,
@@ -469,12 +526,21 @@ export default function ShopScreen() {
       if (selectedCategoryId) {
         rawProducts = rawProducts.filter((row) => row.category_id === selectedCategoryId);
       }
-      const [traitsForProducts, priceMap, cashbackBps] = await Promise.all([
+      let priceMap = await (selectedStore
+        ? getStorePriceCentsByProductIds(
+            selectedStore.id,
+            rawProducts.map((row) => row.id),
+          )
+        : getCheapestPriceCentsByProductIds(rawProducts.map((row) => row.id)));
+      if (selectedStore) {
+        rawProducts = rawProducts.filter((row) => priceMap.has(row.id));
+      }
+      const [traitsForProducts, cashbackBps] = await Promise.all([
         getProductTraitsForIds(rawProducts.map((row) => row.id)),
-        getCheapestPriceCentsByProductIds(rawProducts.map((row) => row.id)),
         getEffectiveGroceryCashbackBps(isGuest),
       ]);
       const netPriceMap = applyCashbackToPriceMap(priceMap, cashbackBps);
+      setShelfPrices(netPriceMap);
       const filtered = applyFoodFilters(
         rawProducts,
         sessionRules,
@@ -631,7 +697,7 @@ export default function ShopScreen() {
   const extraCategories = categories.slice(VISIBLE_CATEGORIES);
 
   const sectionedHome =
-    !favoritesOnly && !isSearching && selectedCategoryId == null;
+    !favoritesOnly && !isSearching && selectedCategoryId == null && selectedStore == null;
 
   const displayProducts = useMemo(() => {
     if (!isSearching) return products;
@@ -674,13 +740,25 @@ export default function ShopScreen() {
 
     setExpandingCategoryId(categoryId);
     try {
-      const rawProducts = await listActiveProducts({ categoryId, limit: 40 });
-      const [traitsForProducts, priceMap, cashbackBps] = await Promise.all([
+      const shelf = selectedStore
+        ? await listStoreShelf(selectedStore.id, { categoryId, limit: 40 })
+        : null;
+      const rawProducts = shelf
+        ? shelf.map((row) => row.product)
+        : await listActiveProducts({ categoryId, limit: 40 });
+      const priceMap = shelf
+        ? new Map(shelf.map((row) => [row.product.id, row.priceCents]))
+        : await getCheapestPriceCentsByProductIds(rawProducts.map((row) => row.id));
+      const [traitsForProducts, cashbackBps] = await Promise.all([
         getProductTraitsForIds(rawProducts.map((row) => row.id)),
-        getCheapestPriceCentsByProductIds(rawProducts.map((row) => row.id)),
         getEffectiveGroceryCashbackBps(isGuest),
       ]);
       const netPriceMap = applyCashbackToPriceMap(priceMap, cashbackBps);
+      setShelfPrices((prev) => {
+        const next = new Map(prev);
+        for (const [id, cents] of netPriceMap) next.set(id, cents);
+        return next;
+      });
       const stapleIds = new Set(staples.map((row) => row.id));
       const filtered = applyFoodFilters(
         rawProducts,
@@ -717,6 +795,7 @@ export default function ShopScreen() {
       }
       quantityOnList={effectiveQtyMap.get(product.id)?.quantity}
       favorited={favoriteIds.has(product.id)}
+      priceCents={shelfPrices.get(product.id)}
       onPress={() => openProduct(product)}
       onAdd={() => void handleAdd(product)}
       onIncrement={() => void handleIncrement(product)}
@@ -800,6 +879,50 @@ export default function ShopScreen() {
                   {isGuest ? 'Sign in to save a default location' : formatLocation(location)}
                 </ThemedText>
               </View>
+
+              {nearbyStores.length > 0 ? (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.chipRow}>
+                  <Pressable
+                    onPress={() => setSelectedStore(null)}
+                    style={[
+                      styles.chip,
+                      {
+                        backgroundColor:
+                          selectedStore == null ? theme.primary : theme.backgroundElement,
+                      },
+                    ]}>
+                    <ThemedText
+                      type="small"
+                      style={selectedStore == null ? { color: theme.primaryText } : undefined}>
+                      All stores
+                    </ThemedText>
+                  </Pressable>
+                  {nearbyStores.map((store) => {
+                    const selected = selectedStore?.id === store.id;
+                    return (
+                      <Pressable
+                        key={store.id}
+                        onPress={() => setSelectedStore(store)}
+                        style={[
+                          styles.chip,
+                          {
+                            backgroundColor: selected ? theme.primary : theme.backgroundElement,
+                          },
+                        ]}>
+                        <ThemedText
+                          type="small"
+                          numberOfLines={1}
+                          style={selected ? { color: theme.primaryText } : undefined}>
+                          {store.name}
+                        </ThemedText>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              ) : null}
 
               <View style={styles.searchRow}>
                 <View
@@ -993,7 +1116,7 @@ export default function ShopScreen() {
                 </ScrollView>
               </View>
 
-              {displayTrending.length > 0 && !favoritesOnly && !isSearching ? (
+              {displayTrending.length > 0 && !favoritesOnly && !isSearching && !selectedStore ? (
                 <View style={styles.section}>
                   <ThemedText type="subtitle">Trending</ThemedText>
                   <FlatList
@@ -1025,7 +1148,7 @@ export default function ShopScreen() {
                 </View>
               ) : null}
 
-              {staplesArePersonal && displayStaples.length > 0 && !favoritesOnly && !isSearching ? (
+              {staplesArePersonal && displayStaples.length > 0 && !favoritesOnly && !isSearching && !selectedStore ? (
                 <View style={styles.section}>
                   <ThemedText type="subtitle">Your staples</ThemedText>
                   <FlatList
@@ -1059,7 +1182,9 @@ export default function ShopScreen() {
               {!sectionedHome ? (
                 <View style={styles.productsHeader}>
                   <ThemedText type="subtitle">
-                    {isSearching
+                    {selectedStore
+                      ? selectedStore.name
+                      : isSearching
                       ? `Results for “${searchQuery}”`
                       : favoritesOnly
                         ? 'Favorites'
@@ -1085,7 +1210,9 @@ export default function ShopScreen() {
               <ThemedText type="small" themeColor="textSecondary">
                 {checkingStores
                   ? 'Looking up products at nearby stores…'
-                  : favoritesOnly && !isSearching
+                  : selectedStore
+                    ? `${selectedStore.name} has no matching items in stock.`
+                    : favoritesOnly && !isSearching
                     ? 'No favorites yet. Tap the heart on a product to save it here.'
                     : isSearching
                       ? 'No products match. Try another search, Clear all in Filters, or another category.'

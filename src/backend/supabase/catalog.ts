@@ -302,6 +302,102 @@ export async function getCheapestPriceCentsByProductIds(
   return prices;
 }
 
+export type StoreShelfRow = {
+  product: Product;
+  priceCents: number;
+};
+
+async function categoryIdsIncludingChildren(categoryId: string): Promise<string[]> {
+  const children = unwrap(
+    await supabase.from('product_categories').select('id').eq('parent_id', categoryId),
+  );
+  return [categoryId, ...children.map((row) => row.id)];
+}
+
+async function pricesForListings(
+  listings: { id: string; product_id: string }[],
+): Promise<Map<string, number>> {
+  const prices = new Map<string, number>();
+  if (listings.length === 0) return prices;
+  const current = unwrap(
+    await supabase
+      .from('trusted_current_prices')
+      .select('store_product_id, price_cents')
+      .in(
+        'store_product_id',
+        listings.map((row) => row.id),
+      ),
+  );
+  const priceByListing = new Map(current.map((row) => [row.store_product_id, row.price_cents]));
+  for (const listing of listings) {
+    const cents = priceByListing.get(listing.id);
+    if (cents == null) continue;
+    const prior = prices.get(listing.product_id);
+    if (prior == null || cents < prior) prices.set(listing.product_id, cents);
+  }
+  return prices;
+}
+
+/**
+ * This store's in-stock shelf: available listings that have a current price.
+ * Products with no row here are not stocked at this store.
+ */
+export async function listStoreShelf(
+  storeId: string,
+  input?: { limit?: number; categoryId?: string | null },
+): Promise<StoreShelfRow[]> {
+  if (!storeId) return [];
+  const limit = input?.limit ?? 60;
+  const listings = unwrap(
+    await supabase
+      .from('store_products')
+      .select('id, product_id')
+      .eq('store_id', storeId)
+      .eq('is_available', true)
+      .order('updated_at', { ascending: false })
+      .limit(Math.max(limit * 4, 80)),
+  );
+  const priceByProduct = await pricesForListings(listings);
+  const productIds = [...priceByProduct.keys()];
+  if (productIds.length === 0) return [];
+
+  let products = unwrap(
+    await supabase.from('products').select('*').in('id', productIds).eq('is_active', true),
+  ) as Product[];
+  if (input?.categoryId) {
+    const ids = new Set(await categoryIdsIncludingChildren(input.categoryId));
+    products = products.filter((product) => product.category_id != null && ids.has(product.category_id));
+  }
+
+  return products
+    .flatMap((product) => {
+      const priceCents = priceByProduct.get(product.id);
+      return priceCents == null ? [] : [{ product, priceCents }];
+    })
+    .slice(0, limit);
+}
+
+/**
+ * Price in cents at one store for each product it stocks. Ids with no available
+ * listing or no current price are omitted.
+ */
+export async function getStorePriceCentsByProductIds(
+  storeId: string,
+  productIds: string[],
+): Promise<Map<string, number>> {
+  const unique = [...new Set(productIds.filter(Boolean))];
+  if (!storeId || unique.length === 0) return new Map();
+  const listings = unwrap(
+    await supabase
+      .from('store_products')
+      .select('id, product_id')
+      .eq('store_id', storeId)
+      .eq('is_available', true)
+      .in('product_id', unique),
+  );
+  return pricesForListings(listings);
+}
+
 /** Product-scoped live promotions keyed by product id. */
 export async function getProductPromotionMap(): Promise<Map<string, Promotion>> {
   const rows = await listCurrentPromotions();

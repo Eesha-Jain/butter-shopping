@@ -1,6 +1,6 @@
 import { BottomSheet, Column, Host, Text as UIText } from '@expo/ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import MapView, { Marker, type Region } from 'react-native-maps';
 
 import {
@@ -15,6 +15,7 @@ import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 const SEARCH_DELTA = 0.2;
+const LABEL_ZOOM_DELTA = 0.05;
 const FALLBACK_REGION: Region = {
   latitude: 47.6062,
   longitude: -122.3321,
@@ -31,6 +32,8 @@ export default function NearbyScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selected, setSelected] = useState<NearbyStore | null>(null);
+  const [latitudeDelta, setLatitudeDelta] = useState(SEARCH_DELTA);
+  const showNames = latitudeDelta <= LABEL_ZOOM_DELTA;
 
   const loadShops = useCallback(async (refresh = false) => {
     if (refresh) {
@@ -121,7 +124,8 @@ export default function NearbyScreen() {
         style={styles.map}
         initialRegion={region}
         showsUserLocation={origin != null}
-        showsMyLocationButton={false}>
+        showsMyLocationButton={false}
+        onRegionChangeComplete={(next) => setLatitudeDelta(next.latitudeDelta)}>
         {pins.map((shop) => (
           <Marker
             key={shop.id}
@@ -130,8 +134,18 @@ export default function NearbyScreen() {
               longitude: shop.longitude as number,
             }}
             title={shop.name}
-            onPress={() => setSelected(shop)}
-          />
+            anchor={showNames ? { x: 0.5, y: 0 } : undefined}
+            tracksViewChanges={showNames}
+            onPress={() => setSelected(shop)}>
+            {showNames ? (
+              <View style={styles.pin}>
+                <View style={[styles.pinDot, { backgroundColor: theme.primary, borderColor: theme.background }]} />
+                <Text style={[styles.pinLabel, { color: theme.text, backgroundColor: theme.background }]} numberOfLines={2}>
+                  {shop.name}
+                </Text>
+              </View>
+            ) : null}
+          </Marker>
         ))}
       </MapView>
 
@@ -212,5 +226,25 @@ const styles = StyleSheet.create({
   },
   sheetHost: {
     position: 'absolute',
+  },
+  pin: {
+    alignItems: 'center',
+    width: 120,
+  },
+  pinDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 2,
+  },
+  pinLabel: {
+    marginTop: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    overflow: 'hidden',
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center',
   },
 });

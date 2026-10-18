@@ -110,6 +110,8 @@ async function remember(product, store, priceSource, storeSource) {
       priceCents: product.priceCents,
       regularPriceCents: product.regularPriceCents ?? null,
       promoPriceCents: product.promoPriceCents ?? null,
+      imageUrl: product.imageUrl ?? null,
+      available: product.available !== false,
     }),
   );
 }
