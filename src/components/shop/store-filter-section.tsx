@@ -2,6 +2,7 @@ import { SymbolView } from 'expo-symbols';
 import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
+import { StoreLogo } from '@/components/plan/store-logo';
 import { SnapBadge } from '@/components/shop/snap-badge';
 import { ThemedText } from '@/components/themed-text';
 import { ButterChip } from '@/components/ui/butter-chip';
@@ -117,6 +118,7 @@ export function StoreFilterSection<T extends StoreLike>({
                       size={22}
                       tintColor={all || some ? theme.primary : theme.textSecondary}
                     />
+                    <StoreLogo storeName={group.name} size={28} />
                     <View style={styles.rowText}>
                       <ThemedText type="smallBold" numberOfLines={1}>
                         {group.name}
@@ -163,7 +165,12 @@ export function StoreFilterSection<T extends StoreLike>({
               label={group.name}
               selected={groupSelection(group, selected).some}
               onPress={() => onToggleGroup(group)}
-              icon={showSnapBadges && group.acceptsSnap ? <SnapBadge size="sm" /> : undefined}
+              icon={
+                <View style={styles.chipIcon}>
+                  <StoreLogo storeName={group.name} size={20} />
+                  {showSnapBadges && group.acceptsSnap ? <SnapBadge size="sm" /> : null}
+                </View>
+              }
             />
           ))}
           {hidden > 0 ? (
@@ -176,6 +183,11 @@ export function StoreFilterSection<T extends StoreLike>({
 }
 
 const styles = StyleSheet.create({
+  chipIcon: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
+  },
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',

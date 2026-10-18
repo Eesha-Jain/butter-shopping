@@ -5,7 +5,7 @@ import type { CategoryProductSection, Product, Promotion } from '@/backend';
 import { CategoryIcon } from '@/components/shop/category-icons';
 import { ShopProductCard, type ShopCardActions } from '@/components/shop/shop-product-card';
 import { ThemedText } from '@/components/themed-text';
-import { Radius, Spacing } from '@/constants/theme';
+import { Radius, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 /**
@@ -175,10 +175,11 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.two,
+    gap: Spacing.one,
   },
   title: {
-    fontSize: 18,
+    fontSize: Type.section,
+    lineHeight: 28,
   },
   gridRow: {
     flexDirection: 'row',
@@ -195,7 +196,7 @@ const styles = StyleSheet.create({
   skeletonBlock: {
     width: 128,
     height: 128,
-    borderRadius: Radius.medium,
+    borderRadius: Radius.card,
   },
   skeletonLine: {
     alignSelf: 'stretch',

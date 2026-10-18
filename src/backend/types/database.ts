@@ -23,6 +23,7 @@ export type TraitKind = 'ingredient' | 'allergen' | 'chemical' | 'dietary' | 'ce
 export type TraitRelation = 'contains' | 'may_contain' | 'suitable' | 'certified';
 export type FoodRuleMode = 'avoid' | 'require' | 'prefer';
 export type TripStatus = 'draft' | 'ordered' | 'cancelled';
+export type OrderStatus = 'draft' | 'ordered' | 'complete' | 'cancelled';
 export type FulfillmentMethod = 'self_pickup' | 'store_pickup' | 'delivery';
 export type ShareStatus = 'owed' | 'paid';
 
@@ -520,7 +521,7 @@ export type Order = {
   trip_id: string;
   group_id: string;
   store_id: string;
-  status: TripStatus;
+  status: OrderStatus;
   expires_at: string | null;
   paid_by: string | null;
   confirmed_by: string | null;
@@ -680,7 +681,7 @@ export type OrderSummary = {
   trip_id: string;
   group_id: string;
   store_id: string;
-  status: TripStatus;
+  status: OrderStatus;
   planned_for: string;
   fulfillment_method: FulfillmentMethod;
   delivery_location_id: string | null;

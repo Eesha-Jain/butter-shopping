@@ -34,7 +34,8 @@ type Props = {
   recipeTag?: boolean;
   dueLabel?: string | null;
   done?: boolean;
-  onDone: () => void;
+  /** `origin` is the checkbox's center in window coordinates (when measurable). */
+  onDone: (origin?: { x: number; y: number }) => void;
   onDelete: () => void;
 };
 
@@ -60,9 +61,18 @@ export function ListItemRow({
   const swipeRef = useRef<Swipeable>(null);
   const letter = title.trim().slice(0, 1) || '?';
 
+  const checkboxRef = useRef<View>(null);
+
   const toggle = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    onDone();
+    const box = checkboxRef.current;
+    if (!box) {
+      onDone();
+      return;
+    }
+    box.measureInWindow((x, y, w, h) => {
+      onDone(w || h ? { x: x + w / 2, y: y + h / 2 } : undefined);
+    });
   };
 
   const remove = () => {
@@ -119,6 +129,7 @@ export function ListItemRow({
           { backgroundColor: theme.background, opacity: done ? 0.55 : 1 },
         ]}>
         <Pressable
+          ref={checkboxRef}
           onPress={toggle}
           hitSlop={10}
           style={[

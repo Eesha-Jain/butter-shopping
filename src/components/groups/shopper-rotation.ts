@@ -106,7 +106,9 @@ export function assignShoppers(
 export async function loadShopperRotation(groupId: string): Promise<ShopperRotation> {
   const [members, orders] = await Promise.all([
     listGroupMembersWithProfiles(groupId),
-    listGroupOrders(groupId, { status: 'ordered' }).catch(() => [] as GroupOrderRow[]),
+    listGroupOrders(groupId, { status: ['ordered', 'complete'] }).catch(
+      () => [] as GroupOrderRow[],
+    ),
   ]);
   return buildRotation(members, orders);
 }

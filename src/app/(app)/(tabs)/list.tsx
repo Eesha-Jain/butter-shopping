@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Dimensions,
   Linking,
   Modal,
   Pressable,
@@ -13,7 +14,15 @@ import {
   StyleSheet,
   View,
 } from 'react-native';
-import Animated, { Easing, FadeInDown, FadeInLeft, FadeInRight, FadeOut } from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  Easing,
+  FadeInDown,
+  FadeInLeft,
+  FadeInRight,
+  FadeOut,
+  runOnJS,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useActiveList } from '@/auth/active-list';
@@ -65,7 +74,12 @@ import {
   parseYmd,
   type GroceryDayPlan,
 } from '@/components/plan/grocery-days';
+import { DayFiltersDrawer } from '@/components/plan/day-filters-drawer';
 import { ListItemRow, cadenceLabel } from '@/components/plan/list-item-row';
+import {
+  ShoppingCompleteOverlay,
+  type CelebrationOrigin,
+} from '@/components/plan/shopping-complete-overlay';
 import {
   buildRunOrders,
   groupRunOrdersByStore,
@@ -130,6 +144,12 @@ function itemTitle(item: ResolvedListItem): string {
   return item.display_name?.trim() || item.custom_name?.trim() || 'Item';
 }
 
+function storeFilterKey(order: Pick<RunOrder, 'storeId' | 'storeName'>): string {
+  return order.storeId
+    ? `store-id:${order.storeId}`
+    : `store-name:${order.storeName.trim().toLocaleLowerCase()}`;
+}
+
 function buildWeekCells(input: {
   todayYmd: string;
   plan: GroceryDayPlan;
@@ -171,14 +191,22 @@ export default function PlanScreen() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const [lists, setLists] = useState<ListData[]>([]);
   const [completedItemIds, setCompletedItemIds] = useState<Set<string>>(() => new Set());
+  const [celebration, setCelebration] = useState<CelebrationOrigin | null>(null);
   const [groupsData, setGroupsData] = useState<Map<string, GroupData>>(() => new Map());
   const [preferredDays, setPreferredDays] = useState<number[] | null>(null);
   const [bestShopDay, setBestShopDay] = useState<BestShopDay | null>(null);
   const [bestDealYmd, setBestDealYmd] = useState<string | null>(null);
   const [selectedYmd, setSelectedYmd] = useState<string | null>(null);
+  const [selectedGroupFilters, setSelectedGroupFilters] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [selectedStoreFilters, setSelectedStoreFilters] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [productImages, setProductImages] = useState<Map<string, string | null>>(() => new Map());
   const [productNames, setProductNames] = useState<Map<string, string>>(() => new Map());
   /** Unit cents saved (regular − shelf) by product id. */
@@ -246,7 +274,7 @@ export default function PlanScreen() {
   const upcomingPlaced = useMemo(
     () =>
       [...groupsData.values()].flatMap((data) =>
-        data.placed.filter((row) => row.planned_for >= todayYmd),
+        data.placed.filter((row) => row.status === 'ordered' && row.planned_for >= todayYmd),
       ),
     [groupsData, todayYmd],
   );
@@ -352,16 +380,19 @@ export default function PlanScreen() {
     () =>
       [...groupsData.values()]
         .flatMap((data) =>
-          data.placed.map((row) =>
+        data.placed
+          .filter((row) => row.status === 'complete' || row.status === 'ordered')
+          .map((row) =>
             placedRunOrder({
               row,
               groupName: data.group.name,
               isShared: data.group.kind !== 'personal',
-              shopper: data.rotation?.members.find((member) => member.userId === row.paid_by) ?? null,
+              shopper:
+                data.rotation?.members.find((member) => member.userId === row.paid_by) ?? null,
             }),
           ),
-        )
-        .sort((a, b) => b.ymd.localeCompare(a.ymd)),
+      )
+      .sort((a, b) => b.ymd.localeCompare(a.ymd)),
     [groupsData],
   );
 
@@ -416,6 +447,10 @@ export default function PlanScreen() {
   const selectDay = useCallback(
     (ymd: string) => {
       setSlideDir(ymd < activeYmd ? 'back' : 'forward');
+      if (ymd !== activeYmd) {
+        setSelectedGroupFilters(new Set());
+        setSelectedStoreFilters(new Set());
+      }
       setSelectedYmd(ymd);
     },
     [activeYmd],
@@ -426,7 +461,44 @@ export default function PlanScreen() {
   );
   const isGroceryDay = activeReasons.length > 0;
   const dayOrders = useMemo(() => ordersByDay.get(activeYmd) ?? [], [ordersByDay, activeYmd]);
-  const dayOrderGroups = useMemo(() => groupRunOrdersByStore(dayOrders), [dayOrders]);
+  const dayGroupFilters = useMemo(() => {
+    const groups = new Map<string, string>();
+    for (const order of dayOrders) groups.set(order.groupId, order.groupName);
+    return [...groups.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [dayOrders]);
+  const dayStoreFilters = useMemo(() => {
+    const stores = new Map<string, string>();
+    for (const order of dayOrders) {
+      if (!order.pending) stores.set(storeFilterKey(order), order.storeName);
+    }
+    return [...stores.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [dayOrders]);
+  const filteredDayOrders = useMemo(
+    () =>
+      dayOrders.filter(
+        (order) =>
+          (selectedGroupFilters.size === 0 || selectedGroupFilters.has(order.groupId)) &&
+          (selectedStoreFilters.size === 0 ||
+            selectedStoreFilters.has(storeFilterKey(order))),
+      ),
+    [dayOrders, selectedGroupFilters, selectedStoreFilters],
+  );
+  const dayOrderGroups = useMemo(
+    () => groupRunOrdersByStore(filteredDayOrders),
+    [filteredDayOrders],
+  );
+  const openDayFilters = useCallback(() => {
+    if (segment === 'calendar' && dayOrders.length > 0) setFiltersOpen(true);
+  }, [dayOrders.length, segment]);
+  const rightEdgeSwipe = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX([-40, 40])
+        .onEnd((event) => {
+          if (event.translationX < -48) runOnJS(openDayFilters)();
+        }),
+    [openDayFilters],
+  );
   const hasAnyOpenItems = runsByList.some(({ runs }) => runs.size > 0);
 
   const weekDays = useMemo(
@@ -465,13 +537,13 @@ export default function PlanScreen() {
 
   const tripSavingsCents = useMemo(() => {
     const scope =
-      segment === 'calendar' ? dayOrders : [...ordersByDay.values()].flat();
+      segment === 'calendar' ? filteredDayOrders : [...ordersByDay.values()].flat();
     let sum = 0;
     for (const order of scope) {
       for (const line of order.lines) sum += lineSavingsCents(line.item) ?? 0;
     }
     return sum;
-  }, [segment, dayOrders, ordersByDay, lineSavingsCents]);
+  }, [segment, filteredDayOrders, ordersByDay, lineSavingsCents]);
 
   const showTripSavings =
     tripSavingsCents >= MIN_SAVINGS_CENTS &&
@@ -538,7 +610,9 @@ export default function PlanScreen() {
               const shared = group.kind !== 'personal';
               const [habits, placed, expiring, members] = await Promise.all([
                 listHabits(group.id).catch(() => [] as ItemHabit[]),
-                listGroupOrders(group.id, { status: 'ordered' }).catch(() => [] as GroupOrderRow[]),
+                listGroupOrders(group.id, { status: ['ordered', 'complete'] }).catch(
+                  () => [] as GroupOrderRow[],
+                ),
                 listExpiringPurchases(group.id).catch(() => [] as ExpiringPurchase[]),
                 shared ? listGroupMembersWithProfiles(group.id).catch(() => null) : null,
               ]);
@@ -694,9 +768,20 @@ export default function PlanScreen() {
         imagePath={item.product_id ? productImages.get(item.product_id) : null}
         cadenceTag={habit ? cadenceLabel(habit.interval_days) : null}
         recipeTag={Boolean(item.source_recipe_id)}
-        onDone={() => {
+        onDone={(origin) => {
+          const openToday = runsByList.reduce(
+            (sum, row) => sum + (row.runs.get(activeYmd)?.length ?? 0),
+            0,
+          );
+          const isLastOfDay =
+            openToday === 1 &&
+            runsByList.some((row) => row.runs.get(activeYmd)?.some((i) => i.id === item.id));
+          if (isLastOfDay) {
+            const { width, height } = Dimensions.get('window');
+            setCelebration(origin ?? { x: width / 2, y: height / 2 });
+          }
           setCompletedItemIds((ids) => new Set(ids).add(item.id));
-          updateItem(item.id, (row) => ({ ...row, done_at: new Date().toISOString() }));
+          updateItem(item.id, (current) => ({ ...current, done_at: new Date().toISOString() }));
           void setListItemDone(item.id, true).catch((err: unknown) => {
             setCompletedItemIds((ids) => {
               if (!ids.has(item.id)) return ids;
@@ -858,6 +943,16 @@ export default function PlanScreen() {
 
   return (
     <ThemedView style={styles.root}>
+      {segment === 'calendar' && dayOrders.length > 0 ? (
+        <GestureDetector gesture={rightEdgeSwipe}>
+          <View
+            style={[
+              styles.edgeHitRight,
+              { top: insets.top, bottom: BottomTabInset + insets.bottom },
+            ]}
+          />
+        </GestureDetector>
+      ) : null}
       <ScrollView
         contentInsetAdjustmentBehavior="never"
         contentContainerStyle={[
@@ -990,16 +1085,45 @@ export default function PlanScreen() {
                 .easing(Easing.out(Easing.cubic))}
               exiting={FadeOut.duration(140)}
               style={[styles.section, { overflow: 'hidden' }]}>
-            <ThemedText type="smallBold" style={styles.dayTitle}>
-              {activeYmd === todayYmd ? 'Today' : formatShortDate(activeYmd)}
-            </ThemedText>
+            <View style={styles.dayTitleRow}>
+              <ThemedText type="smallBold" style={styles.dayTitle}>
+                {activeYmd === todayYmd ? 'Today' : formatShortDate(activeYmd)}
+              </ThemedText>
+              {dayOrders.length > 0 ? (
+                <Pressable
+                  onPress={openDayFilters}
+                  style={styles.iconBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    selectedGroupFilters.size + selectedStoreFilters.size > 0
+                      ? `Open filters, ${selectedGroupFilters.size + selectedStoreFilters.size} selected`
+                      : 'Open filters'
+                  }>
+                  <SymbolView
+                    name={{
+                      ios: 'line.3.horizontal.decrease',
+                      android: 'filter_list',
+                      web: 'filter_list',
+                    }}
+                    size={22}
+                    tintColor="#000000"
+                  />
+                </Pressable>
+              ) : null}
+            </View>
 
             {!isGroceryDay ? (
               <ThemedText type="small" themeColor="textSecondary" style={styles.centerText}>
                 No grocery run this day. Pick a highlighted day to see its orders.
               </ThemedText>
             ) : dayOrders.length > 0 ? (
-              dayOrderGroups.map(renderOrderGroup)
+              filteredDayOrders.length > 0 ? (
+                dayOrderGroups.map(renderOrderGroup)
+              ) : (
+                <ThemedText type="small" themeColor="textSecondary" style={styles.centerText}>
+                  No orders match these filters.
+                </ThemedText>
+              )
             ) : !hasAnyOpenItems && upcomingPlaced.length === 0 ? (
               emptyListBlock
             ) : (
@@ -1099,6 +1223,11 @@ export default function PlanScreen() {
                         .filter(Boolean)
                         .join(' · ')}
                     </ThemedText>
+                    <ThemedText
+                      type="smallBold"
+                      style={{ color: order.placed?.status === 'complete' ? '#2E9E5B' : theme.textSecondary }}>
+                      {order.placed?.status === 'complete' ? 'Completed' : 'Placed'}
+                    </ThemedText>
                   </View>
                   <ThemedText type="smallBold">{formatMoney(order.totalCents)}</ThemedText>
                   {order.shopper ? (
@@ -1192,6 +1321,38 @@ export default function PlanScreen() {
           </View>
         </View>
       </Modal>
+      {filtersOpen ? (
+        <DayFiltersDrawer
+          key={`day-filters-${activeYmd}`}
+          visible
+          groups={dayGroupFilters}
+          locations={dayStoreFilters}
+          selectedGroups={selectedGroupFilters}
+          selectedLocations={selectedStoreFilters}
+          onToggleGroup={(groupId) =>
+            setSelectedGroupFilters((selected) => {
+              const next = new Set(selected);
+              if (next.has(groupId)) next.delete(groupId);
+              else next.add(groupId);
+              return next;
+            })
+          }
+          onToggleLocation={(storeKey) =>
+            setSelectedStoreFilters((selected) => {
+              const next = new Set(selected);
+              if (next.has(storeKey)) next.delete(storeKey);
+              else next.add(storeKey);
+              return next;
+            })
+          }
+          onClear={() => {
+            setSelectedGroupFilters(new Set());
+            setSelectedStoreFilters(new Set());
+          }}
+          onClose={() => setFiltersOpen(false)}
+        />
+      ) : null}
+      <ShoppingCompleteOverlay origin={celebration} onContinue={() => setCelebration(null)} />
     </ThemedView>
   );
 }
@@ -1280,6 +1441,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.two,
   },
+  iconBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: Radius.button,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   segments: {
     flexDirection: 'row',
     gap: Spacing.two,
@@ -1315,6 +1483,12 @@ const styles = StyleSheet.create({
   section: {
     gap: Spacing.two,
   },
+  edgeHitRight: {
+    position: 'absolute',
+    right: 0,
+    width: 28,
+    zIndex: 5,
+  },
   storeGroup: {
     borderWidth: 2,
     borderRadius: Radius.card,
@@ -1336,6 +1510,11 @@ const styles = StyleSheet.create({
   dayTitle: {
     fontSize: Type.section,
     lineHeight: 26,
+  },
+  dayTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   emptyBlock: {
     gap: Spacing.two,

@@ -3,9 +3,9 @@ import type {
   Order,
   OrderItem,
   OrderShare,
+  OrderStatus,
   OrderSummary,
   ShoppingTrip,
-  TripStatus,
 } from '../types';
 import { supabase } from './client';
 import { fail } from '../errors';
@@ -95,7 +95,7 @@ export async function findOpenTrip(
  */
 export async function listGroupOrders(
   groupId: string,
-  options?: { status?: TripStatus | TripStatus[] },
+  options?: { status?: OrderStatus | OrderStatus[] },
 ): Promise<GroupOrderRow[]> {
   let query = supabase.from('v_order_summary').select('*').eq('group_id', groupId);
   const status = options?.status;
@@ -218,8 +218,8 @@ export async function getStoreNames(storeIds: string[]): Promise<Map<string, str
  * Places one store's order for one grocery run. create_trip_from_list snapshots
  * every open list item, so this trims the store's draft to listItemIds, cancels
  * the other stores' drafts on that new trip, then confirms and finalizes as the
- * caller (who becomes the payer). The ordered list items are checked off so they
- * leave the list and are not ordered again.
+ * caller (who becomes the payer). Finalization completes the order and checks
+ * off its linked list items so they leave the active list.
  */
 export async function placeRunOrder(input: {
   listId: string;
@@ -268,16 +268,6 @@ export async function placeRunOrder(input: {
     // Checkout link is optional; finalize still places the order.
   }
   await finalizeOrder(draft.order_id);
-
-  const orderedIds = kept
-    .map((row) => row.list_item_id)
-    .filter((id): id is string => Boolean(id));
-  if (orderedIds.length > 0) {
-    await supabase
-      .from('list_items')
-      .update({ done_at: new Date().toISOString() })
-      .in('id', orderedIds);
-  }
   return { orderId: draft.order_id, checkoutUrl };
 }
 

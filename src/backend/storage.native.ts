@@ -21,6 +21,8 @@ const KEYS = {
   activeListId: 'butter.activeListId',
   /** Last successful Shop home payload, shown instantly on next launch. */
   shopHomeCache: 'butter.shopHomeCache',
+  /** Cheapest-price cache for the Shop (small; rewritten as prices arrive). */
+  shopPriceCache: 'butter.shopPriceCache',
 } as const;
 
 export type StorageKey = keyof typeof KEYS;

@@ -4,7 +4,7 @@
  */
 export { AppError } from '../errors';
 export type {
-  FoodRuleMode, FulfillmentMethod, GroupKind, TraitKind, TraitRelation, TripStatus
+  FoodRuleMode, FulfillmentMethod, GroupKind, OrderStatus, TraitKind, TraitRelation, TripStatus
 } from '../types';
 export {
   getOptionalUserId,
@@ -206,4 +206,3 @@ export { analyzeRipeness } from './ripeness';
 export type { RipenessResult } from './ripeness';
 export { getProductSafety, traitsChangedSince } from './safety';
 export * from './voice';
-

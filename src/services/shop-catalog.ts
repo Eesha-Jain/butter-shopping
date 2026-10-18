@@ -16,7 +16,7 @@ import {
   type ProductTrait,
 } from '@/backend';
 
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 4;
 const EXCLUDED_BROWSE_CATEGORIES = new Set(['other']);
 
 export type ShopCatalog = {
@@ -31,6 +31,11 @@ type CachedTrending = { product: Product; sponsored: boolean }[];
 type ShopCatalogCache = ShopCatalog & {
   v: typeof CACHE_VERSION;
   savedAt: number;
+};
+
+/** Small, frequently rewritten companion to the catalog cache. */
+type ShopExtrasCache = {
+  v: typeof CACHE_VERSION;
   prices: [string, number][];
   trending: CachedTrending;
 };
@@ -44,20 +49,23 @@ export function readShopCatalogCache():
     cached.v !== CACHE_VERSION ||
     !Array.isArray(cached.products) ||
     !Array.isArray(cached.traits) ||
-    !Array.isArray(cached.allCategories) ||
-    !Array.isArray(cached.prices) ||
-    !Array.isArray(cached.trending)
+    !Array.isArray(cached.allCategories)
   ) {
     return null;
   }
-  return cached;
+  const extras = getJson<ShopExtrasCache>('shopPriceCache');
+  const extrasOk = extras?.v === CACHE_VERSION;
+  return {
+    products: cached.products,
+    traits: cached.traits,
+    allCategories: cached.allCategories,
+    prices: extrasOk && Array.isArray(extras.prices) ? extras.prices : [],
+    trending: extrasOk && Array.isArray(extras.trending) ? extras.trending : [],
+  };
 }
 
-export function writeShopCatalogCache(
-  catalog: ShopCatalog,
-  prices: Map<string, number>,
-  trending: CachedTrending,
-): void {
+/** Large (~1.5MB) synchronous write ? only call when the catalog itself changed. */
+export function writeShopCatalogCache(catalog: ShopCatalog): void {
   setJson('shopHomeCache', {
     v: CACHE_VERSION,
     savedAt: Date.now(),
@@ -67,9 +75,30 @@ export function writeShopCatalogCache(
     ),
     traits: catalog.traits,
     allCategories: catalog.allCategories,
+  } satisfies ShopCatalogCache);
+}
+
+export function writeShopExtrasCache(prices: Map<string, number>, trending: CachedTrending): void {
+  setJson('shopPriceCache', {
+    v: CACHE_VERSION,
     prices: [...prices],
     trending,
-  } satisfies ShopCatalogCache);
+  } satisfies ShopExtrasCache);
+}
+
+/** Cheap change check so an unchanged server catalog doesn't re-render / re-save everything. */
+export function catalogSignature(catalog: ShopCatalog): string {
+  let newest = '';
+  for (const row of catalog.products) {
+    const stamp = row.updated_at ?? row.created_at ?? '';
+    if (stamp > newest) newest = stamp;
+  }
+  return [
+    catalog.products.length,
+    newest,
+    catalog.traits.length,
+    catalog.allCategories.length,
+  ].join('|');
 }
 
 /** Aisle chips: Produce, its children, then the other top-level categories A→Z. */
@@ -117,7 +146,7 @@ export function buildHomeSections(
   return sections;
 }
 
-/** Full aisle (category + its children), one card per product group, Aâ†’Z. */
+/** Full aisle (category + its children), one card per product group, A→Z. */
 export function productsInAisle(
   products: Product[],
   allCategories: ProductCategory[],

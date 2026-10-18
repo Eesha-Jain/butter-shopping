@@ -29,6 +29,7 @@ export type {
   Order,
   OrderItem,
   OrderShare,
+  OrderStatus,
   OrderSummary,
   Price,
   PriceOption,
