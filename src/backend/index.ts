@@ -38,6 +38,7 @@ export {
   visaOfferMatchesChain,
 } from './net-price';
 export type { NetPriceBreakdown, VisaMerchantOffer } from './net-price';
+export type { CheapestShelf } from './supabase';
 export { fetchVisaMerchantOffers } from './visa-offers';
 export type { VisaOffersResponse } from './visa-offers';
 export {
@@ -110,6 +111,7 @@ export {
   resolveProductGroupIds,
   getActiveListProductQtyMap,
   getCheapestPriceCentsByProductIds,
+  getCheapestShelfByProductIds,
   getCheapestShelfSaleByProductIds,
   getStorePriceCentsByProductIds,
   getCurrentPrice,

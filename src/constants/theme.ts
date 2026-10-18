@@ -42,6 +42,9 @@ export const Colors = {
     borderInk: '#000000',
     borderError: '#E5484D',
     error: '#E5484D',
+    /** Dollars-saved chip fill (distinct from checkbox green). */
+    savings: '#1B7A4A',
+    savingsText: '#FFFFFF',
     tint: BUTTER_YELLOW,
   },
   dark: {
@@ -59,6 +62,8 @@ export const Colors = {
     borderInk: BUTTER_YELLOW,
     borderError: '#E5484D',
     error: '#FF6369',
+    savings: '#2E9E5B',
+    savingsText: '#FFFFFF',
     tint: BUTTER_YELLOW,
   },
 } as const;

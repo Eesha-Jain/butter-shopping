@@ -14,6 +14,10 @@ import { ProductPhoto } from '@/components/shop/product-photo';
 import { SnapBadge } from '@/components/shop/snap-badge';
 import { ThemedText } from '@/components/themed-text';
 import { ButterBlock } from '@/components/ui/butter-block';
+import {
+  parseSavingsLabelCents,
+  SavingsChip,
+} from '@/components/ui/savings-chip';
 import { Fonts, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -22,8 +26,10 @@ type Props = {
   saleBadge?: string | null;
   /** Struck-through compare-at price when a promo implies one. */
   compareAtCents?: number | null;
-  /** e.g. "Save $1" under the price. */
+  /** e.g. "Save $1" under the price — rendered as a green chip. */
   savingsLabel?: string | null;
+  /** Explicit cents saved; preferred over parsing savingsLabel. */
+  savingsCents?: number | null;
   /** Quiet note when net price includes cash back (no promo). */
   priceNote?: string | null;
   /** Show SNAP badge when the shopper opted in and this food is eligible. */
@@ -71,6 +77,7 @@ export function ProductCard({
   saleBadge,
   compareAtCents,
   savingsLabel,
+  savingsCents,
   priceNote,
   showSnap,
   quantityOnList,
@@ -114,6 +121,12 @@ export function ProductCard({
   const title = productCardName(product);
   const showCompare =
     compareAtCents != null && priceCents != null && compareAtCents > priceCents;
+  const resolvedSavingsCents =
+    savingsCents ??
+    (showCompare && compareAtCents != null && priceCents != null
+      ? compareAtCents - priceCents
+      : null) ??
+    parseSavingsLabelCents(savingsLabel);
 
   return (
     <AnimatedPressable
@@ -174,11 +187,10 @@ export function ProductCard({
                 {formatPrice(priceCents)}
               </ThemedText>
             ) : null}
-            {savingsLabel ? (
-              <ThemedText type="smallBold" style={[styles.savings, { color: theme.primaryDark }]}>
-                {savingsLabel}
-              </ThemedText>
-            ) : priceNote ? (
+            {resolvedSavingsCents != null ? (
+              <SavingsChip cents={resolvedSavingsCents} />
+            ) : null}
+            {priceNote ? (
               <ThemedText type="small" themeColor="textSecondary" style={styles.priceNote}>
                 {priceNote}
               </ThemedText>
@@ -243,11 +255,10 @@ export function ProductCard({
                 </ThemedText>
               </Pressable>
             </View>
-            {savingsLabel ? (
-              <ThemedText type="smallBold" style={[styles.savings, { color: theme.primaryDark }]}>
-                {savingsLabel}
-              </ThemedText>
-            ) : priceNote ? (
+            {resolvedSavingsCents != null ? (
+              <SavingsChip cents={resolvedSavingsCents} />
+            ) : null}
+            {priceNote ? (
               <ThemedText type="small" themeColor="textSecondary" style={styles.priceNote}>
                 {priceNote}
               </ThemedText>
@@ -324,9 +335,6 @@ const styles = StyleSheet.create({
   compareAt: {
     fontSize: 12,
     textDecorationLine: 'line-through',
-  },
-  savings: {
-    fontSize: 12,
   },
   priceNote: {
     fontSize: 11,

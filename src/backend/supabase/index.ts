@@ -28,6 +28,7 @@ export {
   dedupeProductsByGroup,
   resolveProductGroupIds,
   getCheapestPriceCentsByProductIds,
+  getCheapestShelfByProductIds,
   getCheapestShelfSaleByProductIds,
   getStorePriceCentsByProductIds,
   getCurrentPrice,
@@ -46,7 +47,7 @@ export {
   searchProducts,
   uploadPriceEvidence,
 } from './catalog';
-export type { CategoryProductSection, ProductStoreOffer } from './catalog';
+export type { CategoryProductSection, CheapestShelf, ProductStoreOffer } from './catalog';
 export {
   contributeReportedPriceToOpenPrices,
   fetchOpenPricesByUpc,
