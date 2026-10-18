@@ -1,4 +1,3 @@
-import { BottomSheet, Button, Column, Host, Text as UIText } from '@expo/ui';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -234,8 +233,15 @@ export default function NearbyScreen() {
         showsMyLocationButton={false}
         onRegionChangeComplete={(next) => setLatitudeDelta(next.latitudeDelta)}
         onLongPress={(event) => {
-          setSelected(null);
-          setDroppedPin(event.nativeEvent.coordinate);
+          const { latitude, longitude } = event.nativeEvent.coordinate;
+          if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+            return;
+          }
+          const pin = { latitude, longitude };
+          requestAnimationFrame(() => {
+            setSelected(null);
+            setDroppedPin(pin);
+          });
         }}>
         {origin ? (
           <Circle
@@ -245,6 +251,14 @@ export default function NearbyScreen() {
             strokeWidth={2}
             fillColor={`${theme.primary}22`}
           />
+        ) : null}
+        {droppedPin ? (
+          <Marker coordinate={droppedPin} anchor={{ x: 0.5, y: 1 }} tracksViewChanges={false}>
+            <View
+              style={[styles.originDot, { backgroundColor: theme.secondary, borderColor: theme.background }]}
+              pointerEvents="none"
+            />
+          </Marker>
         ) : null}
         {pins.map((shop) => {
           const favored = preferredIds.has(shop.id);
@@ -332,51 +346,73 @@ export default function NearbyScreen() {
         </Pressable>
       </View>
 
-      <Host style={styles.sheetHost} pointerEvents="box-none">
-        <BottomSheet isPresented={sheetOpen} onDismiss={closeSheet}>
-          <Column>
-            {droppedPin ? (
-              <>
-                <UIText>Search from here?</UIText>
-                <UIText>Nearby will look for shops within 10 km of this pin.</UIText>
-                {!signedIn ? (
-                  <UIText>Sign in to save this pin as your default search origin.</UIText>
-                ) : null}
-                {!signedIn ? (
-                  <Button onPress={() => router.push('/login')}>Sign in</Button>
-                ) : null}
-                <Button
-                  disabled={originBusy}
-                  onPress={() => void searchFromHere(droppedPin)}>
-                  {originBusy ? 'Searching…' : 'Search from here'}
-                </Button>
-              </>
-            ) : (
-              <>
-                <UIText>
-                  {`${selected?.name ?? ''}${snapOptedIn && selected?.accepts_snap ? ' · SNAP' : ''}`}
-                </UIText>
-                {selected?.city ? <UIText>{selected.city}</UIText> : null}
-                {selected ? <UIText>{formatDistanceKm(selected.distance_km)}</UIText> : null}
-                {!signedIn ? <UIText>Sign in to favorite this store.</UIText> : null}
-                {selected && signedIn ? (
-                  <Button
-                    disabled={favoriteBusy}
-                    onPress={() => void toggleFavorite(selected)}>
-                    {favoriteBusy
+      {sheetOpen ? (
+        <ThemedView type="backgroundElement" style={[styles.sheetCard, { bottom: controlBottom + 52 }]}>
+          {droppedPin ? (
+            <>
+              <ThemedText type="subtitle">Search from here?</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                Nearby will look for shops within 10 km of this pin.
+              </ThemedText>
+              {!signedIn ? (
+                <ThemedText type="small" themeColor="textSecondary">
+                  Sign in to save this pin as your default search origin.
+                </ThemedText>
+              ) : null}
+              {!signedIn ? (
+                <ButterButton label="Sign in" variant="ghost" onPress={() => router.push('/login')} />
+              ) : null}
+              <ButterButton
+                label={originBusy ? 'Searching…' : 'Search from here'}
+                variant="yellow"
+                disabled={originBusy}
+                onPress={() => void searchFromHere(droppedPin)}
+              />
+              <ButterButton label="Cancel" variant="ghost" onPress={closeSheet} />
+            </>
+          ) : selected ? (
+            <>
+              <ThemedText type="subtitle">
+                {`${selected.name}${snapOptedIn && selected.accepts_snap ? ' · SNAP' : ''}`}
+              </ThemedText>
+              {selected.city ? (
+                <ThemedText type="small" themeColor="textSecondary">
+                  {selected.city}
+                </ThemedText>
+              ) : null}
+              <ThemedText type="small" themeColor="textSecondary">
+                {formatDistanceKm(selected.distance_km)}
+              </ThemedText>
+              {signedIn ? (
+                <ButterButton
+                  label={
+                    favoriteBusy
                       ? 'Saving…'
                       : selectedFavored
                         ? 'Remove favorite'
-                        : 'Favorite store'}
-                  </Button>
-                ) : selected ? (
-                  <Button onPress={() => router.push('/login')}>Sign in to favorite</Button>
-                ) : null}
-              </>
-            )}
-          </Column>
-        </BottomSheet>
-      </Host>
+                        : 'Favorite store'
+                  }
+                  variant={selectedFavored ? 'ghost' : 'yellow'}
+                  disabled={favoriteBusy}
+                  onPress={() => void toggleFavorite(selected)}
+                />
+              ) : (
+                <>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Sign in to favorite this store.
+                  </ThemedText>
+                  <ButterButton
+                    label="Sign in to favorite"
+                    variant="yellow"
+                    onPress={() => router.push('/login')}
+                  />
+                </>
+              )}
+              <ButterButton label="Close" variant="ghost" onPress={closeSheet} />
+            </>
+          ) : null}
+        </ThemedView>
+      ) : null}
     </View>
   );
 }
@@ -422,8 +458,20 @@ const styles = StyleSheet.create({
     borderRadius: Radius.chip,
     borderWidth: 2,
   },
-  sheetHost: {
+  sheetCard: {
     position: 'absolute',
+    left: Spacing.three,
+    right: Spacing.three,
+    padding: Spacing.three,
+    borderRadius: Radius.card,
+    gap: Spacing.two,
+    zIndex: 3,
+  },
+  originDot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 2,
   },
   pin: {
     alignItems: 'center',
