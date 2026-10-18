@@ -34,7 +34,7 @@ export default function AppTabs() {
           <TabTrigger name="cart" href={'/cart' as Href} asChild>
             <TabButton>Cart</TabButton>
           </TabTrigger>
-          <TabTrigger name="nearby" href="/nearby" asChild>
+          <TabTrigger name="nearby" href={'/nearby' as Href} asChild>
             <TabButton>Nearby</TabButton>
           </TabTrigger>
         </CustomTabList>

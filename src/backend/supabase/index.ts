@@ -54,8 +54,12 @@ export {
   getCurrentPrice,
   getStore,
   listCurrentPromotions,
+  listReportedOffers,
+  listReportableStores,
   nearbyShops,
   productWarnings,
+  registerReportableStore,
+  reportManualPrice,
   reportPrice,
   searchCategories,
   searchProducts,
@@ -63,8 +67,10 @@ export {
 export { fetchNearbyShops, getUserCoords } from './locationService';
 export {
   getWeeklyBudgetCents,
+  planLowestTrip,
   priceOptions,
   recommendShoppingPlan,
+  suggestDiscountDate,
   suggestGroceryDate,
 } from './planning';
 export {
