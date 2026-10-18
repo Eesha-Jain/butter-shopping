@@ -1,4 +1,4 @@
-import { getItem, removeItem, setItem, type StorageKey } from './storage';
+import { getItem, getJson, removeItem, setItem, setJson, type StorageKey } from './storage';
 
 const ALL_STORAGE_KEYS: StorageKey[] = [
   'hasSignedIn',
@@ -9,6 +9,7 @@ const ALL_STORAGE_KEYS: StorageKey[] = [
   'onboardingCompleted',
   'hasSeenWelcome',
   'groceryCashbackBps',
+  'recentVoiceTexts',
 ];
 
 /**
@@ -105,4 +106,22 @@ export function getAiVoice(): AiVoice {
 
 export function setAiVoice(voice: AiVoice): void {
   setItem('aiVoice', voice);
+}
+
+/** Text of the last three voice requests on this device, newest first. */
+export function getRecentVoiceTexts(): string[] {
+  const raw = getJson<unknown>('recentVoiceTexts');
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((row): row is string => typeof row === 'string' && row.trim().length > 0)
+    .slice(0, 3);
+}
+
+/** Remember a voice request and drop anything older than the last three. */
+export function rememberVoiceText(text: string): string[] {
+  const next = text.trim();
+  if (!next) return getRecentVoiceTexts();
+  const logs = [next, ...getRecentVoiceTexts().filter((row) => row !== next)].slice(0, 3);
+  setJson('recentVoiceTexts', logs);
+  return logs;
 }

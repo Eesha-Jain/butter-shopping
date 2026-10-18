@@ -897,6 +897,33 @@ async function localizeAssistantText(
   }
 }
 
+function decodedHeader(req: Request, name: string): string {
+  const raw = (req.headers.get(name) ?? '').trim();
+  if (!raw) return '';
+  try {
+    return decodeURIComponent(raw).trim();
+  } catch {
+    return raw;
+  }
+}
+
+/** Last three voice texts from the device. Never logged. */
+function recentVoiceTexts(req: Request): string[] {
+  const raw = decodedHeader(req, 'x-butter-recent');
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((row): row is string => typeof row === 'string')
+      .map((row) => row.trim())
+      .filter(Boolean)
+      .slice(0, 3);
+  } catch {
+    return [];
+  }
+}
+
 Deno.serve(async (req) => {
   try {
     if (req.method !== 'POST') return json({ error: 'POST required.' }, 405);
@@ -914,6 +941,8 @@ Deno.serve(async (req) => {
     let clarifyNote = '';
     let usedClarification = false;
     let voice = replyVoice(req.headers.get('x-butter-voice'));
+    const shopperLocation = decodedHeader(req, 'x-butter-location').slice(0, 180);
+    const priorVoice = recentVoiceTexts(req);
 
     if (contentType.includes('application/json')) {
       const body = await req.json().catch(() => ({}) as {
@@ -933,7 +962,6 @@ Deno.serve(async (req) => {
       transcript = (body.transcript ?? '').trim();
       clarifyNote = (body.clarify ?? '').trim();
       if (body.voice) voice = replyVoice(body.voice);
-      console.log('[voice-order] typed transcript:', transcript);
     } else {
       const form = await req.formData().catch(() => null);
       const audio = form?.get('audio');
@@ -993,7 +1021,6 @@ Deno.serve(async (req) => {
         transcript = context;
         usedClarification = true;
       }
-      console.log('[voice-order] spoken transcript:', transcript, context ? '(one-time clarification)' : '');
     }
 
     transcript = stripAudioTags(transcript);
@@ -1068,7 +1095,12 @@ Deno.serve(async (req) => {
                   'A number is a quantity only when it is a small count directly before a food. "123" is not a quantity. ' +
                   'A fat percent is part of the name, with quantity 1. "2% milk" and "3% milk" are milk, not 2 or 3 of another food. ' +
                   '"testing testing 123 potato" is one item: potato. ' +
-                  'If the only words are not foods, call add_items with an empty items array.' +
+                  'If the only words are not foods, call add_items with an empty items array. ' +
+                  'You cannot browse the web. You only call add_items.' +
+                  (shopperLocation ? ` The shopper is near ${shopperLocation}. Use that only for nearby-store wording.` : '') +
+                  (priorVoice.length > 0
+                    ? ` Earlier requests on this device, newest first: ${priorVoice.join(' | ')}. Use them only to resolve a clarification. Do not add them as new items.`
+                    : '') +
                   (clarifyNote
                     ? ' A clarification follows the original request. Rewrite that request. Do not add the clarification as its own item. ' +
                       'A word such as "organic" or "russet" narrows the food already named. ' +
@@ -1080,29 +1112,22 @@ Deno.serve(async (req) => {
           }),
         });
         if (!completion.ok) {
-          const errText = await completion.text().catch(() => '');
-          console.error('[voice-order] Grok request failed:', completion.status, errText);
+          console.error('[voice-order] Grok request failed:', completion.status);
           items = parseTranscriptLocally(localSource);
-          console.log('[voice-order] using local parser after Grok', completion.status, JSON.stringify(items));
         } else {
           const completionPayload = (await completion.json()) as {
             choices?: { message?: { tool_calls?: { function?: { name?: string; arguments?: string } }[] } }[];
           };
-          console.log('[voice-order] grok raw:', JSON.stringify(completionPayload));
           const parsed = parseGrokCall(completionPayload);
           items = explodeItems(parsed.items);
           language = confirmSpokenLanguage(transcript, parsed.language);
           if (items.length === 0) {
             items = parseTranscriptLocally(localSource);
-            if (items.length > 0) {
-              console.log('[voice-order] Grok empty; local parser:', JSON.stringify(items));
-            }
           }
         }
       } catch (err) {
         console.error('[voice-order] Grok threw:', err);
         items = parseTranscriptLocally(localSource);
-        console.log('[voice-order] using local parser after Grok throw:', JSON.stringify(items));
       }
     } else {
       console.warn('[voice-order] XAI_API_KEY missing; using local parser');
@@ -1130,7 +1155,6 @@ Deno.serve(async (req) => {
         return words.map((name) => ({ name, quantity: item.quantity }));
       });
     }
-    console.log('[voice-order] parsed items:', JSON.stringify(items), 'language:', language);
     if (items.length === 0) {
       const empty = await localizeAssistantText(
         xaiKey,
@@ -1547,7 +1571,6 @@ Deno.serve(async (req) => {
       suggestions.length > 0 ||
       added.length > 0 ||
       already.length > 0;
-    console.log('[voice-order] final reply:', reply, 'language:', language);
     return json({
       transcript: shownTranscript,
       ...(usedClarification ? { heard: clarifyNote } : {}),
