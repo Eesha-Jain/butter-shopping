@@ -115,9 +115,31 @@ async function scrapeTraderJoes() {
 
 async function scrapeSafeway() {
   console.log("\n=== Safeway deep food scrape ===");
-  const stores = await findSafewayStores(zip);
-  const store = stores[0];
-  if (!store) throw new Error("No Safeway store was found for that ZIP.");
+  const forcedStoreId = arg("store-id", "");
+  let store;
+  if (forcedStoreId) {
+    store = {
+      storeId: forcedStoreId,
+      name: "Safeway",
+      chain: "Safeway",
+      address: null,
+      city: "Seattle",
+      region: "WA",
+      postalCode: zip,
+      latitude: null,
+      longitude: null,
+    };
+    console.log(`Using --store-id=${forcedStoreId} (skipped store resolver)`);
+  } else {
+    if (!process.env.SAFEWAY_APIM_KEY) {
+      throw new Error(
+        "Safeway XAPI needs SAFEWAY_APIM_KEY in .env.local (or pass --store-id=… with a key). Store lookup returned 401 without it.",
+      );
+    }
+    const stores = await findSafewayStores(zip);
+    store = stores[0];
+    if (!store) throw new Error("No Safeway store was found for that ZIP.");
+  }
   console.log(`Store ${store.storeId} ${store.name} (${store.city ?? zip})`);
 
   const termsPath = path.join(__dirname, "demo-food-terms.json");
